@@ -1,0 +1,208 @@
+import type { Speech } from '../types';
+
+/**
+ * Non-reactive runtime state shared between scene components (characters, doors, chairs, bubbles).
+ * It lives outside React/zustand on purpose: it changes every frame.
+ */
+export type Phase =
+  | 'waiting' // off-stage, waiting for a free desk / for the door to be free
+  | 'entering'
+  | 'sitting'
+  | 'unpacking'
+  | 'working'
+  | 'packing'
+  | 'standing'
+  | 'stroll'
+  | 'activity'
+  | 'returning'
+  | 'toBoss'
+  | 'handover'
+  | 'leaving';
+
+export interface SimState {
+  key: string;
+  roomId: string;
+  x: number;
+  z: number;
+  yaw: number;
+  phase: Phase;
+  sitT: number;
+  /** vertical offset of the root (sitting on a sofa) */
+  y: number;
+  /** true while the character is visible inside the room (or at the doorway) */
+  onStage: boolean;
+  /** the person's own desk (staff; -1 for the director) */
+  desk: number;
+  /** working on a task right now (typing at the desk) */
+  busy: boolean;
+  /** boss desk visitor slot currently claimed */
+  slot: number;
+  walking: boolean;
+}
+
+export const sims = new Map<string, SimState>();
+
+export interface RoomRuntime {
+  /** seconds (performance.now()/1000) after which the next character may enter */
+  doorFreeAt: number;
+  visitors: (string | null)[];
+  /** the director is seated and awake */
+  directorSeated: boolean;
+  directorKey: string | null;
+  /** last time a report was handed over (drives the director "receive" animation) */
+  receivedAt: number;
+  // --- office management (see store.ts)
+  /** open burst of the main agent's own tool calls */
+  burstKey: string | null;
+  burstStart: number;
+  lastToolAt: number;
+  burstSeq: number;
+  /** the latest user prompt (names the main agent's tasks) */
+  prompt: string;
+  /** when the office ran out of work (Date.now(), 0 = busy) */
+  idleSince: number;
+  /** everybody is on the way out */
+  leaving: boolean;
+  /** the office has been working since `runStart` (a summary is due when it stops) */
+  wasBusy: boolean;
+  /** when the last extra person was hired (Date.now()) */
+  lastHire: number;
+  runStart: number;
+  /** the last full message of the main agent */
+  lastText: string;
+  /** the last closing message the monitor knows about (also from before this page was opened) */
+  knownFinal: string;
+}
+
+export const roomRuntime = new Map<string, RoomRuntime>();
+
+export function runtimeFor(roomId: string): RoomRuntime {
+  let rt = roomRuntime.get(roomId);
+  if (!rt) {
+    rt = {
+      doorFreeAt: 0, visitors: [null, null, null], directorSeated: false, directorKey: null, receivedAt: -99,
+      burstKey: null, burstStart: 0, lastToolAt: 0, burstSeq: 0, prompt: '', idleSince: 0, leaving: false, wasBusy: false, lastHire: 0, runStart: 0, lastText: '', knownFinal: '',
+    };
+    roomRuntime.set(roomId, rt);
+  }
+  return rt;
+}
+
+export function simsInRoom(roomId: string): SimState[] {
+  const out: SimState[] = [];
+  for (const s of sims.values()) if (s.roomId === roomId) out.push(s);
+  return out;
+}
+
+// ---------------------------------------------------------------- speech queues
+const queues = new Map<string, Speech[]>();
+const lastSaid = new Map<string, { at: number; kind: Speech['kind'] }>();
+let speechId = 1;
+
+export function enqueueSpeech(key: string, s: Omit<Speech, 'id' | 'at'>, priority = false): Speech {
+  const speech: Speech = { ...s, id: speechId++, at: Date.now() };
+  let q = queues.get(key);
+  if (!q) {
+    q = [];
+    queues.set(key, q);
+  }
+  if (priority) q.length = 0;
+  q.push(speech);
+  // small talk about breaks must not change how the character behaves (the director rests when he has nothing to say)
+  if (s.kind !== 'idle') lastSaid.set(key, { at: performance.now() / 1000, kind: s.kind });
+  // keep bubbles fresh: drop the oldest when a burst arrives
+  while (q.length > 4) {
+    const i = q.findIndex((x) => x.kind === 'tool');
+    q.splice(i === -1 ? 0 : i, 1);
+  }
+  return speech;
+}
+
+export function queueLength(key: string): number {
+  return queues.get(key)?.length ?? 0;
+}
+
+export function nextSpeech(key: string): Speech | undefined {
+  return queues.get(key)?.shift();
+}
+
+export function peekSpeech(key: string): Speech | undefined {
+  return queues.get(key)?.[0];
+}
+
+export function lastSpeech(key: string) {
+  return lastSaid.get(key);
+}
+
+// -------------------------------------------- speech of tasks that have nobody to say it yet
+const taskBuffers = new Map<string, Omit<Speech, 'id' | 'at'>[]>();
+
+export function bufferTaskSpeech(taskKey: string, s: Omit<Speech, 'id' | 'at'>) {
+  let q = taskBuffers.get(taskKey);
+  if (!q) {
+    q = [];
+    taskBuffers.set(taskKey, q);
+  }
+  q.push(s);
+  while (q.length > 6) q.shift();
+}
+
+export function takeTaskSpeech(taskKey: string): Omit<Speech, 'id' | 'at'>[] {
+  const q = taskBuffers.get(taskKey) ?? [];
+  taskBuffers.delete(taskKey);
+  return q;
+}
+
+export function dropTaskSpeech(taskKey: string) {
+  taskBuffers.delete(taskKey);
+}
+
+export function dropRuntime(key: string) {
+  sims.delete(key);
+  queues.delete(key);
+  lastSaid.delete(key);
+  anchors.delete(key);
+}
+
+export function dropRoomRuntime(roomId: string) {
+  roomRuntime.delete(roomId);
+}
+
+// ---------------------------------------------------------------- screen anchors
+/** World-space anchor (above the head) of every visible character, used to place HTML bubbles. */
+export const anchors = new Map<string, { x: number; y: number; z: number; live: boolean }>();
+
+/** Camera + viewport, published by the 3D scene each frame for the HTML overlay. */
+export const view: { camera: import('three').Camera | null; width: number; height: number } = { camera: null, width: 1, height: 1 };
+
+// ------------------------------------------------------------------------- cats
+export interface CatSim {
+  key: string;
+  roomId: string;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  phase: string;
+  onStage: boolean;
+  /** lying / sitting still – a good moment for a pat */
+  still: boolean;
+  /** performance.now()/1000 until which someone is stroking the cat */
+  petUntil: number;
+  /** index into layout.spots the cat is using (-1 none) */
+  spot: number;
+}
+
+export const cats = new Map<string, CatSim>();
+
+/** Dev / test switches (exposed as window.__registry in dev builds). */
+export const debugFlags: { activity?: string; catNow?: boolean; catLeave?: boolean; catSpot?: string; catPose?: string } = {};
+
+export function catsInRoom(roomId: string): CatSim[] {
+  const out: CatSim[] = [];
+  for (const c of cats.values()) if (c.roomId === roomId) out.push(c);
+  return out;
+}
+
+/** Who currently occupies a sofa seat / desk spot: `${roomId}#${spotIndex}` -> owner key. */
+export const spotOwners = new Map<string, string>();
