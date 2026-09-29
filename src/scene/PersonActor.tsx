@@ -13,6 +13,7 @@ import { buildLaptop } from './laptop';
 import { buildHeldItems } from './heldItems';
 import { G } from './kit';
 import { DESK_TOP } from './furniture';
+import { sfx } from '../audio';
 
 const qHand = new THREE.Quaternion();
 const qRoot = new THREE.Quaternion();
@@ -116,7 +117,7 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
   const scale = RIG_SCALE * app.scale;
   const items = useMemo(() => {
     const it = buildHeldItems(layout.theme.accent);
-    rig.handHold.add(it.cup, it.book, it.can);
+    rig.handHold.add(it.cup, it.book, it.can, it.bowl);
     return it;
   }, [rig, layout.theme]);
 
@@ -127,6 +128,7 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
   /** time collected since the last update (rooms that are off screen only step every OFFSCREEN_STEP) */
   const pending = useRef(0);
   const workersAt = useRef(-1);
+  const keyT = useRef(0);
   const wp = useMemo(() => new THREE.Vector3(), []);
 
   useEffect(() => {
@@ -158,7 +160,7 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
     clockRef.current += dt;
     if (!ctx.current) {
       ctx.current = {
-        layout, rt, person, task: null, now, lastSayAge: Infinity, lastKind: null, queueLen: 0, others: [], cats: [], workers: [],
+        layout, rt, person, task: null, now, lastSayAge: Infinity, lastKind: null, queueLen: 0, others: [], cats: [], workers: [], idlers: [],
         onReport: () => useStore.getState().reportTask(personKey),
         onRelease: () => useStore.getState().releaseTask(personKey),
         say: (text, icon) => enqueueSpeech(personKey, { kind: 'idle', text, tool: icon }, true),
@@ -181,7 +183,9 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
     if (actor.sim.walking || free) c.cats = catsInRoom(roomId);
     if (free && now - workersAt.current > 0.25) {
       workersAt.current = now;
-      c.workers = simsInRoom(roomId).filter((x) => x.key !== personKey && x.busy && x.desk >= 0);
+      const inRoom = simsInRoom(roomId);
+      c.workers = inRoom.filter((x) => x.key !== personKey && x.busy && x.desk >= 0);
+      c.idlers = inRoom.filter((x) => x.key !== personKey && x.onStage && x.phase === 'working' && !x.busy && x.desk >= 0 && !x.chatBy);
     }
 
     actor.update(dt, c);
@@ -194,6 +198,15 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
       // off screen: the story goes on (tasks, hand-overs, bubbles) but nobody needs to be posed
       syncAnchor(personKey, outer.current, wp, actor.sim, scale);
       return;
+    }
+
+    // soft key clicks while somebody types (only the room on screen is heard)
+    if (actor.typing > 0.5) {
+      keyT.current -= dt;
+      if (keyT.current <= 0) {
+        keyT.current = 0.14 + Math.random() * 0.26;
+        sfx('key', roomId);
+      }
     }
 
     // ---- character transform
@@ -310,14 +323,15 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
     items.cup.visible = held === 'cup';
     items.book.visible = held === 'book';
     items.can.visible = held === 'can';
+    items.bowl.visible = held === 'bowl';
     if (held !== 'none') {
       rig.root.updateMatrixWorld(true);
       rig.handHold.getWorldQuaternion(qHand);
       rig.root.getWorldQuaternion(qRoot);
       qRel.copy(qHand).invert().multiply(qRoot);
       qTilt.setFromAxisAngle(tiltAxis, actor.heldTilt);
-      const item = held === 'cup' ? items.cup : held === 'book' ? items.book : items.can;
-      const off = held === 'cup' ? vTmp.set(0, 0.07, 0.03) : held === 'book' ? vTmp.set(-0.13, 0.03, 0.06) : vTmp.set(0, -0.03, 0.1);
+      const item = held === 'cup' ? items.cup : held === 'book' ? items.book : held === 'bowl' ? items.bowl : items.can;
+      const off = held === 'cup' ? vTmp.set(0, 0.07, 0.03) : held === 'book' ? vTmp.set(-0.13, 0.03, 0.06) : held === 'bowl' ? vTmp.set(0, 0.05, 0.06) : vTmp.set(0, -0.03, 0.1);
       item.position.copy(off).applyQuaternion(qRel);
       item.quaternion.copy(qRel).multiply(qTilt);
       if (held === 'book') {
@@ -334,6 +348,16 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
       items.stream.position.set(actor.tap.x, 0.9, actor.tap.z);
       items.stream.scale.set(1, 0.85 + Math.sin(clockRef.current * 30) * 0.12, 1);
     }
+    // steam over the pan while somebody cooks
+    const steamOn = sim.onStage && actor.steamAt && actor.steam > 0.05;
+    items.steam.forEach((p, i) => {
+      p.visible = !!steamOn;
+      if (!steamOn || !actor.steamAt) return;
+      const ph = (clockRef.current * 0.55 + i / items.steam.length) % 1;
+      p.position.set(actor.steamAt.x + Math.sin(i * 2.3 + clockRef.current * 1.4) * 0.05, 0.98 + ph * 0.6, actor.steamAt.z + Math.cos(i * 1.7 + clockRef.current) * 0.05);
+      p.scale.setScalar(0.6 + ph * 1.3);
+      (p.material as THREE.MeshBasicMaterial).opacity = (1 - ph) * 0.5 * actor.steam;
+    });
     // ...and from the spout of the can
     const pouring = held === 'can' && actor.pour > 0.35;
     items.drops.forEach((d, i) => {

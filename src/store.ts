@@ -6,7 +6,8 @@ import { THEMES } from './world/palettes';
 import { HOUR_PRESETS } from './env';
 import { loadNames, pickName, saveNames } from './names';
 import { getLayout } from './world/layout';
-import { bufferTaskSpeech, dropRoomRuntime, dropRuntime, dropTaskSpeech, enqueueSpeech, runtimeFor, takeTaskSpeech } from './sim/registry';
+import { isMuted, setMuted as setAudioMuted, sfx } from './audio';
+import { bufferTaskSpeech, clearTalk, dropRoomRuntime, dropRuntime, dropTaskSpeech, enqueueSpeech, runtimeFor, takeTaskSpeech, talkPending } from './sim/registry';
 
 export type Connection = 'connecting' | 'live' | 'offline';
 export type TimeMode = 'auto' | 'day' | 'dusk' | 'night';
@@ -29,7 +30,7 @@ interface State {
   finished: Record<string, TaskLogEntry[]>;
   /** everything that happened in a room, newest first */
   activity: Record<string, ActivityEntry[]>;
-  /** which list is open under the room header */
+  /** which list is open under the room header (the activity feed is open from the start) */
   listTab: 'tasks' | 'reports' | 'activity' | null;
   /** the last finished run of every room */
   summaries: Record<string, RunSummary>;
@@ -47,6 +48,8 @@ interface State {
   selectedKey: string | null;
   showHelp: boolean;
   showNames: boolean;
+  /** sound effects are off */
+  muted: boolean;
   /** the user's list of names for the director and the staff */
   names: string[];
   resetTick: number;
@@ -82,6 +85,7 @@ interface State {
   setDemo: (on: boolean) => void;
   clearDemo: () => void;
   setHelp: (on: boolean) => void;
+  setMuted: (on: boolean) => void;
   setShowNames: (on: boolean) => void;
   applyNames: (list: string[]) => void;
   resetView: () => void;
@@ -114,6 +118,11 @@ const MIN_TEAM = 3;
 export const MAX_STAFF = 7;
 /** once the team is complete another person is hired at most this often (the newcomer needs time to walk in) */
 const HIRE_GAP_MS = 6000;
+/** the director reads the summary aloud: this many lines per bubble, this long on screen, lines wrapped at this width, at most this many bubbles */
+const TALK_LINES = 2;
+const TALK_HOLD_MS = 5000;
+const TALK_WIDTH = 40;
+const TALK_MAX_BUBBLES = 30;
 
 let logId = 100000;
 
@@ -161,6 +170,18 @@ function isStale(s: State, id: string, now: number): boolean {
   if (!r || r.mainActive) return false;
   for (const t of Object.values(s.tasks)) if (t.sessionId === id) return false;
   return now - (lastActive.get(id) ?? r.createdAt) > AUTO_RELEASE_MS;
+}
+
+/**
+ * The order of the room buttons: sessions that are working come first, then the most recently updated ones.
+ * (The number keys and the arrow keys follow the same order.)
+ */
+export function orderedRooms(s: Pick<State, 'visibleOrder' | 'rooms' | 'tasks'>): string[] {
+  const busy = new Set<string>();
+  for (const t of Object.values(s.tasks)) busy.add(t.sessionId);
+  const working = (id: string) => (s.rooms[id]?.mainActive || busy.has(id) ? 1 : 0);
+  const recent = (id: string) => Math.max(s.rooms[id]?.updatedAt ?? 0, s.rooms[id]?.createdAt ?? 0);
+  return [...s.visibleOrder].sort((a, b) => working(b) - working(a) || recent(b) - recent(a));
 }
 
 /** Keep `visibleOrder` (and the active room) in line with what is going on. */
@@ -418,6 +439,7 @@ function beginRun(get: Get, set: SetFn, roomId: string, now: number) {
   if (rt.wasBusy) return;
   rt.wasBusy = true;
   rt.runStart = now;
+  clearTalk(directorKeyOf(roomId)); // the summary of the previous run is not read out any more
   const cur = get();
   if (cur.unseen[roomId] || cur.unread[roomId]) {
     set({
@@ -442,6 +464,54 @@ function composeSummary(get: Get, roomId: string, now: number, partial: boolean)
   };
 }
 
+/** Plain lines of a markdown message, wrapped to the width of a summary bubble. */
+function talkLines(md: string): string[] {
+  const out: string[] = [];
+  for (const raw of md.split('\n')) {
+    const line = raw
+      .replace(/^\s*#{1,6}\s+/, '')
+      .replace(/^\s*[-*•]\s+/, '• ')
+      .replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!line || /^[-|:\s]+$/.test(line)) continue;
+    let cur = '';
+    for (const word of line.split(' ')) {
+      if (cur && cur.length + 1 + word.length > TALK_WIDTH) {
+        out.push(cur);
+        cur = '';
+      }
+      cur = cur ? `${cur} ${word}` : word;
+    }
+    if (cur) out.push(cur);
+  }
+  return out;
+}
+
+/** The director reads the summary out loud, a couple of lines at a time; nobody goes home before the end. Returns whether there is anything to read. */
+function startSummaryTalk(get: Get, roomId: string, summary: RunSummary): boolean {
+  const director = get().people[directorKeyOf(roomId)];
+  const lines = talkLines(summary.final);
+  if (!director || !lines.length) return false;
+  clearTalk(director.key);
+  let bubbles = 0;
+  for (let i = 0; i < lines.length && bubbles < TALK_MAX_BUBBLES; i += TALK_LINES, bubbles++) {
+    enqueueSpeech(director.key, { kind: 'text', text: lines.slice(i, i + TALK_LINES).join('\n'), hold: TALK_HOLD_MS });
+  }
+  runtimeFor(roomId).talkDeadline = Date.now() + bubbles * (TALK_HOLD_MS + 1500) + 45_000;
+  return true;
+}
+
+/** The director is still reading the summary (a talk nobody could watch is dropped after a while). */
+function directorTalking(get: Get, roomId: string, now: number): boolean {
+  const director = get().people[directorKeyOf(roomId)];
+  if (!director || !talkPending(director.key)) return false;
+  if (now <= runtimeFor(roomId).talkDeadline) return true;
+  clearTalk(director.key);
+  return false;
+}
+
 function finishRun(get: Get, set: SetFn, roomId: string, now: number) {
   const s = get();
   const room = s.rooms[roomId];
@@ -450,8 +520,10 @@ function finishRun(get: Get, set: SetFn, roomId: string, now: number) {
   const summary = composeSummary(get, roomId, now, false);
   rt.lastText = '';
   logActivity(get, set, roomId, { kind: 'system', who: 'Office', text: 'All work is done – the summary is ready' });
-  // somebody looking at this very room reads it right away (the demo would keep interrupting, so it only blinks)
-  const readNow = s.activeRoomId === roomId && !room.demo;
+  sfx('chime'); // the session is done (also when another room is on screen)
+  // the director reads it out loud; only when there is nothing to read does the paper open by itself (not in the demo: it would keep interrupting)
+  const talking = startSummaryTalk(get, roomId, summary);
+  const readNow = s.activeRoomId === roomId && !room.demo && !talking;
   const cur = get();
   set({
     summaries: { ...cur.summaries, [roomId]: summary },
@@ -459,6 +531,25 @@ function finishRun(get: Get, set: SetFn, roomId: string, now: number) {
     unread: { ...cur.unread, [roomId]: true },
     summaryOpen: readNow ? roomId : cur.summaryOpen,
   });
+}
+
+/** The user steps into a room: a session that is done lays its summary paper on the screen (the demo would keep interrupting). */
+function enterRoom(get: Get, set: SetFn, id: string | null) {
+  const st = get();
+  const room = id ? st.rooms[id] : undefined;
+  let summaries = st.summaries;
+  let summaryOpen: string | null = null;
+  if (id && room) {
+    const busy = room.mainActive || tasksOf(st, id).length > 0;
+    const known = st.summaries[id];
+    const rt = runtimeFor(id);
+    if (known && st.unread[id]) summaryOpen = id;
+    else if (!busy && !room.demo && (known || rt.prompt || rt.knownFinal || rt.lastText)) {
+      if (!known || known.partial) summaries = { ...summaries, [id]: composeSummary(get, id, Date.now(), true) };
+      summaryOpen = id;
+    }
+  }
+  set({ activeRoomId: id, selectedKey: null, releaseAsk: null, summaries, summaryOpen });
 }
 
 /** One housekeeping step for a room. */
@@ -503,8 +594,18 @@ function tickRoom(get: Get, set: SetFn, roomId: string, now: number) {
     const here = peopleOf(get(), roomId).filter((p) => p.present);
     here.sort((a, b) => (a.role === 'director' ? 1 : 0) - (b.role === 'director' ? 1 : 0) || a.joinedAt - b.joinedAt);
     const patches: Record<string, Partial<PersonRec>> = {};
-    here.forEach((p, i) => (patches[p.key] = { leaveAt: now + 400 + i * LEAVE_STAGGER_MS }));
+    here.forEach((p, i) => {
+      if (p.role !== 'director') patches[p.key] = { leaveAt: now + 400 + i * LEAVE_STAGGER_MS };
+    });
     patchPeople(get, set, patches);
+  }
+  if (rt.leaving && !busy) {
+    // the director locks up last – and only after the whole summary has been read out
+    const boss = get().people[directorKeyOf(roomId)];
+    if (boss?.present && !boss.leaveAt && !directorTalking(get, roomId, now)) {
+      const lastStaff = peopleOf(get(), roomId).reduce((m, p) => (p.role === 'staff' ? Math.max(m, p.leaveAt) : m), 0);
+      patchPeople(get, set, { [boss.key]: { leaveAt: Math.max(now + 400, lastStaff + LEAVE_STAGGER_MS) } });
+    }
   }
   const due: Record<string, Partial<PersonRec>> = {};
   for (const p of peopleOf(get(), roomId)) if (p.leaveAt && now >= p.leaveAt) due[p.key] = { present: false, leaveAt: 0 };
@@ -695,13 +796,14 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
   logs: {},
   finished: {},
   activity: {},
-  listTab: null,
+  listTab: 'activity',
   summaries: {},
   unseen: {},
   unread: {},
   released: loadReleased(),
   releaseAsk: null,
   summaryOpen: null,
+  muted: isMuted(),
   activeRoomId: null,
   selectedKey: null,
   showHelp: false,
@@ -825,15 +927,16 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
   toggleList: (tab) => set((st) => ({ listTab: st.listTab === tab ? null : tab })),
   setListTab: (tab) => set({ listTab: tab }),
 
-  // switching to a room whose summary is unread opens the paper
-  setActiveRoom: (id) => set((st) => ({ activeRoomId: id, selectedKey: null, releaseAsk: null, summaryOpen: id && st.unread[id] && st.summaries[id] ? id : null })),
+  // entering a room whose session is done (or whose summary is unread) opens the paper
+  setActiveRoom: (id) => enterRoom(get, set, id),
 
   stepRoom: (dir) => {
-    const { visibleOrder, activeRoomId } = get();
+    const visibleOrder = orderedRooms(get());
+    const { activeRoomId } = get();
     if (!visibleOrder.length) return;
     const i = Math.max(0, visibleOrder.indexOf(activeRoomId ?? ''));
     const id = visibleOrder[(i + dir + visibleOrder.length) % visibleOrder.length];
-    set((st) => ({ activeRoomId: id, selectedKey: null, releaseAsk: null, summaryOpen: st.unread[id] && st.summaries[id] ? id : null }));
+    enterRoom(get, set, id);
   },
 
   select: (key) => set({ selectedKey: key }),
@@ -845,6 +948,10 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
   },
 
   setHelp: (on) => set({ showHelp: on }),
+  setMuted: (on) => {
+    setAudioMuted(on);
+    set({ muted: on });
+  },
   setShowNames: (on) => set({ showNames: on }),
 
   /** Save the list and give everybody who is already in an office a name from it (director first). */

@@ -18,6 +18,8 @@ export interface Speech {
   text: string;
   tool?: string;
   at: number;
+  /** a bubble of the summary talk: it stays up this long (ms), is never dropped and never preempted */
+  hold?: number;
 }
 
 export type PersonRole = 'director' | 'staff';

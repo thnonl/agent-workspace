@@ -12,11 +12,15 @@ export interface HeldItems {
   bookLeft: THREE.Group;
   bookRight: THREE.Group;
   can: THREE.Group;
+  /** a bowl of noodles with chopsticks */
+  bowl: THREE.Group;
   /** tip of the can's spout */
   spout: THREE.Object3D;
   /** tap water (room space, added to the character's outer group) */
   stream: THREE.Mesh;
   drops: THREE.Mesh[];
+  /** puffs of steam over the pan (room space) */
+  steam: THREE.Mesh[];
   fx: THREE.Group;
 }
 
@@ -61,6 +65,18 @@ export function buildHeldItems(accent: string): HeldItems {
   can.add(spout);
   can.visible = false;
 
+  // bowl of noodles with two chopsticks
+  const bowl = group();
+  bowl.add(mesh(G.cyl(0.075, 0.042, 0.07, 18), M('#ffffff', { rough: 0.35 }), 0, 0, 0));
+  bowl.add(mesh(G.cyl(0.077, 0.06, 0.02, 18), M(accent, { rough: 0.4 }), 0, 0.02, 0, { cast: false }));
+  bowl.add(mesh(G.sphere(0.066, 12, 8), M('#f3d27a', { rough: 0.8 }), 0, 0.04, 0, { cast: false, s: [1, 0.45, 1] }));
+  bowl.add(mesh(G.sphere(0.018, 6, 5), M('#79c56b', { rough: 0.8 }), 0.02, 0.066, 0.02, { cast: false }));
+  bowl.add(mesh(G.sphere(0.016, 6, 5), M('#ff8a65', { rough: 0.8 }), -0.025, 0.064, -0.01, { cast: false }));
+  const stick = M('#c98f55', { rough: 0.6 });
+  bowl.add(mesh(G.cyl(0.006, 0.005, 0.2, 6), stick, 0.012, 0.11, 0.03, { r: [0.5, 0, 0.12], cast: false }));
+  bowl.add(mesh(G.cyl(0.006, 0.005, 0.2, 6), stick, -0.012, 0.11, 0.035, { r: [0.5, 0, -0.1], cast: false }));
+  bowl.visible = false;
+
   // water: a thin stream from the tap and drops from the can
   const fx = new THREE.Group();
   const stream = new THREE.Mesh(G.cyl(0.012, 0.012, 0.1, 6), new THREE.MeshBasicMaterial({ color: '#8fd8ff', transparent: true, opacity: 0.75 }));
@@ -74,5 +90,14 @@ export function buildHeldItems(accent: string): HeldItems {
     fx.add(d);
     drops.push(d);
   }
-  return { cup, book, bookLeft, bookRight, can, spout, stream, drops, fx };
+  // steam over the pan
+  const steamMat = new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.5, depthWrite: false });
+  const steam: THREE.Mesh[] = [];
+  for (let i = 0; i < 5; i++) {
+    const s = new THREE.Mesh(G.sphere(0.06, 8, 6), steamMat.clone());
+    s.visible = false;
+    fx.add(s);
+    steam.push(s);
+  }
+  return { cup, book, bookLeft, bookRight, can, bowl, spout, stream, drops, steam, fx };
 }

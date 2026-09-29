@@ -6,7 +6,7 @@ export type PropKind =
   | 'bookshelf' | 'plant' | 'tallPlant' | 'cactus' | 'cooler' | 'coffee' | 'sofa' | 'beanbag' | 'floorLamp'
   | 'printer' | 'bin' | 'fishtank' | 'coatRack' | 'armchair'
   | 'fileCabinet' | 'copier' | 'meetingSet' | 'whiteboardStand' | 'boxes' | 'serverRack' | 'fridge' | 'vending'
-  | 'trolley' | 'recycle' | 'loungeSet' | 'credenza' | 'sink';
+  | 'trolley' | 'recycle' | 'loungeSet' | 'credenza' | 'sink' | 'stove';
 
 export interface Prop {
   kind: PropKind;
@@ -128,7 +128,7 @@ export interface CatWindow {
 }
 
 /** Things people like to do when there is nothing to work on. */
-export type StationKind = 'drink' | 'read' | 'fish' | 'wash' | 'water';
+export type StationKind = 'drink' | 'read' | 'fish' | 'wash' | 'water' | 'cook';
 
 /** A spot in front of something (water cooler, bookshelf, fish tank, sink, plant) where a person can spend a moment. */
 export interface Station {
@@ -142,6 +142,8 @@ export interface Station {
   target: V2;
   /** sink: where the water comes out of the tap */
   tap?: V2;
+  /** stove: the pan on the hob (floor position) */
+  pan?: V2;
 }
 
 /** Places to sit / lie down: sofas, beanbags, the director's desk, a patch of sun. */
@@ -209,6 +211,7 @@ const FOOT: Record<PropKind, [number, number, number]> = {
   cooler: [0.6, 0.6, 1.45],
   coffee: [1.7, 0.65, 1.4],
   sink: [1.0, 0.55, 1.0],
+  stove: [1.0, 0.6, 1.0],
   sofa: [2.2, 1.0, 0.9],
   beanbag: [0.95, 0.95, 0.65],
   floorLamp: [0.45, 0.45, 1.75],
@@ -232,7 +235,7 @@ const FOOT: Record<PropKind, [number, number, number]> = {
 };
 
 /** furniture tall enough to hide posters / boards behind it */
-const BLOCKS_WALL = new Set<PropKind>(['bookshelf', 'vending', 'serverRack', 'fridge', 'coffee', 'cooler', 'fishtank', 'sink']);
+const BLOCKS_WALL = new Set<PropKind>(['bookshelf', 'vending', 'serverRack', 'fridge', 'coffee', 'cooler', 'fishtank', 'sink', 'stove']);
 
 const ITEM_KINDS: DeskDecor[] = [
   'mug', 'plant', 'notes', 'lamp', 'pencils', 'donut', 'books', 'cactus', 'phone', 'photo', 'papers', 'bottle', 'notepad', 'headphones', 'tissue', 'stapler',
@@ -614,6 +617,7 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
     ...(r.chance(0.5) ? (['fishtank'] as PropKind[]) : []),
     ...(r.chance(0.5) ? (['recycle'] as PropKind[]) : []),
     ...(r.chance(0.85) ? (['sink'] as PropKind[]) : []),
+    ...(r.chance(0.8) ? (['stove'] as PropKind[]) : []),
     ...(r.chance(0.4) ? (['printer'] as PropKind[]) : []),
   ];
   for (const k of r.shuffle(wallWants)) tryWall(k);
@@ -775,7 +779,7 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
   // ------------- things to do when there is time: get a drink, read a book, watch the fish, wash, water the plants
   const stations: Station[] = [];
   const stationOf: Partial<Record<PropKind, [StationKind, number]>> = {
-    cooler: ['drink', 0.5], coffee: ['drink', 0.5], bookshelf: ['read', 0.5], fishtank: ['fish', 0.55], sink: ['wash', 0.36],
+    cooler: ['drink', 0.5], coffee: ['drink', 0.5], bookshelf: ['read', 0.5], fishtank: ['fish', 0.55], sink: ['wash', 0.36], stove: ['cook', 0.42],
     plant: ['water', 0.5], tallPlant: ['water', 0.55], cactus: ['water', 0.5],
   };
   const perKind = new Map<StationKind, number>();
@@ -792,7 +796,7 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
       for (let k = 0; k < 4; k++) options.push({ x: pr.x + Math.cos((k * Math.PI) / 2) * rad, z: pr.z + Math.sin((k * Math.PI) / 2) * rad });
       options.sort((a, b) => Math.hypot(a.x, a.z - 1) - Math.hypot(b.x, b.z - 1));
     } else {
-      const lat = pr.kind === 'coffee' ? -0.5 : pr.kind === 'bookshelf' ? r.range(-0.6, 0.6) : 0;
+      const lat = pr.kind === 'coffee' ? -0.5 : pr.kind === 'stove' ? -0.2 : pr.kind === 'bookshelf' ? r.range(-0.6, 0.6) : 0;
       for (const extra of [0, 0.15, 0.3]) {
         const o = rot2(lat, fd / 2 + gap + extra, pr.rot);
         options.push({ x: pr.x + o.x, z: pr.z + o.z });
@@ -807,6 +811,10 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
     if (pr.kind === 'sink') {
       const t = rot2(0, -0.06, pr.rot);
       st.tap = { x: pr.x + t.x, z: pr.z + t.z };
+    }
+    if (pr.kind === 'stove') {
+      const t = rot2(-0.2, 0.02, pr.rot);
+      st.pan = { x: pr.x + t.x, z: pr.z + t.z };
     }
     stations.push(st);
     perKind.set(kindSt, (perKind.get(kindSt) ?? 0) + 1);

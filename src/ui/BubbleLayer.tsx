@@ -5,8 +5,9 @@ import * as THREE from 'three';
 import { useShallow } from 'zustand/react/shallow';
 import { useStore } from '../store';
 import { themeFor } from '../world/palettes';
+import { sfx } from '../audio';
 import type { Speech } from '../types';
-import { anchors, nextSpeech, peekSpeech, queueLength, view } from '../sim/registry';
+import { anchors, holdTalk, sims, idleDismissedAt, nextSpeech, peekSpeech, queueLength, view } from '../sim/registry';
 
 const TOOL_ICONS: Record<string, string> = {
   Read: '📖', Edit: '✏️', MultiEdit: '✏️', NotebookEdit: '✏️', Write: '📝', Bash: '⌨️', PowerShell: '⌨️', Grep: '🔍', Glob: '🔍',
@@ -15,7 +16,7 @@ const TOOL_ICONS: Record<string, string> = {
 
 /** icons of the "what I am doing" bubbles (Speech.tool) */
 const IDLE_ICONS: Record<string, string> = {
-  read: '📖', drink: '🥤', coffee: '☕', fish: '🐟', wash: '🧼', water: '🪴', sofa: '🛋️', pet: '🐱', window: '🪟', walk: '🚶', watch: '👀', wait: '⏳', home: '👋',
+  read: '📖', drink: '🥤', coffee: '☕', fish: '🐟', wash: '🧼', water: '🪴', sofa: '🛋️', pet: '🐱', window: '🪟', walk: '🚶', watch: '👀', wait: '⏳', home: '👋', wave: '👋', cook: '🍳', eat: '🍜', chat: '💬', talk: '💬',
 };
 
 /** a bubble stays until something new is said; after this long it shrinks to save space */
@@ -49,6 +50,10 @@ interface Item {
   /** size of the bubble box, kept up to date by a ResizeObserver (reading offsetWidth every frame forces a layout) */
   size: { w: number; h: number };
 }
+/** "idle" bubbles that are said out loud rather than thought */
+const SPOKEN = new Set(['talk', 'wave', 'home', 'eat']);
+/** how long the last bubble of somebody with nothing to do stays up */
+const QUIET_MS = 4500;
 const items = new Map<string, Item>();
 const v3 = new THREE.Vector3();
 
@@ -177,9 +182,25 @@ const BubbleItem = memo(function BubbleItem({ personKey, tails }: { personKey: s
         }
         return;
       }
+      const c = curRef.current;
+      // a break is over: the thought about it is switched off at once
+      if (c?.kind === 'idle' && !c.hold && idleDismissedAt(personKey) > shownAt.current) {
+        curRef.current = null;
+        settledRef.current = false;
+        setCur(null);
+        setSettled(false);
+        return;
+      }
       // the speech queue only advances while the character is on screen
       if (!show) return;
-      const c = curRef.current;
+      // nothing to do and nothing to say: no bubble
+      if (c && (!c.hold || now >= hideAt.current) && sims.get(personKey)?.quiet && !peekSpeech(personKey) && now - shownAt.current > QUIET_MS) {
+        curRef.current = null;
+        settledRef.current = false;
+        setCur(null);
+        setSettled(false);
+        return;
+      }
       const head = peekSpeech(personKey);
       if (!head) {
         // nothing new to say: the bubble stays (it shows what they are doing) but gets smaller after a while
@@ -189,12 +210,20 @@ const BubbleItem = memo(function BubbleItem({ personKey, tails }: { personKey: s
         }
         return;
       }
+      // a summary bubble is read to the end before anything else replaces it
+      if (c?.hold && now < hideAt.current) return;
       const urgent = (head.kind === 'done' && c?.kind !== 'done') || head.kind === 'idle';
       if (c && !urgent && now < hideAt.current) return;
       const next = nextSpeech(personKey)!;
       const crowd = queueLength(personKey) >= 2 ? 0.62 : 1;
-      hideAt.current = now + Math.min(6800, Math.max(2500, 1800 + next.text.length * 42)) * crowd + (next.kind === 'done' ? 1200 : 0);
+      hideAt.current = next.hold ? now + next.hold : now + Math.min(6800, Math.max(2500, 1800 + next.text.length * 42)) * crowd + (next.kind === 'done' ? 1200 : 0);
+      if (next.hold && next.kind === 'text') holdTalk(personKey, hideAt.current);
       shownAt.current = now;
+      // a soft sound for every new bubble (chat lines babble, tool calls stay silent)
+      const roomId = useStore.getState().people[personKey]?.sessionId;
+      if (next.tool === 'talk') sfx('talk', roomId);
+      else if (next.kind === 'done') sfx('ding', roomId);
+      else if (next.kind !== 'tool' && next.tool !== 'wave') sfx('pop', roomId);
       curRef.current = next;
       settledRef.current = false;
       setSettled(false);
@@ -223,7 +252,7 @@ const BubbleItem = memo(function BubbleItem({ personKey, tails }: { personKey: s
   }, [personKey]);
 
   // what a character plans to do on a break is a thought, drawn like thinking
-  const look = cur ? (cur.kind === 'idle' ? 'thinking' : cur.kind) : '';
+  const look = cur ? (cur.kind === 'idle' && !SPOKEN.has(cur.tool ?? '') ? 'thinking' : cur.kind === 'idle' ? 'text' : cur.kind) : '';
   const isFail = failed && look === 'done';
   const tone = { ['--bg' as string]: isFail ? '#ffe6e6' : BUBBLE_BG[look] ?? '#ffffff', ['--accent' as string]: look === 'done' ? (isFail ? '#ff6b6b' : '#35c27d') : accent };
   return (
@@ -245,7 +274,7 @@ const BubbleItem = memo(function BubbleItem({ personKey, tails }: { personKey: s
         : null}
       <div className="bubble-anchor">
         {cur ? (
-          <div key={cur.id} className={`bubble bubble-${look}${isFail ? ' bubble-failed' : ''}${settled ? ' bubble-settled' : ''}`}>
+          <div key={cur.id} className={`bubble bubble-${look}${cur.hold && cur.kind === 'text' ? ' bubble-talk' : ''}${isFail ? ' bubble-failed' : ''}${settled && !cur.hold ? ' bubble-settled' : ''}`}>
             <div className="bubble-head">
               <span className="bubble-dot" />
               <span className="bubble-name">{role === 'director' ? '👑 ' : ''}{name}{task && cur.kind !== 'idle' ? <em> · {task}</em> : null}</span>
