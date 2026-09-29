@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import type { Prop } from '../world/layout';
@@ -6,6 +6,9 @@ import type { RoomTheme } from '../world/palettes';
 import { Rng } from '../util/rng';
 import { G, M, MB, shade } from './kit';
 import { DeskItem, Ms, RB } from './furniture';
+
+const LED_ON = [new THREE.Color('#5ee08a'), new THREE.Color('#5aa8ff'), new THREE.Color('#ffb347')];
+const LED_OFF = new THREE.Color('#2a3140');
 
 interface PP {
   p: Prop;
@@ -148,12 +151,16 @@ export function Boxes({ p }: PP) {
 }
 
 export function ServerRack({ p }: PP) {
-  const leds = useMemo(() => Array.from({ length: 14 }, (_, i) => new THREE.MeshBasicMaterial({ color: ['#5ee08a', '#5aa8ff', '#ffb347'][i % 3] })), []);
+  const leds = useMemo(() => Array.from({ length: 14 }, (_, i) => new THREE.MeshBasicMaterial({ color: LED_ON[i % 3] })), []);
+  const lit = useRef<boolean[]>([]);
   useFrame((s) => {
     const t = s.clock.elapsedTime;
     leds.forEach((m, i) => {
       const on = Math.sin(t * (1.5 + (i % 5) * 0.7) + i * 1.9) > -0.2;
-      m.color.set(on ? ['#5ee08a', '#5aa8ff', '#ffb347'][i % 3] : '#2a3140');
+      // only touch the colour when the LED actually flips
+      if (lit.current[i] === on) return;
+      lit.current[i] = on;
+      m.color.copy(on ? LED_ON[i % 3] : LED_OFF);
     });
   });
   return (

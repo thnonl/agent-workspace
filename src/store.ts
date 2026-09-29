@@ -221,6 +221,37 @@ function newRoom(id: string, existing: RoomRec[], demo: boolean): RoomRec {
 
 type Get = () => State;
 type SetFn = (partial: Partial<State>) => void;
+type BatchSet = (partial: Partial<State> | ((s: State) => Partial<State>)) => void;
+type Batch = <T>(fn: () => T) => T;
+
+/**
+ * One event or tick changes people, tasks, rooms and logs in several steps. Every `set` notifies every
+ * subscriber (and each of them re-runs its selector), so inside `run` the changes are collected and
+ * written once at the end. `get` already sees the collected changes.
+ */
+function makeBatcher(rawSet: (p: Partial<State>) => void, rawGet: Get): { set: BatchSet; get: Get; run: Batch } {
+  let depth = 0;
+  let pending: Partial<State> | null = null;
+  const get: Get = () => (pending ? { ...rawGet(), ...pending } : rawGet());
+  const set: BatchSet = (p) => {
+    const partial = typeof p === 'function' ? p(get()) : p;
+    if (depth > 0) pending = { ...pending, ...partial };
+    else rawSet(partial);
+  };
+  const run: Batch = (fn) => {
+    depth++;
+    try {
+      return fn();
+    } finally {
+      if (--depth === 0 && pending) {
+        const p = pending;
+        pending = null;
+        rawSet(p);
+      }
+    }
+  };
+  return { set, get, run };
+}
 type SpeechIn = Omit<Speech, 'id' | 'at'>;
 
 const peopleOf = (s: State, roomId: string) => Object.values(s.people).filter((p) => p.sessionId === roomId);
@@ -652,7 +683,7 @@ function handleEvent(get: Get, set: SetFn, ev: MonitorEvent, demo: boolean) {
   }
 }
 
-export const useStore = create<State>((set, get) => ({
+const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
   connection: 'connecting',
   claudeDir: '',
   demoOn: false,
@@ -686,7 +717,7 @@ export const useStore = create<State>((set, get) => ({
 
   beginSync: () => set({ syncing: { sessions: new Set(), agents: new Set() } }),
 
-  endSync: () => {
+  endSync: () => batch(() => {
     const { syncing, rooms, tasks } = get();
     if (!syncing) return;
     // anything live that the server no longer reports is finished
@@ -701,22 +732,24 @@ export const useStore = create<State>((set, get) => ({
       get().applyEvent({ type: 'agent_done', sessionId: t.sessionId, agentId: t.agentId, summary: '' });
     }
     set({ syncing: null });
-  },
+  }),
 
-  applyEvent: (ev, demo = false) => {
-    handleEvent(get, set, ev, demo);
-    if (ev.type === 'session') touchRoom(ev.sessionId, ev.updatedAt);
-    else if (ev.type !== 'hello' && ev.type !== 'ready' && ev.type !== 'session_end') touchRoom(ev.sessionId);
-    refreshVisible(get, set);
-  },
+  applyEvent: (ev, demo = false) =>
+    batch(() => {
+      handleEvent(get, set, ev, demo);
+      if (ev.type === 'session') touchRoom(ev.sessionId, ev.updatedAt);
+      else if (ev.type !== 'hello' && ev.type !== 'ready' && ev.type !== 'session_end') touchRoom(ev.sessionId);
+      refreshVisible(get, set);
+    }),
 
-  tick: () => {
-    const now = Date.now();
-    for (const id of [...get().roomOrder]) tickRoom(get, set, id, now);
-    refreshVisible(get, set);
-  },
+  tick: () =>
+    batch(() => {
+      const now = Date.now();
+      for (const id of [...get().roomOrder]) tickRoom(get, set, id, now);
+      refreshVisible(get, set);
+    }),
 
-  releaseTask: (personKey) => {
+  releaseTask: (personKey) => batch(() => {
     const s = get();
     const p = s.people[personKey];
     if (!p?.taskKey) return;
@@ -736,9 +769,9 @@ export const useStore = create<State>((set, get) => ({
       rooms: { ...now.rooms, [room.id]: { ...room, tasksDone: room.tasksDone + 1 } },
       finished: entry ? { ...now.finished, [room.id]: [entry, ...(now.finished[room.id] ?? [])].slice(0, 300) } : now.finished,
     });
-  },
+  }),
 
-  reportTask: (personKey) => {
+  reportTask: (personKey) => batch(() => {
     const s = get();
     const p = s.people[personKey];
     const t = p?.taskKey ? s.tasks[p.taskKey] : undefined;
@@ -747,7 +780,7 @@ export const useStore = create<State>((set, get) => ({
     if (t && !t.reported) patchTask(get, set, t.key, { reported: true });
     set({ rooms: { ...get().rooms, [r.id]: { ...r, reports: r.reports + 1 } } });
     if (t) logActivity(get, set, r.id, { kind: 'report', who: p.name, ctx: t.label, text: t.summary || 'Handed the report to the director' });
-  },
+  }),
 
   // the last finished summary, or (nothing finished yet) one made from what is known so far
   openSummary: (roomId) => {
@@ -843,4 +876,9 @@ export const useStore = create<State>((set, get) => ({
   setAutoDemo: (on) => set({ autoDemo: on }),
   setTimeMode: (timeMode) => set({ timeMode, hour: timeMode === 'auto' ? localHour() : HOUR_PRESETS[timeMode] }),
   setHour: (hour) => set({ hour }),
-}));
+});
+
+export const useStore = create<State>()((rawSet, rawGet) => {
+  const b = makeBatcher(rawSet, rawGet);
+  return createStore(b.set, b.get, b.run);
+});

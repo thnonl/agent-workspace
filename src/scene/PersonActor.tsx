@@ -6,7 +6,8 @@ import { makeAppearance } from '../world/appearance';
 import { rot2 } from '../world/layout';
 import type { RoomLayout } from '../world/layout';
 import { Actor, type ActorCtx, type Pose } from '../sim/actor';
-import { anchors, catsInRoom, enqueueSpeech, lastSpeech, queueLength, runtimeFor, sims, simsInRoom, view } from '../sim/registry';
+import { anchors, catsInRoom, enqueueSpeech, lastSpeech, queueLength, runtimeFor, sims, simsInRoom, view, type SimState } from '../sim/registry';
+import { frame, OFFSCREEN_STEP } from '../sim/frame';
 import { buildCharacter, RIG_SCALE, type Rig } from './character';
 import { buildLaptop } from './laptop';
 import { buildHeldItems } from './heldItems';
@@ -20,6 +21,34 @@ const qTilt = new THREE.Quaternion();
 const tiltAxis = new THREE.Vector3(1, 0, 0);
 const vTmp = new THREE.Vector3();
 const vDrop = new THREE.Vector3();
+// scratch objects for the per-frame prop maths (nothing is allocated inside the frame loop)
+const vBagTop = new THREE.Vector3();
+const vHands = new THREE.Vector3();
+const vDesk = new THREE.Vector3();
+const vHeld = new THREE.Vector3();
+const vPile = new THREE.Vector3();
+const roomXZ = { x: 0, z: 0 };
+
+/** Character-local offset (lx, lz) turned into room space. The result is shared: read it right away. */
+function toRoom(sim: SimState, lx: number, lz: number) {
+  const sn = Math.sin(sim.yaw);
+  const cs = Math.cos(sim.yaw);
+  roomXZ.x = sim.x + lx * cs + lz * sn;
+  roomXZ.z = sim.z - lx * sn + lz * cs;
+  return roomXZ;
+}
+
+/** Where the HTML speech bubble of this character is anchored (world space, above the head). */
+function syncAnchor(key: string, outer: THREE.Group | null, wp: THREE.Vector3, sim: SimState, scale: number) {
+  if (!outer) return;
+  outer.getWorldPosition(wp);
+  let a = anchors.get(key);
+  if (!a) anchors.set(key, (a = { x: 0, y: 0, z: 0, live: false }));
+  a.x = wp.x + sim.x;
+  a.y = 2.12 * scale;
+  a.z = wp.z + sim.z;
+  a.live = sim.onStage && sim.phase !== 'waiting';
+}
 const k = (rate: number, dt: number) => 1 - Math.exp(-rate * dt);
 const damp = (cur: number, target: number, rate: number, dt: number) => cur + (target - cur) * k(rate, dt);
 const ease = (t: number) => {
@@ -95,6 +124,9 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
   const outer = useRef<THREE.Group>(null);
   const clockRef = useRef(0);
   const ctx = useRef<ActorCtx | null>(null);
+  /** time collected since the last update (rooms that are off screen only step every OFFSCREEN_STEP) */
+  const pending = useRef(0);
+  const workersAt = useRef(-1);
   const wp = useMemo(() => new THREE.Vector3(), []);
 
   useEffect(() => {
@@ -113,7 +145,11 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
   }, [rig, scale, personKey]);
 
   useFrame((_, rawDt) => {
-    const dt = Math.min(rawDt, 0.1);
+    const visible = frame.visibleRooms.has(roomId);
+    pending.current += rawDt;
+    if (!visible && pending.current < OFFSCREEN_STEP) return;
+    const dt = Math.min(pending.current, 0.1);
+    pending.current = 0;
     const st = useStore.getState();
     const person = st.people[personKey];
     if (!person) return;
@@ -143,13 +179,21 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
     // people who have nothing to do look around for colleagues to watch and cats to pet
     const free = isDirector || !c.task;
     if (actor.sim.walking || free) c.cats = catsInRoom(roomId);
-    if (free) c.workers = simsInRoom(roomId).filter((x) => x.key !== personKey && x.busy && x.desk >= 0);
+    if (free && now - workersAt.current > 0.25) {
+      workersAt.current = now;
+      c.workers = simsInRoom(roomId).filter((x) => x.key !== personKey && x.busy && x.desk >= 0);
+    }
 
     actor.update(dt, c);
     const sim = actor.sim;
     if (isDirector) {
       rt.directorSeated = sim.phase === 'working' || sim.phase === 'unpacking';
       rt.directorKey = personKey;
+    }
+    if (!visible) {
+      // off screen: the story goes on (tasks, hand-overs, bubbles) but nobody needs to be posed
+      syncAnchor(personKey, outer.current, wp, actor.sim, scale);
+      return;
     }
 
     // ---- character transform
@@ -171,9 +215,6 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
     applyPose(rig, actor.pose, dt, actor.eyeOpen(), clockRef.current, sim.walking, glance);
 
     // ---- props (room space)
-    const sn = Math.sin(sim.yaw);
-    const cs = Math.cos(sim.yaw);
-    const toRoom = (lx: number, lz: number) => [sim.x + lx * cs + lz * sn, sim.z - lx * sn + lz * cs] as const;
     const deskSlot = isDirector ? null : layout.desks[Math.max(0, sim.desk)];
     const seat = isDirector ? layout.director.seat : deskSlot?.seat ?? { x: 0, z: 0 };
     const seatRot = deskSlot?.rot ?? 0;
@@ -187,7 +228,9 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
     const lat = rot2(1, 0, seatRot);
     const side = -approachSide;
     const floor = { x: seat.x + lat.x * side * 0.62, z: seat.z + lat.z * side * 0.62 };
-    const [bx, bz] = toRoom(0, -0.3 * scale);
+    const bp = toRoom(sim, 0, -0.3 * scale);
+    const bx = bp.x;
+    const bz = bp.z;
     const bt = ease(actor.bagT);
     bag.visible = sim.onStage;
     bag.position.set(
@@ -202,10 +245,10 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
     const lp = actor.lapP;
     laptop.root.visible = lp > 0.001 && sim.onStage;
     if (laptop.root.visible) {
-      const bagTop = new THREE.Vector3(floor.x, 0.5, floor.z);
-      const [hx, hz] = toRoom(0, 0.42 * scale);
-      const hands = new THREE.Vector3(hx, DESK_TOP + 0.24, hz);
-      const desk = new THREE.Vector3(laptopSpot.x, deskTop, laptopSpot.z);
+      const bagTop = vBagTop.set(floor.x, 0.5, floor.z);
+      const hp = toRoom(sim, 0, 0.42 * scale);
+      const hands = vHands.set(hp.x, DESK_TOP + 0.24, hp.z);
+      const desk = vDesk.set(laptopSpot.x, deskTop, laptopSpot.z);
       const pos = laptop.root.position;
       let sc = 1;
       if (lp < 1) {
@@ -250,11 +293,15 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
     const f = rig.folder;
     f.visible = actor.folderP >= 1 && actor.folderP < 3 && sim.onStage;
     if (f.visible) {
-      const [fx, fz] = toRoom(0, 0.55 * scale);
-      const held = new THREE.Vector3(fx, 0.78 * scale + 0.1, fz);
-      const pile = new THREE.Vector3(layout.director.desk.x + 0.95, DESK_TOP + 0.12, layout.director.desk.z + 0.1);
+      const fp = toRoom(sim, 0, 0.55 * scale);
+      const held = vHeld.set(fp.x, 0.78 * scale + 0.1, fp.z);
+      const pile = vPile.set(layout.director.desk.x + 0.95, DESK_TOP + 0.12, layout.director.desk.z + 0.1);
       if (actor.folderP === 1) f.position.copy(held);
-      else f.position.lerpVectors(held, pile, ease((actor.folderT - 1) / 0.55)).add(new THREE.Vector3(0, Math.sin(ease((actor.folderT - 1) / 0.55) * Math.PI) * 0.25, 0));
+      else {
+        const fe = ease((actor.folderT - 1) / 0.55);
+        f.position.lerpVectors(held, pile, fe);
+        f.position.y += Math.sin(fe * Math.PI) * 0.25;
+      }
       f.rotation.set(0, sim.yaw, 0);
     }
 
@@ -300,15 +347,7 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
     });
 
     // anchor for the HTML speech bubble
-    if (outer.current) {
-      outer.current.getWorldPosition(wp);
-      let a = anchors.get(personKey);
-      if (!a) anchors.set(personKey, (a = { x: 0, y: 0, z: 0, live: false }));
-      a.x = wp.x + sim.x;
-      a.y = 2.12 * scale;
-      a.z = wp.z + sim.z;
-      a.live = sim.onStage && sim.phase !== 'waiting';
-    }
+    syncAnchor(personKey, outer.current, wp, sim, scale);
 
     // selection ring
     if (ring.current) {

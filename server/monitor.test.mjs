@@ -140,3 +140,20 @@ test('an idle session still knows what was asked and how it ended', async () => 
   assert.equal(session.lastFinal, 'Imports are tidy.\n\n- sorted\n- deduplicated');
   fs.rmSync(root, { recursive: true, force: true });
 });
+
+test('a session that has been quiet for a while still wakes up when its transcript grows', async () => {
+  const { root, events, monitor, write, base } = setup();
+  write(user(base, 'Old question'));
+  write(assistant(base, [{ type: 'text', text: 'Old answer.' }], 'end_turn'));
+  // make the transcript look old so the session is polled slowly (hot window = 40 poll intervals = 1.2 s here)
+  const past = new Date(Date.now() - 20_000);
+  fs.utimesSync(path.join(root, 'E--demo', '11111111-2222-3333-4444-555555555555.jsonl'), past, past);
+  monitor.start();
+  await sleep(200);
+  events.length = 0;
+  write(user(base, 'A brand new question'));
+  await sleep(400);
+  monitor.stop();
+  assert.ok(events.some((e) => e.type === 'agent_say' && e.kind === 'task'), 'the new prompt is picked up quickly');
+  fs.rmSync(root, { recursive: true, force: true });
+});

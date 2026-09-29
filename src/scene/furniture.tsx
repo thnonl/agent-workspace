@@ -6,6 +6,7 @@ import { rot2 } from '../world/layout';
 import type { RoomTheme } from '../world/palettes';
 import { Rng } from '../util/rng';
 import { roomRuntime, sims, simsInRoom, type SimState } from '../sim/registry';
+import { frame } from '../sim/frame';
 import { G, M, MB, shade } from './kit';
 import { textTexture } from './textures';
 import { StaticBake } from './StaticBake';
@@ -234,7 +235,7 @@ export function Chair({ x, z, rot, turn, color, roomId, deskIndex, big = false, 
   const lat = useMemo(() => rot2(1, 0, rot), [rot]);
   const state = useRef({ pull: 0, turn });
   useFrame((clock, dt) => {
-    if (!pullG.current || !sw.current) return;
+    if (!pullG.current || !sw.current || !frame.visibleRooms.has(roomId)) return;
     let occ: SimState | undefined;
     if (deskIndex < 0) {
       const key = roomRuntime.get(roomId)?.directorKey;

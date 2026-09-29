@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { addAfterEffect } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useShallow } from 'zustand/react/shallow';
 import { useStore } from '../store';
@@ -45,6 +46,8 @@ interface Item {
   tail: () => HTMLDivElement | null;
   /** show: on screen; live: the character is inside the office */
   tick: (show: boolean, now: number, live: boolean) => void;
+  /** size of the bubble box, kept up to date by a ResizeObserver (reading offsetWidth every frame forces a layout) */
+  size: { w: number; h: number };
 }
 const items = new Map<string, Item>();
 const v3 = new THREE.Vector3();
@@ -56,6 +59,11 @@ interface Placed {
   dist: number;
   w: number;
   h: number;
+}
+
+/** Writes an inline style only when it changes (comparing is free, every write dirties the style of the element). */
+function setStyle(el: HTMLElement, prop: 'visibility' | 'transform' | 'zIndex', value: string) {
+  if (el.style[prop] !== value) el.style[prop] = value;
 }
 
 /**
@@ -88,45 +96,43 @@ function layoutLoop() {
       hidden.push(key);
       continue;
     }
-    const box = it.root.firstElementChild as HTMLElement | null;
-    list.push({ key, sx, sy, dist, w: box?.offsetWidth ?? 80, h: box?.offsetHeight ?? 24 });
+    list.push({ key, sx, sy, dist, w: it.size.w, h: it.size.h });
   }
   for (const key of hidden) {
     const it = items.get(key);
     if (!it) continue;
-    it.root.style.visibility = 'hidden';
+    setStyle(it.root, 'visibility', 'hidden');
     const tail = it.tail();
-    if (tail) tail.style.visibility = 'hidden';
+    if (tail) setStyle(tail, 'visibility', 'hidden');
   }
   list.sort((a, b) => a.dist - b.dist);
   const GAP = 8;
   list.forEach((p, i) => {
     const it = items.get(p.key)!;
-    it.root.style.visibility = 'visible';
-    it.root.style.transform = `translate3d(${(p.sx - p.w / 2).toFixed(1)}px, ${(p.sy - p.h - GAP).toFixed(1)}px, 0)`;
-    it.root.style.zIndex = String(9000 - i);
+    setStyle(it.root, 'visibility', 'visible');
+    setStyle(it.root, 'transform', `translate3d(${(p.sx - p.w / 2).toFixed(1)}px, ${(p.sy - p.h - GAP).toFixed(1)}px, 0)`);
+    setStyle(it.root, 'zIndex', String(9000 - i));
     const tail = it.tail();
     if (tail) {
       // the tail starts at the bottom centre of the bubble
-      tail.style.visibility = 'visible';
-      tail.style.transform = `translate3d(${p.sx.toFixed(1)}px, ${(p.sy - GAP).toFixed(1)}px, 0)`;
+      setStyle(tail, 'visibility', 'visible');
+      setStyle(tail, 'transform', `translate3d(${p.sx.toFixed(1)}px, ${(p.sy - GAP).toFixed(1)}px, 0)`);
     }
   });
 }
 
+// The layout runs right after the 3D scene has drawn a frame: the camera it projects with is then exactly the
+// one on screen, and a calm (idle) scene costs no extra work.
 let started = 0;
-let raf = 0;
+let stopEffect: (() => void) | null = null;
 function startLoop() {
   if (started++ > 0) return;
-  const loop = () => {
-    raf = requestAnimationFrame(loop);
-    layoutLoop();
-  };
-  raf = requestAnimationFrame(loop);
+  stopEffect = addAfterEffect(() => layoutLoop());
 }
 function stopLoop() {
   if (--started > 0) return;
-  cancelAnimationFrame(raf);
+  stopEffect?.();
+  stopEffect = null;
 }
 
 /** One speech bubble (or name tag) following a character on screen. */
@@ -194,9 +200,23 @@ const BubbleItem = memo(function BubbleItem({ personKey, tails }: { personKey: s
       setSettled(false);
       setCur(next);
     };
-    items.set(personKey, { root, tick, tail: () => tailRef.current });
+    const size = { w: 80, h: 24 };
+    const box = root.firstElementChild as HTMLElement | null;
+    const ro = box
+      ? new ResizeObserver(() => {
+          size.w = box.offsetWidth || 80;
+          size.h = box.offsetHeight || 24;
+        })
+      : null;
+    if (box) {
+      size.w = box.offsetWidth || 80;
+      size.h = box.offsetHeight || 24;
+      ro?.observe(box);
+    }
+    items.set(personKey, { root, tick, tail: () => tailRef.current, size });
     startLoop();
     return () => {
+      ro?.disconnect();
       items.delete(personKey);
       stopLoop();
     };

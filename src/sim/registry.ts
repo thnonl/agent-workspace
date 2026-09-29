@@ -1,4 +1,5 @@
 import type { Speech } from '../types';
+import { frame } from './frame';
 
 /**
  * Non-reactive runtime state shared between scene components (characters, doors, chairs, bubbles).
@@ -88,10 +89,18 @@ export function runtimeFor(roomId: string): RoomRuntime {
   return rt;
 }
 
+/** per-room lists, rebuilt at most once per frame (the arrays are reused: do not keep or modify them) */
+const simLists = new Map<string, { n: number; list: SimState[] }>();
+
 export function simsInRoom(roomId: string): SimState[] {
-  const out: SimState[] = [];
-  for (const s of sims.values()) if (s.roomId === roomId) out.push(s);
-  return out;
+  let c = simLists.get(roomId);
+  if (!c) simLists.set(roomId, (c = { n: 0, list: [] }));
+  if (c.n !== frame.n) {
+    c.n = frame.n;
+    c.list.length = 0;
+    for (const s of sims.values()) if (s.roomId === roomId) c.list.push(s);
+  }
+  return c.list;
 }
 
 // ---------------------------------------------------------------- speech queues
@@ -166,6 +175,8 @@ export function dropRuntime(key: string) {
 
 export function dropRoomRuntime(roomId: string) {
   roomRuntime.delete(roomId);
+  simLists.delete(roomId);
+  catLists.delete(roomId);
 }
 
 // ---------------------------------------------------------------- screen anchors
@@ -198,10 +209,17 @@ export const cats = new Map<string, CatSim>();
 /** Dev / test switches (exposed as window.__registry in dev builds). */
 export const debugFlags: { activity?: string; catNow?: boolean; catLeave?: boolean; catSpot?: string; catPose?: string } = {};
 
+const catLists = new Map<string, { n: number; list: CatSim[] }>();
+
 export function catsInRoom(roomId: string): CatSim[] {
-  const out: CatSim[] = [];
-  for (const c of cats.values()) if (c.roomId === roomId) out.push(c);
-  return out;
+  let c = catLists.get(roomId);
+  if (!c) catLists.set(roomId, (c = { n: 0, list: [] }));
+  if (c.n !== frame.n) {
+    c.n = frame.n;
+    c.list.length = 0;
+    for (const s of cats.values()) if (s.roomId === roomId) c.list.push(s);
+  }
+  return c.list;
 }
 
 /** Who currently occupies a sofa seat / desk spot: `${roomId}#${spotIndex}` -> owner key. */

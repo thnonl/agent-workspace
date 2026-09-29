@@ -4,6 +4,7 @@ import { useFrame } from '@react-three/fiber';
 import type { RoomLayout } from '../world/layout';
 import { CatBrain, neutralCatPose, type CatPose } from '../sim/cat';
 import { cats, catsInRoom, simsInRoom, spotOwners } from '../sim/registry';
+import { frame, OFFSCREEN_STEP } from '../sim/frame';
 import { buildCat, makeCatLook, type CatRig } from './catModel';
 import { MB } from './kit';
 import { useStore } from '../store';
@@ -133,6 +134,8 @@ export function CatView({ catKey, roomId, layout, seed }: Props) {
   const hearts = useRef<(THREE.Mesh | null)[]>([]);
   const clock = useRef(0);
   const smoothed = useRef<CatPose>(neutralCatPose());
+  /** time collected since the last update (a cat in a room that is off screen only steps every OFFSCREEN_STEP) */
+  const pending = useRef(0);
 
   useEffect(() => {
     cats.set(catKey, brain.sim);
@@ -146,10 +149,15 @@ export function CatView({ catKey, roomId, layout, seed }: Props) {
   }, [catKey, roomId, brain]);
 
   useFrame((state, rawDt) => {
-    const dt = Math.min(rawDt, 0.1);
+    const visible = frame.visibleRooms.has(roomId);
+    pending.current += rawDt;
+    if (!visible && pending.current < OFFSCREEN_STEP) return;
+    const dt = Math.min(pending.current, 0.1);
+    pending.current = 0;
     clock.current += dt;
     const now = performance.now() / 1000;
     brain.update(dt, { layout, now, chars: simsInRoom(roomId), cats: catsInRoom(roomId) });
+    if (!visible) return; // off screen: the cat lives on, but it is not posed
     const s = brain.sim;
     rig.root.visible = s.onStage;
     rig.root.position.set(s.x, s.y, s.z);

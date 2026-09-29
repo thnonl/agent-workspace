@@ -4,6 +4,7 @@ import { useFrame } from '@react-three/fiber';
 import type { DoorSpec, FloorDecal, RoomLayout, WallDecor, WindowSpec } from '../world/layout';
 import type { RoomTheme } from '../world/palettes';
 import { simsInRoom } from '../sim/registry';
+import { frame } from '../sim/frame';
 import { GLOW, glowMat } from './glow';
 import { G, M, MB, shade } from './kit';
 import { Ms, RB } from './furniture';
@@ -160,7 +161,7 @@ export function DoorView({ door, theme, roomId, localX }: { door: DoorSpec; them
   const w = door.width;
   const h = door.height;
   useFrame((_, dt) => {
-    if (!leaf.current) return;
+    if (!leaf.current || !frame.visibleRooms.has(roomId)) return;
     let near = false;
     for (const s of simsInRoom(roomId)) {
       if (!s.onStage) continue;

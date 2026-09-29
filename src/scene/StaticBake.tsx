@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, type ReactNode } from 'react';
 import * as THREE from 'three';
+import { frame } from '../sim/frame';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 /**
@@ -55,6 +56,7 @@ export function StaticBake({ children }: { children: ReactNode }) {
       merged.push(mesh);
     }
     sources.forEach((s) => (s.visible = false));
+    frame.shadowDirty = true;
 
     return () => {
       merged.forEach((m) => {

@@ -2,6 +2,7 @@ import { memo, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useStore } from '../store';
 import { getLayout } from '../world/layout';
+import type { RoomLayout } from '../world/layout';
 import { G, M } from './kit';
 import { Chair, Desk, DirectorDesk, RB, Ms } from './furniture';
 import { PropView } from './props';
@@ -19,33 +20,21 @@ export function roomOrigin(index: number): [number, number, number] {
   return [(index % 3) * ROOM_SPACING_X, 0, Math.floor(index / 3) * ROOM_SPACING_Z];
 }
 
-export const RoomView = memo(function RoomView({ roomId }: { roomId: string }) {
-  const room = useStore((s) => s.rooms[roomId]);
-  const reports = useStore((s) => s.rooms[roomId]?.reports ?? 0);
-  const personKeys = useStore(
-    useShallow((s) =>
-      Object.values(s.people)
-        .filter((p) => p.sessionId === roomId)
-        .map((p) => p.key),
-    ),
-  );
-  const seed = room?.seed ?? 0;
-  const themeIndex = room?.themeIndex ?? 0;
-  const layout = useMemo(() => getLayout(seed, themeIndex), [seed, themeIndex]);
+/**
+ * Everything in a room that never moves. It is baked into a few merged meshes once, so it must not
+ * re-render when the room record changes (new report, new title, new timestamp...): the props
+ * (layout identity, room id, sign text) decide.
+ */
+const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle }: { roomId: string; layout: RoomLayout; signTitle: string }) {
   const { width: W, depth: D, theme, wallHeight: H } = layout;
   const t = WALL_T;
-
   const floorTex = useMemo(() => floorTexture(theme.floorKind, theme.floor, theme.floor2, theme.floorKind === 'wood' || theme.floorKind === 'carpetTile' ? W / 4 : W / 3, theme.floorKind === 'wood' || theme.floorKind === 'carpetTile' ? D / 4 : D / 3), [theme, W, D]);
   const { back, left } = useMemo(() => layoutOpenings(layout), [layout]);
   const doorLocalBack = layout.door.wall === 'back' ? layout.door.pos + t / 2 : null;
   const doorLocalLeft = layout.door.wall === 'left' ? -layout.door.pos : null;
-  const project = room?.project ?? '';
-
-  if (!room) return null;
-  const origin = roomOrigin(room.index);
 
   return (
-    <group position={origin}>
+    <>
       <StaticBake>
       {/* diorama base */}
       <RB size={[W + t + 0.3, 0.6, D + t + 0.3]} pos={[(-t + 0.3) / 2 - 0.15, -0.3, (-t + 0.3) / 2 - 0.15]} color={theme.base} r={0.16} receive />
@@ -89,7 +78,7 @@ export const RoomView = memo(function RoomView({ roomId }: { roomId: string }) {
         {layout.wallDecor.filter((d) => d.wall === 'back').map((d, i) => (
           <WallDecorView key={i} d={d} theme={theme} localX={d.pos + t / 2} />
         ))}
-        {layout.signPos?.wall === 'back' ? <Sign title={project || room.title} localX={layout.signPos.pos + t / 2} y={layout.signPos.y} theme={theme} /> : null}
+        {layout.signPos?.wall === 'back' ? <Sign title={signTitle} localX={layout.signPos.pos + t / 2} y={layout.signPos.y} theme={theme} /> : null}
         </StaticBake>
       </group>
       <group position={[-W / 2, 0, 0]} rotation={[0, Math.PI / 2, 0]}>
@@ -114,16 +103,49 @@ export const RoomView = memo(function RoomView({ roomId }: { roomId: string }) {
           <Desk key={d.index} slot={d} theme={theme} />
         ))}
       </StaticBake>
-      {layout.desks.map((d) => (
-        <Chair key={d.index} x={d.seat.x} z={d.seat.z} rot={d.rot} turn={d.chairTurn} color={d.chairColor} roomId={roomId} deskIndex={d.index} approachSide={d.approachSide} seed={d.index} />
-      ))}
-      <DirectorDesk layout={layout} reports={reports} />
-      <Chair x={layout.director.seat.x} z={layout.director.seat.z} rot={0} turn={0} color={shade(theme.accent2, -0.05)} roomId={roomId} deskIndex={-1} big approachSide={layout.director.approachSide} seed={99} />
       <StaticBake>
         {layout.props.map((p, i) => (
           <PropView key={i} p={p} theme={theme} />
         ))}
       </StaticBake>
+    </>
+  );
+});
+
+export const RoomView = memo(function RoomView({ roomId }: { roomId: string }) {
+  // narrow selectors: the room record changes on every event (timestamps, counters) but only these matter here
+  const exists = useStore((s) => !!s.rooms[roomId]);
+  const index = useStore((s) => s.rooms[roomId]?.index ?? 0);
+  const seed = useStore((s) => s.rooms[roomId]?.seed ?? 0);
+  const themeIndex = useStore((s) => s.rooms[roomId]?.themeIndex ?? 0);
+  const reports = useStore((s) => s.rooms[roomId]?.reports ?? 0);
+  const signTitle = useStore((s) => {
+    const r = s.rooms[roomId];
+    return r ? r.project || r.title : '';
+  });
+  const personKeys = useStore(
+    useShallow((s) =>
+      Object.values(s.people)
+        .filter((p) => p.sessionId === roomId)
+        .map((p) => p.key),
+    ),
+  );
+  const layout = useMemo(() => getLayout(seed, themeIndex), [seed, themeIndex]);
+  const { theme } = layout;
+
+  if (!exists) return null;
+  const origin = roomOrigin(index);
+
+  return (
+    <group position={origin}>
+      <RoomStatic roomId={roomId} layout={layout} signTitle={signTitle} />
+
+      {/* movable furniture */}
+      {layout.desks.map((d) => (
+        <Chair key={d.index} x={d.seat.x} z={d.seat.z} rot={d.rot} turn={d.chairTurn} color={d.chairColor} roomId={roomId} deskIndex={d.index} approachSide={d.approachSide} seed={d.index} />
+      ))}
+      <DirectorDesk layout={layout} reports={reports} />
+      <Chair x={layout.director.seat.x} z={layout.director.seat.z} rot={0} turn={0} color={shade(theme.accent2, -0.05)} roomId={roomId} deskIndex={-1} big approachSide={layout.director.approachSide} seed={99} />
 
       {/* the office cats */}
       {Array.from({ length: layout.catCount }, (_, i) => (

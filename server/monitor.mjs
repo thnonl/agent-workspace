@@ -512,6 +512,43 @@ export function createMonitor({
   };
 
   // ------------------------------------------------------------------ loops
+  // A calm machine should cost (almost) nothing: sessions that are doing nothing are polled slowly, transcripts that
+  // are too old to matter are not stat'ed again and again, and (where the OS supports it) a recursive file watcher
+  // wakes the affected session / triggers a scan the moment a transcript changes.
+  /** session ids whose files changed according to the watcher */
+  const dirty = new Set();
+  /** session id -> earliest time of the next poll of an idle session */
+  const nextPoll = new Map();
+  /** transcripts that were too old (or empty) when last looked at: file -> time of that look */
+  const ignored = new Map();
+  let watcher = null;
+  let scanSoon = null;
+  const hotWindowMs = hotPollMs * 40;
+  const idlePollMs = () => hotPollMs * (watcher ? 8 : 4);
+  const recheckMs = () => (watcher ? 10 * MIN : 30_000);
+
+  const startWatcher = () => {
+    try {
+      watcher = fs.watch(claudeDir, { recursive: true, persistent: false }, (_evt, name) => {
+        if (!name) return;
+        const parts = String(name).split(/[\\/]/);
+        if (parts.length < 2) return;
+        const id = parts[1].endsWith('.jsonl') ? parts[1].slice(0, -6) : parts[1];
+        dirty.add(id);
+        if (parts.length === 2 && parts[1].endsWith('.jsonl')) {
+          ignored.delete(path.join(claudeDir, String(name)));
+          if (!sessions.has(id) && !scanSoon) scanSoon = setTimeout(() => { scanSoon = null; guard(coldScan)(); }, 50);
+        }
+      });
+      watcher.on('error', () => {
+        watcher?.close();
+        watcher = null;
+      });
+    } catch {
+      watcher = null; // no recursive watching here: the slower polling below still works
+    }
+  };
+
   const listSessionFiles = () => {
     const found = [];
     let dirs;
@@ -538,13 +575,19 @@ export function createMonitor({
     const now = Date.now();
     for (const { dirName, file, id } of listSessionFiles()) {
       if (sessions.has(id)) continue;
+      const seen = ignored.get(file);
+      if (seen !== undefined && now - seen < recheckMs()) continue;
       let st;
       try {
         st = fs.statSync(file);
       } catch {
         continue;
       }
-      if (st.size === 0 || now - st.mtimeMs > windowMs) continue;
+      if (st.size === 0 || now - st.mtimeMs > windowMs) {
+        ignored.set(file, now);
+        continue;
+      }
+      ignored.delete(file);
       openSession(id, file, dirName, st.mtimeMs, now);
     }
   };
@@ -552,12 +595,17 @@ export function createMonitor({
   const hotPoll = () => {
     const now = Date.now();
     for (const s of [...sessions.values()]) {
+      const hot = s.mainActive || s.pendingTools.size > 0 || now - s.lastActivity < hotWindowMs || runningAgents(s).length > 0;
+      if (!hot && !dirty.has(s.id) && now < (nextPoll.get(s.id) ?? 0)) continue;
+      dirty.delete(s.id);
+      nextPoll.set(s.id, now + idlePollMs());
       let st;
       try {
         st = fs.statSync(s.file);
       } catch {
         emitter.emit('event', { type: 'session_end', sessionId: s.id, reason: 'gone' });
         sessions.delete(s.id);
+        nextPoll.delete(s.id);
         continue;
       }
       let changed = false;
@@ -570,6 +618,7 @@ export function createMonitor({
       if (now - s.lastActivity > windowMs && !s.mainActive && runningAgents(s).length === 0) {
         emitter.emit('event', { type: 'session_end', sessionId: s.id, reason: 'idle' });
         sessions.delete(s.id);
+        nextPoll.delete(s.id);
       }
     }
   };
@@ -593,13 +642,19 @@ export function createMonitor({
     sessionCount: () => sessions.size,
     start() {
       if (hotTimer) return;
+      startWatcher();
       guard(coldScan)();
       hotTimer = setInterval(guard(hotPoll), hotPollMs);
-      scanTimer = setInterval(guard(coldScan), scanMs);
+      // with a watcher the periodic scan is only a safety net
+      scanTimer = setInterval(guard(coldScan), watcher ? scanMs * 5 : scanMs);
     },
     stop() {
       clearInterval(hotTimer);
       clearInterval(scanTimer);
+      clearTimeout(scanSoon);
+      scanSoon = null;
+      watcher?.close();
+      watcher = null;
       hotTimer = scanTimer = null;
     },
   };

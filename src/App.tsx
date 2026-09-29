@@ -1,5 +1,4 @@
-import { useEffect, useMemo } from 'react';
-import { Scene } from './scene/Scene';
+import { lazy, Suspense, useEffect, useMemo } from 'react';
 import { BubbleLayer } from './ui/BubbleLayer';
 import { AgentPanel, EmptyState, Help, NamesDialog, RoomHeader, ReleaseConfirm, RoomSwitcher, SummaryPaper, TopBar } from './ui/Overlay';
 import { localHour, useStore } from './store';
@@ -77,6 +76,9 @@ function useOfficeClock() {
   }, []);
 }
 
+// the 3D scene (three.js, drei, the whole office) loads after the page shell has painted
+const Scene = lazy(() => import('./scene/Scene').then((m) => ({ default: m.Scene })));
+
 const TIME_ORDER = ['auto', 'day', 'dusk', 'night'] as const;
 
 function useHotkeys() {
@@ -134,7 +136,9 @@ export default function App() {
         <i className="cloud c3" />
       </div>
       <div className="stage">
-        <Scene />
+        <Suspense fallback={null}>
+          <Scene />
+        </Suspense>
       </div>
       <BubbleLayer />
       <TopBar />
