@@ -117,6 +117,8 @@ const HIRE_GAP_MS = 6000;
 
 let logId = 100000;
 
+/** a session that has stood still for this long is released by itself (it comes back when it is continued) */
+const AUTO_RELEASE_MS = 60 * 60_000;
 const RELEASED_KEY = 'claude-office:released';
 
 /** Rooms the user released (hidden from the list until the session is continued), by session id → when. */
@@ -153,18 +155,44 @@ function isShown(s: State, id: string): boolean {
   return (lastActive.get(id) ?? 0) > released;
 }
 
+/** Nothing is going on in the room and nothing has happened for an hour. */
+function isStale(s: State, id: string, now: number): boolean {
+  const r = s.rooms[id];
+  if (!r || r.mainActive) return false;
+  for (const t of Object.values(s.tasks)) if (t.sessionId === id) return false;
+  return now - (lastActive.get(id) ?? r.createdAt) > AUTO_RELEASE_MS;
+}
+
 /** Keep `visibleOrder` (and the active room) in line with what is going on. */
 function refreshVisible(get: Get, set: SetFn) {
-  const s = get();
+  let s = get();
+  const now = Date.now();
+  // a session that stopped more than an hour ago is released like the user would do it (not while its paper is open)
+  const stale = s.roomOrder.filter((id) => !s.released[id] && s.summaryOpen !== id && s.releaseAsk?.roomId !== id && isStale(s, id, now));
+  let unseen = s.unseen;
+  let unread = s.unread;
+  let released = s.released;
+  if (stale.length) {
+    released = { ...released };
+    unseen = { ...unseen };
+    unread = { ...unread };
+    for (const id of stale) {
+      released[id] = now;
+      unseen[id] = false;
+      unread[id] = false;
+    }
+    saveReleased(released);
+    s = { ...s, released, unseen, unread };
+  }
   const vis = s.roomOrder.filter((id) => isShown(s, id));
   // rooms whose session went on after the release are no longer "released"
   const back = vis.filter((id) => s.released[id]);
-  let released = s.released;
   if (back.length) {
-    released = { ...s.released };
+    released = { ...released };
     for (const id of back) delete released[id];
     saveReleased(released);
   }
+  s = get();
   const same = vis.length === s.visibleOrder.length && vis.every((id, i) => id === s.visibleOrder[i]);
   let active = s.activeRoomId;
   if (!active || !vis.includes(active)) {
@@ -172,9 +200,9 @@ function refreshVisible(get: Get, set: SetFn) {
     const from = active ? s.roomOrder.indexOf(active) : 0;
     active = [...vis].sort((a, b) => Math.abs(s.roomOrder.indexOf(a) - from) - Math.abs(s.roomOrder.indexOf(b) - from))[0] ?? null;
   }
-  if (same && active === s.activeRoomId && released === s.released) return;
+  if (same && active === s.activeRoomId && released === s.released && unseen === s.unseen && unread === s.unread) return;
   set({
-    released,
+    released, unseen, unread,
     visibleOrder: same ? s.visibleOrder : vis, activeRoomId: active,
     selectedKey: active === s.activeRoomId ? s.selectedKey : null,
     summaryOpen: active === s.activeRoomId ? s.summaryOpen : null,
