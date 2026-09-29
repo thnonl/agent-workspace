@@ -79,8 +79,8 @@ button { font: inherit; color: inherit; }
 .btn em { font-style: normal; font-size: 10px; margin-left: 6px; opacity: 0.6; }
 .btn-icon { width: 38px; height: 38px; padding: 0; display: grid; place-items: center; font-size: 18px; }
 .btn-on { background: linear-gradient(135deg, #ffd9c7, #ffc2dd); }
-.btn-big { padding: 12px 26px; font-size: 15px; background: linear-gradient(135deg, #ff9ec4, #ffb98f); color: #fff; border-color: #fff; text-shadow: 0 1px 0 rgba(0, 0, 0, 0.12); }
-.btn-big:hover { background: linear-gradient(135deg, #ffb0d0, #ffc9a5); }
+.btn-big { padding: 12px 26px; font-size: 15px; background: linear-gradient(135deg, #c92f6d, #d24d1c); color: #fff; border-color: #fff; text-shadow: 0 1px 1px rgba(60, 10, 30, 0.35); }
+.btn-big:hover { background: linear-gradient(135deg, #d63c7b, #de5d2b); }
 
 /* --- room header ------------------------------------------------------ */
 .room-header {
@@ -239,6 +239,13 @@ button { font: inherit; color: inherit; }
 .confirm-room em { display: block; font-style: normal; font-size: 11.5px; font-weight: 700; color: var(--ink-soft); }
 .confirm-note { margin: 0 0 16px; padding: 9px 12px; border-radius: 12px; background: #eaf3ff; font-size: 12.5px; font-weight: 700; line-height: 1.45; }
 .confirm-actions { display: flex; justify-content: flex-end; gap: 10px; }
+/* white dialogs keep dark text: at night the app turns --ink light, which made their text vanish */
+.confirm-card, .modal-card, .paper { --ink: #3b3350; --ink-soft: #5b5273; --glass: #f3eefb; color: var(--ink); }
+.app .confirm-card .btn, .app .modal-card .btn, .app .paper .btn { color: var(--ink); background: #f3eefb; border-color: #d9cfee; box-shadow: none; backdrop-filter: none; }
+.app .confirm-card .btn:hover, .app .modal-card .btn:hover, .app .paper .btn:hover { background: #e7defa; }
+.app .confirm-card .btn-big, .app .modal-card .btn-big, .app .paper .btn-big { color: #fff; background: linear-gradient(135deg, #c92f6d, #d24d1c); border-color: #fff; box-shadow: 0 6px 16px rgba(201, 47, 109, 0.35); }
+.app .confirm-card .btn-big:hover, .app .modal-card .btn-big:hover, .app .paper .btn-big:hover { background: linear-gradient(135deg, #d63c7b, #de5d2b); }
+.confirm-note { color: #26314f; }
 @media (max-width: 860px) { .paper-scroll { padding: 26px 22px 12px 40px; } }
 
 .modal { position: absolute; inset: 0; z-index: 100; display: grid; place-items: center; background: rgba(60, 40, 90, 0.28); backdrop-filter: blur(4px); animation: fadeIn 0.2s both; }
