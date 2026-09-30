@@ -7,6 +7,7 @@ import type { Phase } from '../sim/registry';
 import type { ActivityEntry, Speech, TaskLogEntry, TaskRec } from '../types';
 import { FALLBACK_NAMES, parseNames } from '../names';
 import { sfx } from '../audio';
+import { PROVIDER_NAME, ProviderLogo } from './ProviderLogo';
 
 const ICON: Record<string, string> = { thinking: '💭', text: '💬', tool: '🔧', task: '📥', done: '✅', error: '⚠️' };
 
@@ -334,11 +335,9 @@ export function RoomSwitcher() {
           const st = status[id] ?? NO_STATUS;
           const theme = themeFor(r.themeIndex);
           return (
-            <button key={id} className={`room-card${id === active ? ' active' : ''}`} style={{ ['--accent' as string]: theme.accent, ['--wall' as string]: theme.wall }} onClick={() => setActive(id)} title={`${r.title}${i < 9 ? ` (${i + 1})` : ''}`}>
-              <span className="room-card-swatch">
-                <i style={{ background: theme.wall }} />
-                <i style={{ background: theme.floor }} />
-                <i style={{ background: theme.accent }} />
+            <button key={id} className={`room-card${id === active ? ' active' : ''}`} style={{ ['--accent' as string]: theme.accent, ['--wall' as string]: theme.wall }} onClick={() => setActive(id)} title={`${r.title} · ${PROVIDER_NAME[r.provider]}${i < 9 ? ` (${i + 1})` : ''}`}>
+              <span className="room-card-logo" title={PROVIDER_NAME[r.provider]}>
+                <ProviderLogo provider={r.provider} />
               </span>
               <span className="room-card-text">
                 <b>{i + 1}. {r.project}</b>

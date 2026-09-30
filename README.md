@@ -26,7 +26,13 @@ A cute, isometric 3D office that shows your **Claude Code** sessions at work, in
 * **Day / night** follows the system clock: sky gradient, sun and moon, stars, sun-beams, warm lights that switch on in every room when it gets dark (lamps, wall sconces, window glow). Press `N` (or the clock button) to preview day / dusk / night, or open the app with `?hour=21.5`.
 * Bottom bar = **room switcher** (camera flies between rooms). Click a character to follow it and read its log.
 
-No configuration in Claude Code is needed – the app simply tails the transcript files Claude Code already writes to `~/.claude/projects/**.jsonl` (including `<session>/subagents/agent-*.jsonl`).
+No configuration is needed – the app simply reads what the agents already write:
+
+* **Claude Code** – tails `~/.claude/projects/**.jsonl` (including `<session>/subagents/agent-*.jsonl`).
+* **Codex / ChatGPT** (CLI, desktop app, IDE) – tails `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`; thread names come from `~/.codex/session_index.jsonl`.
+* **OpenCode 2.x** – reads `~/.local/share/opencode/opencode.db` (SQLite, opened read-only; needs Node 22.5+ for `node:sqlite`). Sub-agent sessions (`parent_id`) show up as sub-agents of their parent room. Older OpenCode 1.x databases are not supported.
+
+Each room button shows the logo of its provider instead of a colour swatch.
 
 ## Run
 
@@ -50,6 +56,8 @@ If no session is running the app starts a **demo** with three scripted sessions 
 | --- | --- | --- |
 | `CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Folder to watch |
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | Used to derive the folder above |
+| `CODEX_HOME` | `~/.codex` | Codex home (rollouts are read from `sessions/`) |
+| `OPENCODE_DB` | `~/.local/share/opencode/opencode.db` | OpenCode database |
 | `SESSION_WINDOW_MIN` | `30` | A session gets a room while it was active within this many minutes |
 | `PORT` | `4173` | Port of `npm start` |
 
@@ -88,6 +96,7 @@ If no session is running the app starts a **demo** with three scripted sessions 
 | Path | What |
 | --- | --- |
 | `server/monitor.mjs` | transcript watcher → events (unit tests: `npm test`) |
+| `server/codex.mjs`, `server/opencode.mjs` | Codex rollout parser, OpenCode database reader |
 | `src/world/layout.ts` | procedural room generator (fan / bench seating facing the director, door, windows, props, wall decor, floor clutter) + nav grid |
 | `src/world/nav.ts` | A* path finding with line-of-sight smoothing |
 | `src/world/appearance.ts` | random cute characters (gender, hair, outfits, accessories) |

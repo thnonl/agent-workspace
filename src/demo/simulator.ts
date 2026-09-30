@@ -79,9 +79,9 @@ const SCENARIOS: Scenario[] = [
 ];
 
 const PROJECTS = [
-  { id: 'demo-pixel-shop', project: 'pixel-shop', cwd: '/home/dev/pixel-shop' },
-  { id: 'demo-api-gateway', project: 'api-gateway', cwd: '/home/dev/api-gateway' },
-  { id: 'demo-docs-site', project: 'docs-site', cwd: '/home/dev/docs-site' },
+  { id: 'demo-pixel-shop', project: 'pixel-shop', cwd: '/home/dev/pixel-shop', provider: 'claude' as const },
+  { id: 'demo-api-gateway', project: 'api-gateway', cwd: '/home/dev/api-gateway', provider: 'codex' as const },
+  { id: 'demo-docs-site', project: 'docs-site', cwd: '/home/dev/docs-site', provider: 'opencode' as const },
 ];
 
 export function startDemo(emit: Emit, count = 3): () => void {
@@ -116,11 +116,11 @@ export function startDemo(emit: Emit, count = 3): () => void {
     const p = PROJECTS[idx % PROJECTS.length];
     let run = idx;
     await sleep(idx * 6500 + 300);
-    emit({ type: 'session', sessionId: p.id, title: '', cwd: p.cwd, project: p.project, updatedAt: Date.now() });
+    emit({ type: 'session', sessionId: p.id, title: '', cwd: p.cwd, project: p.project, provider: p.provider, updatedAt: Date.now() });
     while (!stopped) {
       const sc = SCENARIOS[run++ % SCENARIOS.length];
       const title = sc.prompt.length > 46 ? `${sc.prompt.slice(0, 45)}…` : sc.prompt;
-      emit({ type: 'session', sessionId: p.id, title, cwd: p.cwd, project: p.project, updatedAt: Date.now() });
+      emit({ type: 'session', sessionId: p.id, title, cwd: p.cwd, project: p.project, provider: p.provider, updatedAt: Date.now() });
       emit({ type: 'agent_start', sessionId: p.id, agentId: 'main', role: 'main', label: 'Director' });
       emit({ type: 'agent_say', sessionId: p.id, agentId: 'main', kind: 'task', text: sc.prompt });
       await sleep(5200);

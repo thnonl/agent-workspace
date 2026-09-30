@@ -235,7 +235,7 @@ function newRoom(id: string, existing: RoomRec[], demo: boolean): RoomRec {
   let themeIndex = seed % THEMES.length;
   for (let k = 0; k < THEMES.length && used.has(themeIndex); k++) themeIndex = (themeIndex + 1) % THEMES.length;
   return {
-    id, title: id.slice(0, 8), project: 'session', cwd: '', seed, themeIndex,
+    id, title: id.slice(0, 8), project: 'session', provider: 'claude', cwd: '', seed, themeIndex,
     index: existing.length, updatedAt: Date.now(), createdAt: Date.now(), reports: 0, tasksDone: 0, mainActive: false, demo,
   };
 }
@@ -631,7 +631,7 @@ function handleEvent(get: Get, set: SetFn, ev: MonitorEvent, demo: boolean) {
       }
       const existing = s.rooms[ev.sessionId];
       const base = existing ?? newRoom(ev.sessionId, Object.values(s.rooms), demo);
-      const room: RoomRec = { ...base, title: ev.title || base.title, project: ev.project || base.project, cwd: ev.cwd || base.cwd, updatedAt: ev.updatedAt };
+      const room: RoomRec = { ...base, title: ev.title || base.title, project: ev.project || base.project, provider: ev.provider ?? base.provider, cwd: ev.cwd || base.cwd, updatedAt: ev.updatedAt };
       set({
         rooms: { ...s.rooms, [room.id]: room },
         roomOrder: existing ? s.roomOrder : [...s.roomOrder, room.id],
