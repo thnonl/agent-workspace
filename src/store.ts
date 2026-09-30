@@ -7,8 +7,14 @@ import { HOUR_PRESETS } from './env';
 import { loadNames, pickName, saveNames } from './names';
 import { getLayout } from './world/layout';
 import { isMuted, setMuted as setAudioMuted, sfx } from './audio';
+import { loadFlag, loadPref, QUALITIES, savePref, type Quality } from './prefs';
+import { CONTEXT_WINDOWS, type ContextWindowPref } from './context';
+import { resolveWeather, WEATHER_MODES, type Weather, type WeatherMode } from './weather';
+import { resolveSeason, SEASON_MODES, type Season, type SeasonMode } from './season';
 import { doneLines, pickAck } from './sim/phrases';
-import { bufferTaskSpeech, clearTalk, debugFlags, dropRoomRuntime, dropRuntime, dropTaskSpeech, enqueueSpeech, hasQueuedTool, runtimeFor, takeTaskSpeech, talkPending } from './sim/registry';
+import { celebrate } from './sim/celebrate';
+import { noteCue, notePeople, noteReport, noteRun, noteTask } from './progress';
+import { bufferTaskSpeech, clearTalk, debugFlags, dropRoomRuntime, dropRuntime, dropTaskSpeech, enqueueSpeech, hasQueuedTool, runtimeFor, sims, takeTaskSpeech, talkPending } from './sim/registry';
 
 export type Connection = 'connecting' | 'live' | 'offline';
 export type TimeMode = 'auto' | 'day' | 'dusk' | 'night';
@@ -68,6 +74,20 @@ interface State {
   timeMode: TimeMode;
   /** effective hour of day (0-24) driving light and sky */
   hour: number;
+  /** render quality: low = plain, medium = soft light effects, high = sharper render and denser particles */
+  quality: Quality;
+  weatherMode: WeatherMode;
+  /** the weather outside right now (weatherMode resolved) */
+  weather: Weather;
+  seasonMode: SeasonMode;
+  season: Season;
+  /** lo-fi music on (off until the user asks for it) */
+  musicOn: boolean;
+  /** window size assumed for sessions whose window is only guessed (see context.ts) */
+  contextWindow: ContextWindowPref;
+  /** screensaver: HUD hidden, the camera tours the rooms */
+  cinema: boolean;
+  showSettings: boolean;
   syncing: { sessions: Set<string>; agents: Set<string> } | null;
 
   setConnection: (c: Connection, sources?: Sources) => void;
@@ -109,6 +129,13 @@ interface State {
   setAutoDemo: (on: boolean) => void;
   setTimeMode: (m: TimeMode) => void;
   setHour: (h: number) => void;
+  setQuality: (q: Quality) => void;
+  setWeatherMode: (m: WeatherMode) => void;
+  setSeasonMode: (m: SeasonMode) => void;
+  setMusicOn: (on: boolean) => void;
+  setContextWindow: (w: ContextWindowPref) => void;
+  setCinema: (on: boolean) => void;
+  setShowSettings: (on: boolean) => void;
 }
 
 export function localHour(): number {
@@ -135,6 +162,11 @@ const MIN_TEAM = 3;
 export const MAX_STAFF = 6;
 
 const SWITCHER_KEY = 'agent-workspace.showSwitcher';
+/** ?weather=rain / ?season=xmas force a setting for this page load (testing, screenshots) */
+const queryOf = (name: string): string | null => (typeof location === 'undefined' ? null : new URLSearchParams(location.search).get(name));
+const pickMode = <T extends string>(q: string | null, allowed: readonly T[]): T | null => (allowed.includes(q as T) ? (q as T) : null);
+const initWeatherMode: WeatherMode = pickMode(queryOf('weather'), WEATHER_MODES) ?? loadPref('weather', WEATHER_MODES, 'auto');
+const initSeasonMode: SeasonMode = pickMode(queryOf('season'), SEASON_MODES) ?? loadPref('season', SEASON_MODES, 'auto');
 function loadShowSwitcher(): boolean {
   try {
     return localStorage.getItem(SWITCHER_KEY) !== '0';
@@ -483,6 +515,7 @@ function beginRun(get: Get, set: SetFn, roomId: string, now: number) {
   const rt = runtimeFor(roomId);
   if (rt.wasBusy) return;
   rt.wasBusy = true;
+  rt.summaryDue = false; // more work came in: the summary of the last run is no longer the news
   rt.runStart = now;
   clearTalk(directorKeyOf(roomId)); // the announcement of the previous run is forgotten
   const cur = get();
@@ -539,16 +572,26 @@ function finishRun(get: Get, set: SetFn, roomId: string, now: number) {
   rt.lastText = '';
   logActivity(get, set, roomId, { kind: 'system', who: 'Office', text: 'All work is done – the summary is ready' });
   sfx('chime'); // the session is done (also when another room is on screen)
-  // the director announces it; only when there is nobody to say it does the paper open by itself (not in the demo: it would keep interrupting)
-  const talking = startSummaryTalk(get, roomId, summary);
-  const readNow = s.activeRoomId === roomId && !room.demo && !talking;
+  // confetti and cheers; a long or busy run also gets a cake on the director's desk
+  celebrate(roomId, 'run');
+  if (summary.tasks.length >= 10 || now - summary.startedAt >= 5 * 60_000) celebrate(roomId, 'cake');
+  if (!room.demo) noteRun((now - summary.startedAt) / 60_000);
+  // the director announces it; the paper itself is laid on the screen when everybody has left the office (tickRoom) – not in the demo: it would keep interrupting
+  startSummaryTalk(get, roomId, summary);
+  rt.summaryDue = !room.demo;
   const cur = get();
   set({
     summaries: { ...cur.summaries, [roomId]: summary },
     unseen: { ...cur.unseen, [roomId]: true },
     unread: { ...cur.unread, [roomId]: true },
-    summaryOpen: readNow ? roomId : cur.summaryOpen,
   });
+}
+
+/** Nobody of the room is at work or on the way: every person has been sent home and has walked out of the door. */
+function officeEmpty(st: State, roomId: string): boolean {
+  if (peopleOf(st, roomId).some((p) => p.present)) return false;
+  for (const s of sims.values()) if (s.roomId === roomId && s.onStage) return false;
+  return true;
 }
 
 /** The user steps into a room: a session that is done lays its summary paper on the screen (the demo would keep interrupting). */
@@ -600,6 +643,7 @@ function tickRoom(get: Get, set: SetFn, roomId: string, now: number) {
     }
     ensureDirector(get, set, roomId);
     dispatchRoom(get, set, roomId);
+    if (!room.demo) notePeople(peopleOf(get(), roomId).filter((p) => p.present).length);
   } else if (!rt.idleSince) {
     rt.idleSince = now;
   } else if (!rt.leaving && now - rt.idleSince > GRACE_MS) {
@@ -628,6 +672,12 @@ function tickRoom(get: Get, set: SetFn, roomId: string, now: number) {
   const due: Record<string, Partial<PersonRec>> = {};
   for (const p of peopleOf(get(), roomId)) if (p.leaveAt && now >= p.leaveAt) due[p.key] = { present: false, leaveAt: 0 };
   patchPeople(get, set, due);
+  // the run is over and the last person has gone: the summary paper opens by itself (when the room is the one on screen and nothing else is open)
+  if (rt.summaryDue && rt.leaving && !busy && officeEmpty(get(), roomId)) {
+    rt.summaryDue = false;
+    const st = get();
+    if (st.activeRoomId === roomId && st.summaries[roomId] && !st.summaryOpen && !st.releaseAsk && !st.releaseAllAsk) set({ summaryOpen: roomId });
+  }
 }
 
 /** Turns one monitor event into people, tasks and rooms. */
@@ -649,7 +699,7 @@ function handleEvent(get: Get, set: SetFn, ev: MonitorEvent, demo: boolean) {
       }
       const existing = s.rooms[ev.sessionId];
       const base = existing ?? newRoom(ev.sessionId, Object.values(s.rooms), demo);
-      const room: RoomRec = { ...base, title: ev.title || base.title, project: ev.project || base.project, provider: ev.provider ?? base.provider, cwd: ev.cwd || base.cwd, updatedAt: ev.updatedAt };
+      const room: RoomRec = { ...base, title: ev.title || base.title, project: ev.project || base.project, provider: ev.provider ?? base.provider, cwd: ev.cwd || base.cwd, updatedAt: ev.updatedAt, context: ev.context ?? base.context };
       set({
         rooms: { ...s.rooms, [room.id]: room },
         roomOrder: existing ? s.roomOrder : [...s.roomOrder, room.id],
@@ -738,6 +788,11 @@ function handleEvent(get: Get, set: SetFn, ev: MonitorEvent, demo: boolean) {
     case 'agent_say': {
       const roomId = ev.sessionId;
       if (!s.rooms[roomId]) return;
+      // the agent committed / pushed (not for history that is replayed when the page connects)
+      if (ev.cue && !s.syncing) {
+        celebrate(roomId, ev.cue);
+        if (!s.rooms[roomId].demo) noteCue(ev.cue);
+      }
       const sp: SpeechIn = { kind: ev.kind, text: ev.text, tool: ev.tool };
       if (ev.agentId !== 'main') {
         const task = s.tasks[agentKey(roomId, ev.agentId)];
@@ -860,6 +915,15 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
   autoDemo: false,
   timeMode: 'auto',
   hour: localHour(),
+  quality: loadPref('quality', QUALITIES, 'medium'),
+  weatherMode: initWeatherMode,
+  weather: resolveWeather(initWeatherMode, localHour()),
+  seasonMode: initSeasonMode,
+  season: resolveSeason(initSeasonMode),
+  musicOn: loadFlag('music', false),
+  contextWindow: loadPref('contextWindow', CONTEXT_WINDOWS, 'auto'),
+  cinema: false,
+  showSettings: false,
   syncing: null,
 
   setConnection: (connection, sources) => set((s) => ({ connection, sources: sources ?? s.sources })),
@@ -935,6 +999,7 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
       rooms: { ...now.rooms, [room.id]: { ...room, tasksDone: room.tasksDone + 1 } },
       finished: entry ? { ...now.finished, [room.id]: [entry, ...(now.finished[room.id] ?? [])].slice(0, 300) } : now.finished,
     });
+    if (!room.demo) noteTask({ weather: now.weather, season: now.season });
   }),
 
   reportTask: (personKey) => batch(() => {
@@ -945,6 +1010,7 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
     if (!p || !r) return;
     if (t && !t.reported) patchTask(get, set, t.key, { reported: true });
     set({ rooms: { ...get().rooms, [r.id]: { ...r, reports: r.reports + 1 } } });
+    if (!r.demo) noteReport();
     if (t) logActivity(get, set, r.id, { kind: 'report', who: p.name, ctx: t.label, text: t.summary || 'Handed the report to the director' });
   }),
 
@@ -1075,8 +1141,34 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
   },
   resetView: () => set((s) => ({ resetTick: s.resetTick + 1 })),
   setAutoDemo: (on) => set({ autoDemo: on }),
-  setTimeMode: (timeMode) => set({ timeMode, hour: timeMode === 'auto' ? localHour() : HOUR_PRESETS[timeMode] }),
-  setHour: (hour) => set({ hour }),
+  setTimeMode: (timeMode) =>
+    set((s) => {
+      const hour = timeMode === 'auto' ? localHour() : HOUR_PRESETS[timeMode];
+      return { timeMode, hour, weather: resolveWeather(s.weatherMode, hour) };
+    }),
+  setHour: (hour) => set((s) => ({ hour, weather: resolveWeather(s.weatherMode, hour), season: resolveSeason(s.seasonMode) })),
+  setQuality: (quality) => {
+    savePref('quality', quality);
+    set({ quality });
+  },
+  setWeatherMode: (weatherMode) => {
+    savePref('weather', weatherMode);
+    set((s) => ({ weatherMode, weather: resolveWeather(weatherMode, s.hour) }));
+  },
+  setSeasonMode: (seasonMode) => {
+    savePref('season', seasonMode);
+    set({ seasonMode, season: resolveSeason(seasonMode) });
+  },
+  setContextWindow: (contextWindow) => {
+    savePref('contextWindow', contextWindow);
+    set({ contextWindow });
+  },
+  setMusicOn: (musicOn) => {
+    savePref('music', musicOn);
+    set({ musicOn });
+  },
+  setCinema: (cinema) => set(cinema ? { cinema, showSettings: false, summaryOpen: null, listTab: null } : { cinema }),
+  setShowSettings: (showSettings) => set({ showSettings }),
 });
 
 export const useStore = create<State>()((rawSet, rawGet) => {

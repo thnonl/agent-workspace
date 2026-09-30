@@ -7,6 +7,8 @@ import { getLayout } from '../world/layout';
 import { anchors, cats, sims, view } from '../sim/registry';
 import { afterRender, BACKGROUND_STEP, frame } from '../sim/frame';
 import { env, envForHour, stepEnv } from '../env';
+import { OVERCAST } from '../weather';
+import { photoHooks } from '../photo';
 import { lightParams } from './lighting';
 import { updateGlow } from './glow';
 import { RoomView, roomOrigin } from './RoomView';
@@ -30,6 +32,8 @@ const BUSY_FPS = 30;
 const LOW_FPS = 40;
 const HIGH_FPS = 57;
 const MIN_DPR = 1;
+/** highest render resolution (device pixels per CSS pixel) of each quality level */
+const QUALITY_DPR = { low: 1, medium: 1.5, high: 2 } as const;
 
 /** world-space offset of the default room framing (keeps the room clear of the HUD cards); applied by computeActive while the room itself is followed */
 const viewShift = new THREE.Vector3();
@@ -143,7 +147,7 @@ let dprDropAt = -1e9;
  * frame rate.
  */
 function FrameSync() {
-  const q = useRef({ acc: 0, frames: 0, good: 0, dpr: 0, max: 0 });
+  const q = useRef({ acc: 0, frames: 0, good: 0, dpr: 0, max: 0, quality: '' });
   useFrame((state, dt) => {
     frame.n++;
     const st = useStore.getState();
@@ -181,7 +185,8 @@ function FrameSync() {
     // only the active room's movement asks for the busy frame rate; a background room is drawn on the frames that happen anyway
     let dynamic = false;
     for (const s of sims.values()) {
-      if (s.onStage && s.roomId === st.activeRoomId) {
+      // (somebody who sits still does not ask for the busy frame rate)
+      if (s.onStage && s.roomId === st.activeRoomId && !s.calm) {
         dynamic = true;
         break;
       }
@@ -195,13 +200,19 @@ function FrameSync() {
       }
     }
     frame.dynamic = dynamic;
-    frame.busy = dynamic || frame.cameraBusy;
+    frame.busy = dynamic || frame.cameraBusy || st.cinema;
 
     // resolution follows the frame rate, measured only while the scene is busy
     const r = q.current;
-    if (!r.dpr) {
-      r.dpr = state.viewport.dpr;
-      r.max = state.viewport.initialDpr || state.viewport.dpr;
+    if (r.quality !== st.quality) {
+      // first frame, or the user picked another quality: start again from the highest resolution that level allows
+      r.quality = st.quality;
+      r.max = Math.min(Math.max(1, window.devicePixelRatio || 1), QUALITY_DPR[st.quality]);
+      r.dpr = r.max;
+      r.good = 0;
+      r.acc = 0;
+      r.frames = 0;
+      state.setDpr(r.dpr);
     }
     // (only camera drags run uncapped, so only they tell what the GPU can really do)
     if (frame.cameraBusy && dt < 0.1) {
@@ -279,6 +290,10 @@ function CameraRig() {
   const lastTick = useRef(resetTick);
   const sph = useRef(new THREE.Spherical());
   const focused = useStore((s) => !!s.selectedKey);
+  const cinema = useStore((s) => s.cinema);
+  const tour = useRef(1);
+  /** vertical view shift (px) that keeps the followed character clear of a bottom sheet (the agent panel on a phone) */
+  const lift = useRef({ now: 0, want: 0, n: 0 });
 
   useEffect(() => {
     const a = activeCenter();
@@ -312,7 +327,34 @@ function CameraRig() {
       frame.cameraBusy = true;
       return;
     }
+    // screensaver: the camera drifts slowly from side to side (not while a person or a cat is followed)
+    if (cinema && !focused && !reducedMotion()) {
+      const az = c.getAzimuthalAngle();
+      if (az < 0.3) tour.current = -1;
+      else if (az > 1.22) tour.current = 1;
+      c.autoRotate = true;
+      c.autoRotateSpeed = tour.current * 0.7;
+    } else c.autoRotate = false;
     const k = reducedMotion() ? 1 : 1 - Math.exp(-3.6 * dt);
+    // a bottom sheet hides the lower part of the picture: move the picture up so the character stays in the free part
+    const lf = lift.current;
+    if (lf.n++ % 12 === 0) {
+      const sheet = focused && !framedRoom ? document.querySelector<HTMLElement>('.panel') : null;
+      const r = sheet?.getBoundingClientRect();
+      // (the character belongs in the middle of what is left free between the top buttons and the sheet)
+      const top = document.querySelector('.hud-top')?.getBoundingClientRect().bottom ?? 0;
+      lf.want = r && r.width > size.width * 0.8 && r.top > size.height * 0.3 ? Math.max(0, size.height / 2 - (top + r.top) / 2) : 0;
+    }
+    let shifting = false;
+    if (Math.abs(lf.want - lf.now) > 0.5) {
+      lf.now += (lf.want - lf.now) * k;
+      shifting = true;
+    } else lf.now = lf.want;
+    const pc = camera as THREE.PerspectiveCamera;
+    if (pc.isPerspectiveCamera && (shifting || (pc.view?.enabled ?? false) !== (lf.now > 0.5))) {
+      if (lf.now > 0.5) pc.setViewOffset(size.width, size.height, 0, lf.now, size.width, size.height);
+      else pc.clearViewOffset();
+    }
     const delta = tmpA.copy(center).sub(c.target).multiplyScalar(k);
     c.target.add(delta);
     camera.position.add(delta);
@@ -338,7 +380,7 @@ function CameraRig() {
         fit.current.angles = false;
       }
     }
-    frame.cameraBusy = moving;
+    frame.cameraBusy = moving || shifting;
   });
 
   return (
@@ -362,6 +404,22 @@ function CameraRig() {
       }}
     />
   );
+}
+
+/** Lets the photo button draw a frame on demand (see photo.ts). */
+function PhotoSync() {
+  const get = useThree((s) => s.get);
+  useEffect(() => {
+    photoHooks.render = () => {
+      const st = get();
+      st.gl.render(st.scene, st.camera);
+      return st.gl.domElement;
+    };
+    return () => {
+      photoHooks.render = null;
+    };
+  }, [get]);
+  return null;
 }
 
 /** Publishes camera + viewport so the HTML overlay can project speech bubbles. */
@@ -398,15 +456,17 @@ function ViewSync() {
 
 /** Feeds the system clock into the damped `env` object and refreshes time-reactive materials. */
 function EnvSync() {
-  const last = useRef({ lamps: -1, day: -1, night: -1 });
+  const last = useRef({ lamps: -1, day: -1, night: -1, overcast: -1 });
   useFrame((_, dt) => {
-    stepEnv(envForHour(useStore.getState().hour), Math.min(dt, 0.1));
+    const st = useStore.getState();
+    stepEnv(envForHour(st.hour), Math.min(dt, 0.1), OVERCAST[st.weather]);
     const l = last.current;
-    // the materials only need a refresh while the time of day is actually changing
-    if (Math.abs(l.lamps - env.lamps) + Math.abs(l.day - env.day) + Math.abs(l.night - env.night) > 1e-5) {
+    // the materials only need a refresh while the time of day (or the weather) is actually changing
+    if (Math.abs(l.lamps - env.lamps) + Math.abs(l.day - env.day) + Math.abs(l.night - env.night) + Math.abs(l.overcast - env.overcast) > 1e-5) {
       l.lamps = env.lamps;
       l.day = env.day;
       l.night = env.night;
+      l.overcast = env.overcast;
       updateGlow();
     }
   });
@@ -602,6 +662,7 @@ function Staging({ mount }: { mount: (id: string) => void }) {
 }
 
 export function Scene() {
+  const quality = useStore((s) => s.quality);
   const roomOrder = useStore((s) => s.visibleOrder);
   // rooms are built lazily: a room is put into the scene the first time it becomes the active one (or, staged one at a time, when it is working; see Staging) and stays after that
   const activeRoomId = useStore((s) => s.activeRoomId);
@@ -622,14 +683,17 @@ export function Scene() {
     <Canvas
       frameloop="demand"
       flat
-      dpr={[1, 1.5]}
+      dpr={[1, QUALITY_DPR[quality]]}
       camera={{ fov: 30, near: 1, far: 400, position: [16, 17, 18] }}
       gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
+      // (the baked rooms keep no CPU copy of their vertices: after a lost WebGL context the page is simply loaded again)
+      onCreated={({ gl }) => gl.domElement.addEventListener('webglcontextrestored', () => window.location.reload())}
       onPointerMissed={() => useStore.getState().select(null)}
     >
       <FrameSync />
       <IdleGovernor />
       <ViewSync />
+      <PhotoSync />
       <EnvSync />
       <Lights />
       <RoomLights />

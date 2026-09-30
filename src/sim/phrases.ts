@@ -238,7 +238,7 @@ export function doneLines(failed: number, tasks: number): string[] {
 
 // ------------------------------------------------------------------ small talk
 /** the first line is said by whoever walks over, then they take turns */
-export const CHAT_SCRIPTS: readonly (readonly string[])[] = [
+export const CHAT_SCRIPTS: (readonly string[])[] = [
   ['Did you see the cat on the sofa?', 'Yes! So fluffy.', 'I think she likes the sunny spot.', 'Can’t blame her!'],
   ['Coffee later?', 'Definitely, I need it.', 'The new beans are really good.', 'I’ll bring you a cup!'],
   ['How is your day going?', 'Slowly, but nicely.', 'Same here. Quiet is good.', 'Enjoy it while it lasts!'],
@@ -273,3 +273,172 @@ export const CHAT_SCRIPTS: readonly (readonly string[])[] = [
   ['Did you catch the sunset?', 'Only the last bit.', 'It turned everything orange.', 'The room looked amazing.'],
   ['What’s your favourite spot in the office?', 'By the bookshelf.', 'Mine is the sofa.', 'Obvious.'],
 ];
+
+// ------------------------------------------------------------------ the silly pools
+// The same pools again, with a lot more jokes in them (developer humour, cats, coffee, noodles). They are added to the
+// plain lines above, so the office is sometimes sensible and often not.
+OPEN_MORNING.push('Good morning, empty chairs. I’m the only one who wants to be here.', 'Morning! The coffee machine and I have a pact: it stays warm, I stay upright.', 'Office unlocked. Nobody tell the coffee I’m early.');
+OPEN_AFTERNOON.push('Afternoon! I came in right after lunch, like a true professional.', 'Good afternoon! Fully charged. By which I mean 4%.', 'Opening up. The snacks are still safe, I checked.');
+OPEN_EVENING.push('Evening! Who needs sleep when you have a desk lamp?', 'Night shift: me, the lamps and my questionable decisions.', 'Good evening! The bugs come out at night, so do I.');
+OPEN_ANY.push('Booting up… me, not the laptop.', 'Who needs a team when you have vibes and a deadline?', 'Doors open. Somebody please bring noodles.', 'The office is mine. Nobody touch the thermostat.');
+HELLO_DIRECTOR.push('Hello, team! Please act busy, the boss is watching. (I’m the boss.)', 'Welcome, everybody! Yes, there will be work. No, there will not be cake.', 'Gather round, team – today’s plan is “don’t break anything”.');
+
+BOSS_MORNING.push('Morning, boss! I come bearing zero excuses.', 'Good morning, boss! I am here. Physically, at least.', 'Morning, boss! Did you miss me? Don’t lie.');
+BOSS_AFTERNOON.push('Afternoon, boss! My motivation is still buffering.', 'Hi boss! I came through the door like a professional.', 'Afternoon, boss! Just checking whether it’s Friday yet.');
+BOSS_EVENING.push('Evening, boss. Overtime already? Bold of you.', 'Evening, boss! I brought my second wind. It’s small.', 'Good evening, boss – I only came for the lamp light.');
+HELLO_BOSS.push('Boss! I’m in. Please pretend to be surprised.', 'Hi boss! Nothing is on fire. Yet.', 'Hello, boss! I bring vibes and no deliverables.', 'Reporting for duty, boss. The duty may be optional.');
+HELLO_BOSS_TEAM.push('Hi boss, hi team – yes, I made it, yes, barely.', 'Hey all! What did I miss? Please say “nothing”.', 'Hello boss, hello team, hello Wi-Fi.');
+
+BYE_DIRECTOR.push('Office closed. The coffee machine is on its own now.', 'Lights off. Cat, you’re in charge.', 'Going home to do the same thing, but on the sofa.', 'Good night! If anything breaks, it wasn’t me.');
+BYE_BOSS.push('I’m out, boss. Whatever happens, it works on my machine.', 'Bye boss! Don’t push to prod without me.', 'Logging off. My brain did it an hour ago.', 'Clocking out. Please don’t read the git log.');
+BYE_BOSS_TEAM.push('Bye all! Try not to break prod.', 'Off I go – keep the cat fed, team!', 'Night team! Don’t stay for the bugs.');
+
+WANDER.push(
+  'Walking meeting with myself. Agenda: legs.', 'Step count isn’t going to cheat itself', 'If I look busy while walking, it counts as work', 'My chair filed a complaint. I’m walking it off.',
+  'Stretching my legs before they unionise', 'Brb, pretending to go somewhere important', 'Stack trace of my steps: desk → nowhere → desk', 'Going to “check on something”. Nothing specific.',
+);
+SOFA.push(
+  'Horizontal debugging session', 'Research shows naps improve code. I read that. Somewhere.', 'Gravity is stronger near the sofa', 'Testing the sofa in production',
+  'Ctrl+Z on being awake', 'Cushion-driven development', 'Sofa meeting. Attendees: me.', 'I’m not lazy, I’m in power-saving mode',
+);
+WATCH.push(
+  (n: string) => `Checking if ${n} is actually typing or just vibing`, (n: string) => `${n} is typing so fast. Suspicious.`, (n: string) => `Pair programming with ${n}, but only spiritually`,
+  (n: string) => `Peeking at ${n}’s screen. For science.`, (n: string) => `Looking over ${n}’s shoulder – it’s called mentoring`, (n: string) => `Is ${n} using tabs or spaces? I need to know`,
+  (n: string) => `Code review with my eyes: ${n} edition`,
+);
+WINDOW.push(
+  'Staring into the distance like a movie hero', 'Touching grass (through glass)', 'Loading outdoors… 12%', 'Checking whether outside is still deployed',
+  'I’m not daydreaming, I’m buffering', 'Outside has great graphics. Wish it had a keyboard.', 'Window.exe has started', 'Looking at the sky. No bugs up there.',
+);
+PET.push(
+  'Emergency cat mission', 'This cat has not been reviewed by me yet', 'Merging with the cat branch', 'Must. Pet. Cat. Priority: P0',
+  'Cat detected. Productivity: paused', 'Scratching behind ears – best refactor ever', 'I’m not procrastinating, I’m doing cat maintenance', 'Do I have permission to pet this cat? Yes. Yes I do.',
+);
+WATER.push(
+  'Hydrate or diedrate', 'Refilling my human tank', 'Water: the original energy drink', 'Garbage-collecting my thirst',
+  'Drinking water so my coffee feels less alone', 'Staying fluid. Like my architecture.', 'H2O, my favourite import', 'Quick hydration check. Result: dry.',
+);
+COFFEE.push(
+  'Coffee: the real compiler', 'My blood type is espresso', 'No coffee, no commits', 'Installing caffeine… please wait',
+  'Runtime error: coffee not found', 'A coffee a day keeps the bugs away. Maybe.', 'This is my fourth. Or fifth. Don’t tell anyone.', 'Coffee first, opinions later',
+);
+READ.push(
+  (b: string) => `“${b}” is mostly pictures, right? No? Okay.`, (b: string) => `Reading “${b}” to look smart`, (b: string) => `Skimming “${b}” like it’s documentation`,
+  (b: string) => `Let me pretend to understand “${b}”`, (b: string) => `Bookmarking “${b}”, because my brain is full`, (b: string) => `I’ll read “${b}” and forget it by lunch`,
+  (b: string) => `Speedrunning “${b}”`,
+);
+FISH.push(
+  'Fish don’t have deadlines. Must be nice.', 'Checking if the fish are in stand-up', 'Synchronised swimming review', 'They’re just like us: going in circles',
+  'Fish TV has no ads. Underrated.', 'Blub blub. That’s all I’ve got.', 'Testing whether fish understand YAML', 'Sir, your bubbles are showing',
+);
+WASH.push(
+  'Hand washing: the only code review that matters', 'Ctrl+Alt+Wash', 'I’ve been touching keyboards. It was time.', 'Rinse and repeat – like my git history',
+  'Splashing my face to restart the brain', 'Cleaning up my act. And my hands.', 'Going to the sink to think', 'Turning myself off and on again – with water',
+);
+PLANTS.push(
+  'Plants: my only reliable uptime', 'I talk to the plants. They don’t talk back, unlike QA.', 'Watering the plants. Photosynthesis as a service.', 'This plant has more growth than my career',
+  'If the plant dies, it was a dependency issue', 'Leafy friends need hydration too', 'Giving the plants a drink. They give me oxygen. Fair trade.', 'The fern and I have a love-hate relationship',
+);
+COOK.push(
+  'Noodles: the real deployment pipeline', 'Cooking is just debugging with heat', 'Ramen-driven development', 'Smells like a good idea. Or noodles.',
+  'Hot noodles, cold takes', 'Adding chili for the stack traces', 'Boiling water is my only advanced skill', 'I’m not hungry, I’m refuelling my compiler',
+);
+BOX.push(
+  'Punching bugs, one at a time', 'Every hit is a closed ticket', 'This dummy is actually my backlog', 'Dummy, meet Monday',
+  'I’m not angry, I’m doing cardio', 'Rocky theme intensifies', 'Feature request denied. By fist.', 'Taking feedback… physically',
+);
+LIFT.push(
+  'Lifting tiny weights for tiny commits', 'Gym bro energy, desk job body', 'Deadlift? I can barely git lift', 'My biceps are two-story-point tasks',
+  'No pain, no merge', 'One rep, two reps… I lost count. It’s fine.', 'Leg day skipped, sitting counts', 'Bench press? I only bench-mark.',
+);
+CHAT.push(
+  (n: string) => `I’m going to gossip with ${n}. For work reasons.`, (n: string) => `${n} has snacks, I can feel it`, (n: string) => `Time to distract ${n}. Wish me luck`,
+  (n: string) => `Hey ${n}, got a minute? It’s about lunch.`, (n: string) => `Let me ask ${n} whether it works on their machine`, (n: string) => `Stand-up with ${n}, sit-down edition`,
+  (n: string) => `I’ll go say hi to ${n} before I forget how talking works`,
+);
+PARCEL.push('Is it the keyboard I ordered at 3 a.m.?', 'A box! Hopefully not another cable', 'That’s either snacks or regret', 'Package for… probably me', 'Free dopamine, delivered to the door');
+SMOKE.push('Stepping out to “think about architecture”', 'A quick puff between commits', 'Fresh air and questionable choices', 'Going to stare at the wall outside');
+SLEEP.push('Recharging my battery. 3% left.', 'Rest mode on. Ping me when it compiles.', 'I’m not sleeping, I’m thinking with my eyes closed', 'Zzz… sudo wake me up', 'Loading dreams… 99%', 'Five more minutes, mum');
+PHONE.push(
+  'Scrolling for “research” 📱', 'Doomscrolling is a skill. I’m very good. 📱', 'One 40-second cat video, for morale 📱', 'One more reel… 📱',
+  'My screen time report is judging me 📱', 'Checking the group chat, 37 unread 📱', 'Looking up how to centre a div 📱',
+);
+
+ACK.push(
+  'On it! I’ll pretend it was my idea.', 'Got it. Delegating… I mean, leading.', 'Yes chef! I mean, yes boss.', 'Understood. I’ll ask the team nicely.',
+  'Affirmative. The bugs should be afraid.', 'Noted, filed, and immediately worried about.', 'Sure. How hard can it be? (Famous last words.)', 'Alright, consider me motivated. Mostly.',
+  'I’ll add it to the list – at the top, in bold, in red.', 'Say no more. Well, say a bit more, but I’ll manage.', 'Roger, roger. Wait, which one was Roger?',
+);
+ACK_CALL.push(
+  'Yes, hello? Yes. Uh-huh. Yes. Mhm. Got it, bye!', 'Hello? Bad reception… just kidding, I heard you.', 'Okay okay okay okay okay – on it!',
+  'Yes boss, no boss, sure boss, bye boss.', 'You’re breaking up… no, it’s fine. Got it.',
+);
+SERVE.push('Michelin star? Probably.', 'Noodles: deployed.', 'Soup’s up, nerds!', 'It’s giving gourmet.', 'Seasoned with pure optimism.', 'Order up! No refunds.');
+EAT.push(
+  'Noodles taste better when nobody is watching', 'Slurping is a sign of respect. Shh.', 'This is the real stand-up meeting', 'Mm, no bugs in this one',
+  'Nom nom nom. Commit message: “food”.', 'Best code review happens over noodles', 'Carbs: the real fuel',
+);
+REPORT_OK.push(
+  'Done! Zero bugs. Probably.', 'It works! I don’t know why, but it works.', 'Finished! Please admire responsibly.', 'Done on the first try. (The third.)',
+  'Done! Somebody get me a cookie.', 'Shipped! Well, “handed over”. Same energy.', 'All finished. I even read the docs. Partially.',
+);
+REPORT_FAIL.push(
+  'It broke. It wasn’t me. It was the code.', 'It fought back and won. Dirty fighter.', 'I failed, but with style.', 'Error 404: success not found.',
+  'That one’s cursed, boss. I checked.', 'I put my heart in it. It put an exception in me.', 'Would you believe the bug wrote itself?',
+);
+DONE_OK.push(
+  'Everything shipped! Somebody tell the cat.', 'We did it! Now nobody touch anything.', 'It works. Do not breathe on it.', 'All green! I’m scared.',
+  'Zero errors. I don’t trust it either.', 'And that’s how legends merge.', 'It compiles, therefore we are brilliant.', 'Finished before the snacks ran out. Miracle!',
+  'Shipped it! No take-backs.', 'Done! Time to celebrate by doing nothing.',
+);
+DONE_FAILED.push(
+  'Finished with a few casualties. RIP, little tests.', 'Mostly done. The broken bits are “features”.', 'We survived! The code… less so.',
+  'Done-ish. Please look away from the red part.', 'The work is done; the blame is still being assigned.',
+);
+DONE_BIG.push(
+  'Whoa, that was huge. My keyboard needs a hug.', 'Marathon complete. Nobody ask me to do cardio now.', 'Finally! I can feel my fingers again.',
+  'That took forever, but we’re legends now.', 'So many tasks! I’m proud and tired in equal parts.',
+);
+DONE_HINT.push('The summary is on the desk. It has plot twists.', 'Go read the paper. There’s a quiz later.', 'The summary is ready, and it’s even readable!');
+
+CHAT_SCRIPTS.push(
+  ['Quick question: tabs or spaces?', 'Spaces. I’m not a monster.', 'Bold opinion for someone who eats noodles with a spoon.', 'Leave the noodles out of this.'],
+  ['It works on my machine.', 'We’re not shipping your machine.', 'Why not? It’s a great machine.', 'It has a cat on the keyboard.'],
+  ['Have you tried turning it off and on again?', 'Three times.', 'And?', 'Now it doesn’t turn on at all.'],
+  ['I named my variable “temp”.', 'Again?', 'It’s the third “temp” in the file.', 'Permanently temporary. Nice.'],
+  ['Who wrote this function?', 'You did. Last Tuesday.', 'Wow, that person was a genius.', 'Or in a hurry.'],
+  ['My code has no bugs.', 'Only undocumented features?', 'Exactly.', 'Tell that to production.'],
+  ['I’m going to refactor everything.', 'Famous last words.', 'This time it’s different.', 'You said that last time too.'],
+  ['Is the cat allowed to merge?', 'She already has commit access.', 'That explains the meowing in the changelog.', 'Best contributor this month.'],
+  ['Ever feel like the AI does your job?', 'Only on weekdays.', 'And weekends?', 'Same, but I’m less mad.'],
+  ['What’s for lunch?', 'Noodles.', 'Again?', 'Noodles are love. Noodles are life.'],
+  ['Do you think the coffee machine is sentient?', 'It judges me in the mornings.', 'It hissed at me yesterday.', 'We should be nicer to it.'],
+  ['I deleted the wrong folder.', 'Was it important?', 'It was called “do not delete”.', 'Classic.'],
+  ['I wrote a 200-line comment.', 'For what?', 'To explain one line.', 'That line must be spicy.'],
+  ['Sudo make me a sandwich.', 'Okay.', 'Wait, really?', 'No. Make your own.'],
+  ['Is it a bug or a feature?', 'Depends who is asking.', 'The boss is asking.', 'It’s a feature. Obviously.'],
+  ['How many tokens did we use today?', 'Yes.', 'That’s not a number.', 'It’s also not a small one.'],
+  ['I’m so productive today.', 'Really?', 'I renamed three files.', 'Promotion material.'],
+  ['I heard the context window is getting full.', 'Should we panic?', 'Only at 99%.', 'Then I’ll panic at 98%, to be safe.'],
+  ['Please don’t push on Friday.', 'I’m not pushing, I’m gently nudging.', 'Into production?', 'Into production.'],
+  ['I love deadlines.', 'You do?', 'I love the whooshing sound they make as they pass.', 'Douglas Adams would be proud.'],
+  ['I asked the cat for a code review.', 'And?', 'She just stared.', 'Honest feedback.'],
+  ['I have 47 browser tabs open.', 'That’s a lot.', 'I’m afraid to close them.', 'One of them is playing music, isn’t it?'],
+  ['Do you ever just rm -rf your problems?', 'Every Friday.', 'And on Monday?', 'Cry and restore from backup.'],
+  ['I think my chair is haunted.', 'It squeaks at midnight?', 'It squeaks whenever I stand up.', 'Sounds like a critic.'],
+  ['Rubber duck debugging?', 'I use a cat.', 'Does she help?', 'She knocks the mug off the desk. Progress.'],
+  ['Can we have a meeting about having fewer meetings?', 'Only if it’s short.', 'How short?', 'Zero minutes. Perfect meeting.'],
+  ['I just compiled it without errors.', 'Congratulations!', 'I’m scared.', 'You should be.'],
+  ['What’s your superpower?', 'Finding the missing semicolon.', 'Mine is adding one in the wrong place.', 'Villain origin story.'],
+  ['I made a backup of my backup.', 'Wise.', 'Then I deleted both.', 'Legend.'],
+  ['Are we allowed to name the bugs?', 'Why?', 'I’ve grown attached to Gary.', 'Gary has been here since 2019.'],
+  ['Why is the fridge humming?', 'It’s practising the commit songs.', 'The commit songs?', 'Fix, fix, fix: the classic.'],
+  ['I’m starting a cult for tidy code.', 'Can I join?', 'Only if you never use var.', 'I’ll just… use const. Promise.'],
+  ['The Wi-Fi is slow.', 'Did you try yelling at it?', 'Does that work?', 'No. But it feels nice.'],
+  ['Do you believe in ghosts?', 'Only in legacy code.', 'Same. They’re everywhere.', 'And they never leave.'],
+  ['My code review comment was “LGTM”.', 'Did you read it?', 'I read the title.', 'A true professional.'],
+  ['I found a bug in the docs.', 'That’s the code.', 'No, the docs lie.', 'Same thing, honestly.'],
+  ['I think we need a bigger monitor.', 'We need a bigger budget.', 'We need a bigger cat.', 'Now you’re talking.'],
+  ['Can you hear that noise?', 'It’s the server.', 'No, it’s my stomach.', 'Then it’s the server.'],
+  ['What’s the plan for today?', 'Survive.', 'Bold.', 'And touch the plants so they don’t feel lonely.'],
+);

@@ -53,6 +53,8 @@ export interface SimState {
   msgUntil?: number;
   /** how that message arrived (set by the bubble layer with the first chunk) */
   msgVia?: 'call' | 'email';
+  /** sits (or waits) without moving or typing: updated at a low rate, and alone it does not ask for the busy frame rate (see PersonActor, FrameSync) */
+  calm?: boolean;
   /** the director holds the handset of the desk phone (the one on the desk is hidden meanwhile; cleared by the actor every frame it is not) */
   handsetUp?: boolean;
 }
@@ -102,6 +104,10 @@ export interface RoomRuntime {
   parcelBy: string | null;
   /** the main agent waits for the user's answer since then (performance.now()/1000, 0 = no question pending): the director waves for attention */
   askAt: number;
+  /** everybody who stands or sits cheers until then (performance.now()/1000; see sim/celebrate.ts) */
+  cheerUntil: number;
+  /** the run is over: the summary paper opens on its own once everybody has left the office (see store.ts tickRoom) */
+  summaryDue: boolean;
 }
 
 export const roomRuntime = new Map<string, RoomRuntime>();
@@ -127,7 +133,7 @@ export function runtimeFor(roomId: string): RoomRuntime {
     rt = {
       doorFreeAt: 0, walkFreeAt: 0, walkBy: null, visitors: [null, null, null], directorSeated: false, directorKey: null, receivedAt: -99,
       burstKey: null, burstStart: 0, lastToolAt: 0, burstSeq: 0, prompt: '', idleSince: 0, leaving: false, wasBusy: false, lastHire: 0, runStart: 0, lastText: '', knownFinal: '', talkDeadline: 0,
-      parcel: 'none', parcelAt: 0, parcelBy: null, askAt: 0,
+      parcel: 'none', parcelAt: 0, parcelBy: null, askAt: 0, cheerUntil: 0, summaryDue: false,
     };
     roomRuntime.set(roomId, rt);
   }

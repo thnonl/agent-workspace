@@ -8,14 +8,23 @@ export type SpeechKind = 'thinking' | 'text' | 'tool' | 'task' | 'done' | 'error
 export type MonitorEvent =
   | { type: 'hello'; claudeDir: string; sources?: Record<string, string | null>; windowMin: number }
   | { type: 'ready' }
-  | { type: 'session'; sessionId: string; title: string; cwd: string; project: string; provider?: Provider; updatedAt: number; lastPrompt?: string; lastFinal?: string }
+  | { type: 'session'; sessionId: string; title: string; cwd: string; project: string; provider?: Provider; updatedAt: number; lastPrompt?: string; lastFinal?: string; context?: ContextInfo }
   | { type: 'session_end'; sessionId: string; reason?: 'idle' | 'gone' }
   | { type: 'agent_start'; sessionId: string; agentId: string; role: AgentRole; label: string; agentType?: string }
-  | { type: 'agent_say'; sessionId: string; agentId: string; kind: SpeechKind; text: string; tool?: string; full?: string }
+  | { type: 'agent_say'; sessionId: string; agentId: string; kind: SpeechKind; text: string; tool?: string; full?: string; cue?: 'commit' | 'push' }
   | { type: 'agent_done'; sessionId: string; agentId: string; summary?: string; failed?: boolean }
   /** the main agent asks the user something and waits (AskUserQuestion / plan approval / OpenCode question): pending until agent_ask_end */
   | { type: 'agent_ask'; sessionId: string; text: string; full?: string }
   | { type: 'agent_ask_end'; sessionId: string };
+
+/** How full the main agent's context window is (tokens the conversation holds now / size of the window). */
+export interface ContextInfo {
+  used: number;
+  window: number;
+  /** the window size comes from the agent itself (Codex, the OpenCode config); otherwise the monitor guessed it */
+  exact: boolean;
+  model?: string;
+}
 
 /** a question of the agent that is waiting for the user */
 export interface AskRec {
@@ -162,5 +171,7 @@ export interface RoomRec {
   tasksDone: number;
   /** the main agent is in the middle of a turn */
   mainActive: boolean;
+  /** context window use of the main agent (when the transcript says) */
+  context?: ContextInfo;
   demo: boolean;
 }

@@ -48,7 +48,7 @@ A copy installed globally or inside a project's `node_modules` is used as it is 
 * The header has the buttons **Tasks**, **Reports** and **Activity** (no counters, so the layout never jumps). Click one to open the **full list** (closed from the start; the buttons are the tabs – click the open one again to close it) under the header – tabs *Tasks* (running ones first, then finished ones with who did them and how long it took), *Reports* (the report texts) and *Activity* (everything that happened in the session – your requests, thoughts, messages, tool calls, sub-agents, reports – **newest first**, with the person who did it). Click the button again to close the list.
 * The header's **📜 Summary** button is always there: it lays the **last summary** of the session on a sheet of paper in the middle of the screen (scrollable). While no run has finished yet it is made from what is known so far – the last request, the last closing message the monitor saw and the tasks done.
 * **When the agent asks you something** (Claude Code's `AskUserQuestion` / plan approval, OpenCode's question tool) the director gets a persistent amber **❓ "needs your input" bubble** with a pulsing glow that stays until you answer, raises a hand now and then, a ❓ badge pulses on the session's card and header, a two-note chime plays, and a hidden tab's title starts with "❓". Codex is not supported (its rollout parser only reads finished items).
-* When a session has **finished all its work** the **director announces it** in a speech bubble – one or two short phrases picked from a long pool (there are separate pools for a big run and for a run in which some tasks failed); the closing message itself is not read out, it is on the summary paper – and only goes home after the last line (the staff still leave first). Its button in the room column gets a **blinking blue dot in its top-left corner** until you have read the summary (closing the paper marks it read; it does not lay itself down again until the session has worked again). Stepping into a room whose session is done lays a **sheet of paper** in the middle of the screen: what was asked, the main agent's closing message (with its lists and code formatting), how long it took and every sub-agent task with its report (tool calls are summed up in one line). The paper scrolls. The header's **📜 Summary** button brings it back at any time (until a run has finished it is made from what is known so far).
+* When a session has **finished all its work** the **director announces it** in a speech bubble – one or two short phrases picked from a long pool (there are separate pools for a big run and for a run in which some tasks failed); the closing message itself is not read out, it is on the summary paper – and only goes home after the last line (the staff still leave first). Its button in the room column gets a **blinking blue dot in its top-left corner** until you have read the summary (closing the paper marks it read; it does not lay itself down again until the session has worked again). When the room is the one on screen, the **paper opens by itself once everybody has left the office** (the director goes last); if you are looking at another room it waits for you. Stepping into a room whose session is done lays a **sheet of paper** in the middle of the screen: what was asked, the main agent's closing message (with its lists and code formatting), how long it took and every sub-agent task with its report (tool calls are summed up in one line). The paper scrolls. The header's **📜 Summary** button brings it back at any time (until a run has finished it is made from what is known so far).
 * **Rooms are not closed after a few minutes** – a session stays in the room column on the right (in the order the sessions showed up – it never reshuffles; scrollable; <kbd>1</kbd>–<kbd>9</kbd> and the arrow keys follow that order) until *you* **release** it, or until it has **stood still for an hour**, when it is released by itself (a room whose paper is open is left alone). The paper has a **Release room** button,, and **Release idle rooms** under the list releases every room that is not working (after a confirmation). Releasing only takes the room **off the list**: nothing is deleted, and when you **continue the session in its agent** the room opens again by itself. Released rooms are remembered across page reloads, and a session that was released – by you or by the one-hour rule – comes back the moment it does something again.
 * Each room button shows the project, a short session name and the status.
 * The room is named after the folder the session was **launched in** – a `cd` into a sub folder does not rename it.
@@ -108,6 +108,8 @@ Publishing: `npm publish` (the `prepack` script builds `dist/` first; only `dist
 | `OPENCODE_DB` | `~/.local/share/opencode/opencode.db` | OpenCode database |
 | `SESSION_WINDOW_MIN` | `30` | A session gets a room while it was active within this many minutes |
 | `PORT` | `4173` | Port of the web page (same as `--port`) |
+| `CONTEXT_WINDOW_TOKENS` | *(guessed)* | Context window assumed for Claude Code sessions, e.g. `1m` or `200k` (the Settings dialog can do the same per browser) |
+| `OPENCODE_CONFIG` | `~/.config/opencode/opencode.json` | OpenCode config; its `provider.<id>.models.<id>.limit.context` gives the context window of each model |
 
 ## Controls
 
@@ -119,7 +121,22 @@ Publishing: `npm publish` (the `prepack` script builds `dist/` first; only `dist
 | `R` | reset camera (position, tilt and zoom) |
 | `D` | toggle demo |
 | `N` | time of day: auto → day → dusk → night |
+| `W` | weather outside: clear → cloudy → rain → storm → snow → fog |
+| `K` | lo-fi music on / off (`M` mutes the sound effects and the ambience) |
+| `P` | save a photo of the office (PNG) |
+| `C` | screensaver mode: the buttons fade out and the camera tours the rooms; a click or `Esc` leaves it |
+| `L` | level, stats and achievements |
 | `?` | help |
+
+Click the coffee machine, the water cooler, the fish tank, the printer or the vending machine and they react; the little radio on the director's desk starts the music. **Settings** (gear button) has the graphics quality (low / medium / high), the weather, the decorations (Halloween, Christmas, Tết; `auto` follows the date) and the sound switches. `?weather=rain` and `?season=tet` force a value for one page load.
+
+### Life in the office
+
+* **Looks:** soft contact shadows under furniture, people and cats; glow around lamps and pools of light on the floor at night; dust drifting through the window light by day; rain, storms, snow and fog outside (the sky, the sun and the room light follow the weather); festive decorations by date.
+* **Moments:** when the agent finishes a run the office cheers and confetti falls (a long run also gets a cake on the director's desk); a `git commit` gives a shower of sparkles, a `git push` a confetti cannon.
+* **Sound:** generative lo-fi music (mood follows the time of day and the weather), rain on the roof, crickets at night – all synthesised, no audio files.
+* **Context window:** every session button (and the room header) shows how full the main agent's context is, e.g. `554k / 1M · 55%`, green below 60 %, amber up to 85 %, red above. Claude Code: input + cache + output tokens of the last message; Codex and OpenCode (with limits in its config) report their window size, for Claude Code it is a guess (200k, 1M once a session has outgrown that, or a `[1m]` model name) that Settings → Context window can correct.
+* **Progress:** finished tasks, reports, runs, commits and pushes earn experience; levels unlock extra cats, achievements show up as toasts and as stars on the wall board of every room. It is all kept in this browser (real sessions only).
 
 ## How it works
 
@@ -156,7 +173,14 @@ Publishing: `npm publish` (the `prepack` script builds `dist/` first; only `dist
 | `src/sim/cat.ts`, `src/scene/catModel.ts`, `catMesh.ts`, `CatView.tsx` | the office cats: behaviour, skinned model + fur colouring, bone animation |
 | `?catlab&seed=1&count=6&pose=sit` | dev turntable to inspect cats (`pose`: idle, walk, sit, groom, sleep, purr, stretch) |
 | `?wardrobe&seed=1&count=12&cols=6` | dev turntable for people: any look field can be forced (`top=blazer&hat=fedora`, comma lists are handed out in turn), `back=1` for the back, `&laptops` shows every laptop model |
-| `src/env.ts`, `src/scene/glow.ts` | time-of-day model (light, sky) and materials that glow when the lights are on |
+| `src/env.ts`, `src/scene/glow.ts` | time-of-day model (light, sky, cloud cover) and materials that glow when the lights are on |
+| `src/scene/fx.ts`, `RoomAO.tsx`, `RoomLightFx.tsx` | soft sprites; floor shadows of the furniture (one merged mesh per room); lamp pools, halos and window dust |
+| `src/scene/CelebrationFx.tsx`, `src/sim/celebrate.ts` | confetti / sparkles / steam (one pooled `Points`), the cake; the queue the store and the props feed |
+| `src/scene/SeasonDecor.tsx`, `src/season.ts` | Halloween, Christmas and Tết decorations and the date rules |
+| `src/weather.ts`, `src/ui/WeatherLayer.tsx` | weather model; rain / snow canvas behind the scene and the lightning |
+| `src/music.ts`, `src/audio.ts` | Web Audio sound effects; lo-fi music engine, rain and crickets |
+| `src/progress.ts`, `src/scene/StatsBoard.tsx`, `src/ui/ProgressDialog.tsx` | experience, levels, achievements; the wall board |
+| `src/photo.ts`, `src/ui/Settings.tsx`, `src/prefs.ts` | photo export, settings dialog, persisted preferences |
 | `src/scene/*` | room, furniture (`furniture.tsx`, `props.tsx`, `officeProps.tsx`), walls, camera, lights |
 | `src/scene/bake.ts`, `StaticBake.tsx` | merge static primitives into a few meshes (≈1/3 of the draw calls); the baked-away sources are no longer walked by three |
 | `src/scene/matrixWalk.ts` | switches the per-frame matrix update of a subtree off (baked sources, rooms that are off screen) |

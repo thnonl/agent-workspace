@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { env } from '../env';
+import { DUST, FX, HALO } from './fx';
 
 /**
  * Materials that react to the time of day (lamps, bulbs, window glass, light cones).
@@ -42,5 +43,8 @@ export function updateGlow() {
   GLOW.glass.opacity = 0.32 + 0.3 * env.night;
   GLOW.cone.opacity = 0.16 * env.lamps;
   GLOW.sunbeam.color.copy(beamDay).lerp(beamMoon, env.night);
-  GLOW.sunbeam.opacity = 0.2 * env.day + 0.07 * env.night;
+  GLOW.sunbeam.opacity = (0.2 * env.day + 0.07 * env.night) * (1 - 0.85 * env.overcast);
+  FX.pool.opacity = 0.5 * env.lamps;
+  HALO.opacity = 0.42 * env.lamps;
+  DUST.opacity = 0.75 * env.day * (1 - env.overcast);
 }

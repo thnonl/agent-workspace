@@ -1,5 +1,4 @@
 import { memo, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { useShallow } from 'zustand/react/shallow';
 import { useStore } from '../store';
 import { themeFor } from '../world/palettes';
@@ -36,21 +35,22 @@ function iconFor(s: Speech): string {
   }
 }
 
-/** fill colour of every bubble kind (the tail lives in another layer and needs it too) */
-const BUBBLE_BG: Record<string, string> = {
-  thinking: '#f4f0ff', text: '#ffffff', tool: '#262a44', task: '#fff5c2', done: '#e3fbea', error: '#ffffff', ask: '#fff7dc',
-};
-
 interface Item {
   root: HTMLDivElement;
-  /** the tail / thought puffs of the current bubble (drawn below every bubble so it never covers text) */
-  tail: () => HTMLDivElement | null;
   /** show: on screen; live: the character is inside the office */
   tick: (show: boolean, now: number, live: boolean) => void;
   /** size of the bubble box, kept up to date by a ResizeObserver (reading offsetWidth every frame forces a layout) */
   size: { w: number; h: number };
   /** a question for the user is pending: drawn above every other bubble */
   top?: boolean;
+  /** world position the bubble itself follows: it trails the head a little, only the tip of its tail is exactly on the head */
+  sm?: { x: number; y: number; z: number };
+  /** the bubble element that is drawn now, its outline (an svg inside it) and its corner radii */
+  bub?: HTMLElement;
+  shape?: Element | null;
+  radii?: [number, number, number, number];
+  /** a thought (puffs instead of a tail) */
+  thought?: boolean;
 }
 /** "idle" bubbles that are said out loud rather than thought */
 const SPOKEN = new Set(['talk', 'wave', 'home', 'eat']);
@@ -58,14 +58,67 @@ const SPOKEN = new Set(['talk', 'wave', 'home', 'eat']);
 const QUIET_MS = 4500;
 const items = new Map<string, Item>();
 const proj: Projected = { x: 0, y: 0, z: 0, dist: 0 };
+const projSm: Projected = { x: 0, y: 0, z: 0, dist: 0 };
+let lastLayout = 0;
+
+/** space between a bubble and the head it belongs to, half the width of the tail's base, distance to the screen edge */
+const GAP = 18;
+/** a thought has no spike: two small round puffs lead from the bubble to the head, so it floats a little higher */
+const GAP_THOUGHT = 25;
+/** [how far along the way from the bubble to the head, radius] of the puffs of a thought */
+const PUFFS: [number, number][] = [[0.36, 4.6], [0.76, 2.8]];
+const TAIL_HALF = 9;
+const EDGE = 6;
+/** how fast the bubble follows a walking head (1/s); the camera moving does not lag: both are projected with the same camera */
+const FOLLOW = 11;
 
 interface Placed {
   key: string;
-  sx: number;
-  sy: number;
+  /** the exact head (tip of the tail) and the point the bubble follows, in px */
+  tx: number;
+  ty: number;
+  bx: number;
+  by: number;
   dist: number;
   w: number;
   h: number;
+}
+
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+
+type Radii = [number, number, number, number];
+
+/** border radii (top-left, top-right, bottom-right, bottom-left) of a bubble, read from its style */
+function readRadii(el: HTMLElement): Radii {
+  const cs = getComputedStyle(el);
+  const v = (s: string) => parseFloat(s) || 0;
+  return [v(cs.borderTopLeftRadius), v(cs.borderTopRightRadius), v(cs.borderBottomRightRadius), v(cs.borderBottomLeftRadius)];
+}
+
+const f = (n: number) => n.toFixed(1);
+
+/**
+ * The whole bubble as ONE outline: a rounded box whose bottom edge flows into a sharp, slightly curved tail that ends exactly at
+ * (tx, ty). All in the bubble's own pixels (origin = its top-left corner). The tail's base is centred on bx; its two sides start along
+ * the edge (so they join it smoothly, no seam) and pinch towards the tip.
+ */
+function bubblePath(w: number, h: number, r: Radii, bx: number, tx: number, ty: number, withTail = true): string {
+  const [tl, tr, br, bl] = r.map((v) => Math.min(v, w / 2, h / 2)) as Radii;
+  if (!withTail) return `M${f(tl)} 0H${f(w - tr)}A${f(tr)} ${f(tr)} 0 0 1 ${f(w)} ${f(tr)}V${f(h - br)}A${f(br)} ${f(br)} 0 0 1 ${f(w - br)} ${f(h)}H${f(bl)}A${f(bl)} ${f(bl)} 0 0 1 0 ${f(h - bl)}V${f(tl)}A${f(tl)} ${f(tl)} 0 0 1 ${f(tl)} 0Z`;
+  const len = ty - h;
+  const W = TAIL_HALF;
+  const k = 0.4;
+  const cx = tx + (bx - tx) * k;
+  const cy = ty - len * k;
+  return (
+    `M${f(tl)} 0H${f(w - tr)}A${f(tr)} ${f(tr)} 0 0 1 ${f(w)} ${f(tr)}V${f(h - br)}A${f(br)} ${f(br)} 0 0 1 ${f(w - br)} ${f(h)}` +
+    `H${f(bx + W)}C${f(bx + W - 7)} ${f(h)} ${f(cx + 1.6)} ${f(cy)} ${f(tx)} ${f(ty)}C${f(cx - 1.6)} ${f(cy)} ${f(bx - W + 7)} ${f(h)} ${f(bx - W)} ${f(h)}` +
+    `H${f(bl)}A${f(bl)} ${f(bl)} 0 0 1 0 ${f(h - bl)}V${f(tl)}A${f(tl)} ${f(tl)} 0 0 1 ${f(tl)} 0Z`
+  );
+}
+
+function setAttr(el: Element, name: string, value: string) {
+  if (el.getAttribute(name) !== value) el.setAttribute(name, value);
 }
 
 /** Writes an inline style only when it changes (comparing is free, every write dirties the style of the element). */
@@ -81,47 +134,90 @@ function setStyle(el: HTMLElement, prop: 'visibility' | 'transform' | 'zIndex', 
 function layoutLoop() {
   if (!view.project) return;
   const now = performance.now();
+  const dtS = clamp((now - lastLayout) / 1000, 0.001, 0.1);
+  lastLayout = now;
+  const follow = 1 - Math.exp(-FOLLOW * dtS);
   const list: Placed[] = [];
   const hidden: string[] = [];
   for (const [key, it] of items) {
     const a = anchors.get(key);
     let show = !!a?.live;
-    let sx = 0;
-    let sy = 0;
+    let tx = 0;
+    let ty = 0;
+    let bx = 0;
+    let by = 0;
     let dist = 0;
     if (show && a) {
       view.project(a.x, a.y, a.z, proj);
       dist = proj.dist;
       show = proj.z < 1 && Math.abs(proj.x) < 1.2 && Math.abs(proj.y) < 1.25;
-      sx = (proj.x * 0.5 + 0.5) * view.width;
-      sy = (-proj.y * 0.5 + 0.5) * view.height;
+      tx = (proj.x * 0.5 + 0.5) * view.width;
+      ty = (-proj.y * 0.5 + 0.5) * view.height;
+      // the bubble trails the head (in the world, so the camera does not make it lag); somebody who appears or jumps is not followed from afar
+      let sm = it.sm;
+      if (!sm || Math.hypot(a.x - sm.x, a.z - sm.z) > 2.5) it.sm = sm = { x: a.x, y: a.y, z: a.z };
+      else {
+        sm.x += (a.x - sm.x) * follow;
+        sm.y += (a.y - sm.y) * follow;
+        sm.z += (a.z - sm.z) * follow;
+      }
+      view.project(sm.x, sm.y, sm.z, projSm);
+      bx = (projSm.x * 0.5 + 0.5) * view.width;
+      by = (-projSm.y * 0.5 + 0.5) * view.height;
     }
     it.tick(show, now, !!a?.live);
     if (!show) {
       hidden.push(key);
+      it.sm = undefined;
       continue;
     }
-    list.push({ key, sx, sy, dist, w: it.size.w, h: it.size.h });
+    list.push({ key, tx, ty, bx, by, dist, w: it.size.w, h: it.size.h });
   }
   for (const key of hidden) {
     const it = items.get(key);
     if (!it) continue;
     setStyle(it.root, 'visibility', 'hidden');
-    const tail = it.tail();
-    if (tail) setStyle(tail, 'visibility', 'hidden');
   }
   list.sort((a, b) => a.dist - b.dist);
-  const GAP = 8;
   list.forEach((p, i) => {
     const it = items.get(p.key)!;
     setStyle(it.root, 'visibility', 'visible');
-    setStyle(it.root, 'transform', `translate3d(${(p.sx - p.w / 2).toFixed(1)}px, ${(p.sy - p.h - GAP).toFixed(1)}px, 0)`);
+    // the bubble that is drawn now (if any) and its outline element: looked up once per bubble
+    const bub = it.root.firstElementChild?.firstElementChild as HTMLElement | null | undefined;
+    if (bub !== it.bub) {
+      it.bub = bub ?? undefined;
+      it.shape = bub?.classList.contains('bubble') ? bub.querySelector('.bubble-shape') : null;
+      it.radii = it.shape && bub ? readRadii(bub) : undefined;
+      it.thought = !!bub?.classList.contains('bubble-thinking');
+    }
+    // (on a narrow screen a bubble slides back into view)
+    const left = clamp(p.bx - p.w / 2, EDGE, Math.max(EDGE, view.width - p.w - EDGE));
+    const bottom = p.by - (it.thought ? GAP_THOUGHT : GAP);
+    const top = bottom - p.h;
+    setStyle(it.root, 'transform', `translate3d(${left.toFixed(1)}px, ${top.toFixed(1)}px, 0)`);
     setStyle(it.root, 'zIndex', String(9000 - i + (it.top ? 5000 : 0)));
-    const tail = it.tail();
-    if (tail) {
-      // the tail starts at the bottom centre of the bubble
-      setStyle(tail, 'visibility', 'visible');
-      setStyle(tail, 'transform', `translate3d(${p.sx.toFixed(1)}px, ${(p.sy - GAP).toFixed(1)}px, 0)`);
+    const shape = it.shape;
+    const radii = it.radii;
+    if (!shape || !radii || p.w < 20) return;
+    // the tip is exactly on the head; the tail leaves the bottom edge as near to it as the corners allow
+    const w = p.w;
+    const h = p.h;
+    const tx = p.tx - left;
+    const ty = Math.max(h + 12, p.ty - 3 - top);
+    const pad = Math.min(TAIL_HALF + 8 + Math.max(radii[2], radii[3]), w / 2);
+    const bx = clamp(tx, pad, w - pad);
+    const d = bubblePath(w, h, radii, bx, tx, ty, !it.thought);
+    setAttr(shape.children[0], 'd', d);
+    setAttr(shape.children[1], 'd', d);
+    if (it.thought) {
+      // the puffs sit on the line from the bubble's bottom edge to the head
+      PUFFS.forEach(([t, r], n) => {
+        const c = shape.children[2 + n];
+        if (!c) return;
+        setAttr(c, 'cx', (bx + (tx - bx) * t).toFixed(1));
+        setAttr(c, 'cy', (h + (ty - h) * t).toFixed(1));
+        setAttr(c, 'r', String(r));
+      });
     }
   });
 }
@@ -149,9 +245,8 @@ function Crown() {
 }
 
 /** One speech bubble (or name tag) following a character on screen. */
-const BubbleItem = memo(function BubbleItem({ personKey, tails }: { personKey: string; tails: HTMLElement | null }) {
+const BubbleItem = memo(function BubbleItem({ personKey }: { personKey: string }) {
   const rootRef = useRef<HTMLDivElement>(null);
-  const tailRef = useRef<HTMLDivElement>(null);
   const [cur, setCur] = useState<Speech | null>(null);
   const [settled, setSettled] = useState(false);
   const curRef = useRef<Speech | null>(null);
@@ -281,7 +376,7 @@ const BubbleItem = memo(function BubbleItem({ personKey, tails }: { personKey: s
       size.h = box.offsetHeight || 24;
       ro?.observe(box);
     }
-    items.set(personKey, { root, tick, tail: () => tailRef.current, size });
+    items.set(personKey, { root, tick, size });
     startLoop();
     return () => {
       ro?.disconnect();
@@ -294,27 +389,25 @@ const BubbleItem = memo(function BubbleItem({ personKey, tails }: { personKey: s
   const look = asking ? 'ask' : cur ? (cur.kind === 'idle' && !SPOKEN.has(cur.tool ?? '') ? 'thinking' : cur.kind === 'idle' ? 'text' : cur.kind) : '';
   const isFail = failed && look === 'done';
   const via = cur?.tool === 'call' || cur?.tool === 'email' ? cur.tool : null;
-  const tone = asking ? { ['--bg' as string]: BUBBLE_BG.ask, ['--accent' as string]: '#f59e0b' } : { ['--bg' as string]: isFail ? '#ffe6e6' : via === 'call' ? '#d8f3ff' : via === 'email' ? '#fff8e6' : BUBBLE_BG[look] ?? '#ffffff', ['--accent' as string]: look === 'done' ? (isFail ? '#ff6b6b' : '#35c27d') : via === 'call' ? '#2f9de4' : via === 'email' ? '#e0a020' : accent };
+  // the outline of the bubble (box and tail in one path): set by the layout loop, every frame
+  const outline = (
+    <svg className="bubble-shape" aria-hidden="true">
+      <path className="shape-ring" />
+      <path className="shape-fill" />
+      {look === 'thinking' ? (
+        <>
+          <circle className="puff" />
+          <circle className="puff" />
+        </>
+      ) : null}
+    </svg>
+  );
   return (
     <div ref={rootRef} className="bubble-pos" style={{ visibility: 'hidden', ['--accent' as string]: accent }}>
-      {tails && (cur || asking)
-        ? createPortal(
-            <div key={asking ? `ask${askRec!.since}` : cur!.id} ref={tailRef} className="bubble-tail-pos" style={{ visibility: 'hidden', ...tone }}>
-              {look === 'thinking' ? (
-                <>
-                  <i className="bubble-puff p1" />
-                  <i className="bubble-puff p2" />
-                </>
-              ) : (
-                <i className="bubble-tail" />
-              )}
-            </div>,
-            tails,
-          )
-        : null}
       <div className="bubble-anchor">
         {asking ? (
           <div key={`ask${askRec!.since}`} className="bubble bubble-ask" title={askRec!.full ?? askRec!.text}>
+            {outline}
             <div className="bubble-head">
               <span className="bubble-dot" />
               <span className="bubble-name">❓ {name} needs your input</span>
@@ -326,6 +419,7 @@ const BubbleItem = memo(function BubbleItem({ personKey, tails }: { personKey: s
           </div>
         ) : cur ? (
           <div key={cur.id} className={`bubble bubble-${look}${via ? ` bubble-${via === 'call' ? 'phone' : 'email'}` : ''}${cur.hold && cur.kind === 'text' ? ' bubble-talk' : ''}${isFail ? ' bubble-failed' : ''}${settled && !cur.hold ? ' bubble-settled' : ''}`}>
+            {outline}
             <div className="bubble-head">
               <span className="bubble-dot" />
               <span className="bubble-name">{via ? (via === 'call' ? '☎️ You (phone)' : '✉️ Email from You') : <>{role === 'director' ? <Crown /> : null}<span className="nm">{name}</span>{task && cur.kind !== 'idle' && titledId.current === cur.id ? <em className="nm"> · {task}</em> : null}</>}</span>
@@ -347,14 +441,11 @@ const BubbleItem = memo(function BubbleItem({ personKey, tails }: { personKey: s
 
 export function BubbleLayer() {
   const keys = useStore(useShallow((s) => Object.keys(s.people)));
-  const [tails, setTails] = useState<HTMLDivElement | null>(null);
   return (
     <div className="bubble-layer">
-      {/* every tail is drawn below every bubble, so the arrow of one bubble never covers the text of another */}
-      <div className="bubble-tails" ref={setTails} />
       <div className="bubble-bodies">
         {keys.map((k) => (
-          <BubbleItem key={k} personKey={k} tails={tails} />
+          <BubbleItem key={k} personKey={k} />
         ))}
       </div>
     </div>

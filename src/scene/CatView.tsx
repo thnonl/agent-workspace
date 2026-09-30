@@ -6,10 +6,11 @@ import { useFrame } from '@react-three/fiber';
 import type { RoomLayout } from '../world/layout';
 import { CatBrain, neutralCatPose, type CatPose } from '../sim/cat';
 import { cats, catsInRoom, simsInRoom, spotOwners } from '../sim/registry';
-import { frame, roomStep, stepDt } from '../sim/frame';
+import { CALM_STEP, frame, roomStep, stepDt } from '../sim/frame';
 import { buildCat, makeCatLook, type CatRig } from './catModel';
 import { MB } from './kit';
 import { useStore } from '../store';
+import { blobGeometry, FX, initFx } from './fx';
 
 function heartGeometry() {
   const s = new THREE.Shape();
@@ -128,6 +129,10 @@ interface Props {
 }
 
 export function CatView({ catKey, roomId, layout, seed }: Props) {
+  initFx();
+  const blob = useRef<THREE.Mesh>(null);
+  /** the cat sat, slept or looked around at the last update: the next one may wait (CALM_STEP) */
+  const calm = useRef(false);
   const look = useMemo(() => makeCatLook(seed), [seed]);
   const rig = useMemo(() => buildCat(look), [look]);
   const brain = useMemo(() => new CatBrain(catKey, roomId, seed, layout), [catKey, roomId, seed, layout]);
@@ -156,18 +161,28 @@ export function CatView({ catKey, roomId, layout, seed }: Props) {
   useFrame((state, rawDt) => {
     const visible = frame.visibleRooms.has(roomId);
     pending.current += rawDt;
-    const step = roomStep(roomId);
+    const step0 = roomStep(roomId);
+    const step = calm.current ? Math.max(step0, CALM_STEP) : step0;
     if (pending.current < step) return;
     const dt = stepDt(pending.current, step);
     pending.current = 0;
     clock.current += dt;
     const now = performance.now() / 1000;
     brain.update(dt, { layout, now, chars: simsInRoom(roomId), cats: catsInRoom(roomId) });
+    calm.current = brain.sim.still && brain.sim.phase !== 'groom' && brain.sim.petUntil < now;
     if (!visible) return; // off screen: the cat lives on, but it is not posed
     const s = brain.sim;
     rig.root.visible = s.onStage;
     rig.root.position.set(s.x, s.y, s.z);
     rig.root.rotation.y = s.yaw;
+    if (blob.current) {
+      // a soft shadow under the cat; it shrinks away while the cat is up on furniture (the furniture has its own)
+      const k = Math.max(0, 1 - s.y / 0.55);
+      blob.current.visible = s.onStage && k > 0.05;
+      blob.current.position.set(s.x, 0.032, s.z);
+      blob.current.rotation.y = s.yaw;
+      blob.current.scale.set(0.82 * k, 1, 0.56 * k);
+    }
     smoothPose(smoothed.current, brain.pose, dt);
     applyCat(rig, smoothed.current, clock.current);
     // hearts drift up while somebody strokes the cat
@@ -186,6 +201,7 @@ export function CatView({ catKey, roomId, layout, seed }: Props) {
   const pointer = usePointerCursor();
   return (
     <group>
+      <mesh ref={blob} geometry={blobGeometry()} material={FX.blob} visible={false} renderOrder={1} raycast={() => null} />
       <primitive
         object={rig.root}
         {...pointer}

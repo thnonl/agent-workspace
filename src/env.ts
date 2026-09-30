@@ -8,6 +8,8 @@ export interface EnvState {
   warm: number;
   /** 0-1: how much the room lamps are switched on */
   lamps: number;
+  /** 0-1: cloud cover / rain outside (dims the daylight, fades the sunbeams) */
+  overcast: number;
 }
 
 const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
@@ -23,19 +25,20 @@ export function envForHour(hIn: number): EnvState {
   const warm = Math.max(bell(hour, 6.4, 1.1), bell(hour, 18.6, 1.2)) * 0.9;
   const night = 1 - day;
   const lamps = smooth(0.22, 0.65, night);
-  return { hour, day, night, warm, lamps };
+  return { hour, day, night, warm, lamps, overcast: 0 };
 }
 
 /** The live (damped) environment read by every scene component. */
 export const env: EnvState = envForHour(12);
 
-export function stepEnv(target: EnvState, dt: number) {
+export function stepEnv(target: EnvState, dt: number, overcast = 0) {
   const k = 1 - Math.exp(-2.2 * dt);
   env.hour = target.hour;
   env.day += (target.day - env.day) * k;
   env.night = 1 - env.day;
   env.warm += (target.warm - env.warm) * k;
   env.lamps += (target.lamps - env.lamps) * k;
+  env.overcast += (overcast - env.overcast) * (1 - Math.exp(-0.8 * dt));
 }
 
 export const HOUR_PRESETS = { day: 12.5, dusk: 18.6, night: 23 } as const;

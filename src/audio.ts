@@ -4,7 +4,8 @@
  */
 export type Sfx =
   | 'door' | 'pop' | 'talk' | 'ding' | 'chime' | 'key' | 'paper' | 'water' | 'sip' | 'page' | 'sizzle' | 'bite' | 'meow' | 'blip' | 'pour' | 'clink'
-  | 'doorbell' | 'inhale' | 'exhale' | 'thud' | 'huff' | 'clank' | 'pickup' | 'swipe' | 'ring' | 'mail' | 'ask';
+  | 'doorbell' | 'inhale' | 'exhale' | 'thud' | 'huff' | 'clank' | 'pickup' | 'swipe' | 'ring' | 'mail' | 'ask' | 'thunder'
+  | 'shutter' | 'fanfare' | 'confetti' | 'sparkle' | 'levelup' | 'achieve' | 'puff' | 'radio' | 'clap';
 
 const MUTE_KEY = 'claude-office:muted';
 /** overall level – effects are synthesised soft, this brings them up to a clearly audible volume */
@@ -13,6 +14,7 @@ const MASTER = 1.6;
 let ctx: AudioContext | null = null;
 let master: GainNode | null = null;
 let noiseBuf: AudioBuffer | null = null;
+let outBus: DynamicsCompressorNode | null = null;
 let muted = (() => {
   try {
     return localStorage.getItem(MUTE_KEY) === '1';
@@ -67,7 +69,28 @@ function ensure(): AudioContext | null {
   limiter.attack.value = 0.003;
   limiter.release.value = 0.15;
   master.connect(limiter).connect(ctx.destination);
+  outBus = limiter;
+  if (import.meta.env.DEV) Object.assign(window, { __audio: { ctx, out: limiter } });
   return ctx;
+}
+
+function noiseBuffer(c: AudioContext): AudioBuffer {
+  if (!noiseBuf) {
+    noiseBuf = c.createBuffer(1, c.sampleRate * 2, c.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  }
+  return noiseBuf;
+}
+
+/**
+ * The audio graph for the music / ambience engine (music.ts): `sfx` is the bus of the sound effects (muted by M and the
+ * mute button, along with the ambience), `out` the final limiter (the music goes straight there, it has its own switch).
+ * Null until the browser has let the page make sound (first click or key press).
+ */
+export function audioGraph(): { ctx: AudioContext; sfx: GainNode; out: AudioNode; noise: AudioBuffer } | null {
+  if (!ctx || !master || !outBus) return null;
+  return { ctx, sfx: master, out: outBus, noise: noiseBuffer(ctx) };
 }
 
 // browsers start audio contexts suspended until the user has interacted with the page
@@ -81,7 +104,7 @@ if (typeof window !== 'undefined') {
   window.addEventListener('keydown', unlock);
 }
 
-const MIN_GAP: Partial<Record<Sfx, number>> = { key: 70, pop: 160, talk: 240, blip: 200, water: 500, sizzle: 1500, doorbell: 4000, inhale: 2500, exhale: 2500, thud: 130, huff: 900, clank: 250, pickup: 3000, swipe: 2500, ring: 3000, mail: 2500, ask: 3000 };
+const MIN_GAP: Partial<Record<Sfx, number>> = { shutter: 500, fanfare: 1500, confetti: 400, sparkle: 600, levelup: 2000, achieve: 1500, puff: 400, radio: 300, clap: 3000, key: 70, pop: 160, talk: 240, blip: 200, water: 500, sizzle: 1500, doorbell: 4000, inhale: 2500, exhale: 2500, thud: 130, huff: 900, clank: 250, pickup: 3000, swipe: 2500, ring: 3000, mail: 2500, ask: 3000 };
 
 function tone(c: AudioContext, at: number, freq: number, dur: number, gain: number, type: OscillatorType = 'sine', to?: number, attack = 0.008) {
   const o = c.createOscillator();
@@ -232,6 +255,50 @@ export function sfx(name: Sfx, roomId?: string, pitch = 1) {
       break;
     case 'exhale':
       noise(c, t, 1.4, 0.025, 'bandpass', 1500, 700, 0.5);
+      break;
+    case 'shutter':
+      noise(c, t, 0.03, 0.09, 'highpass', 3200);
+      noise(c, t + 0.07, 0.06, 0.07, 'bandpass', 1900, 1200, 0.8);
+      break;
+    case 'fanfare':
+      // a short "we did it" flourish ending on a bright chord
+      [523, 659, 784].forEach((f, i) => tone(c, t + i * 0.11, f, 0.22, 0.06, 'triangle'));
+      [1047, 1319, 1568].forEach((f) => tone(c, t + 0.36, f, 0.9, 0.045, 'triangle'));
+      tone(c, t + 0.36, 523, 0.9, 0.05, 'sine');
+      break;
+    case 'confetti':
+      noise(c, t, 0.14, 0.1, 'bandpass', 1100, 260, 0.7);
+      for (let i = 0; i < 6; i++) tone(c, t + 0.05 + i * 0.045, 1800 + Math.random() * 2200, 0.09, 0.018, 'sine');
+      break;
+    case 'sparkle':
+      tone(c, t, 1568, 0.18, 0.04);
+      tone(c, t + 0.08, 2093, 0.3, 0.035);
+      tone(c, t + 0.16, 2637, 0.4, 0.025);
+      break;
+    case 'levelup':
+      [523, 659, 784, 1047, 1319].forEach((f, i) => tone(c, t + i * 0.09, f, 0.3, 0.055, 'triangle'));
+      tone(c, t + 0.5, 1568, 0.7, 0.04);
+      break;
+    case 'achieve':
+      tone(c, t, 784, 0.25, 0.05, 'triangle');
+      tone(c, t + 0.12, 988, 0.25, 0.05, 'triangle');
+      tone(c, t + 0.24, 1319, 0.6, 0.05, 'triangle');
+      break;
+    case 'puff':
+      noise(c, t, 0.22, 0.05, 'lowpass', 1400, 500);
+      break;
+    case 'radio':
+      noise(c, t, 0.05, 0.05, 'bandpass', 2400);
+      tone(c, t + 0.06, 880, 0.08, 0.03, 'square');
+      tone(c, t + 0.15, 660, 0.08, 0.03, 'square');
+      break;
+    case 'clap':
+      for (let i = 0; i < 9; i++) noise(c, t + i * 0.075 + Math.random() * 0.03, 0.05, 0.05, 'bandpass', 1500 + Math.random() * 1500, 900, 0.9);
+      break;
+    case 'thunder':
+      // far away: a low rumble that rolls out
+      noise(c, t, 2.6, 0.16, 'lowpass', 260, 70, 0.7);
+      tone(c, t + 0.05, 62, 1.8, 0.1, 'sine', 38, 0.15);
       break;
     case 'meow':
       tone(c, t, 620 * pitch, 0.32 * (1.15 - pitch * 0.15) + r * 0.08, 0.045, 'sawtooth', 460 * pitch, 0.05);

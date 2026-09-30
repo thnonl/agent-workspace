@@ -8,6 +8,9 @@ import type { ActivityEntry, Speech, TaskLogEntry, TaskRec } from '../types';
 import { FALLBACK_NAMES, parseNames } from '../names';
 import { audioRunning, sfx, subscribeAudioState } from '../audio';
 import { retryConnection } from '../live/connection';
+import { takePhoto } from '../photo';
+import { contextShare } from '../context';
+import { LevelChip } from './ProgressDialog';
 import { Dialog } from './Dialog';
 import { Icon, type IconName } from './Icon';
 import { PROVIDER_NAME, ProviderLogo, watchedSources } from './ProviderLogo';
@@ -96,6 +99,10 @@ export function TopBar() {
   const showSwitcher = useStore((s) => s.showSwitcher);
   const setShowSwitcher = useStore((s) => s.setShowSwitcher);
   const soundReady = useSyncExternalStore(subscribeAudioState, audioRunning);
+  const musicOn = useStore((s) => s.musicOn);
+  const setMusicOn = useStore((s) => s.setMusicOn);
+  const setCinema = useStore((s) => s.setCinema);
+  const setShowSettings = useStore((s) => s.setShowSettings);
 
   const status: ReactNode = connection === 'live' ? (liveRooms ? <>Live · {liveRooms}<span className="lbl"> session{liveRooms > 1 ? 's' : ''}</span></> : 'Live · idle') : connection === 'connecting' ? 'Connecting…' : 'Offline';
   return (
@@ -120,7 +127,7 @@ export function TopBar() {
           <span className="pill-caret" aria-hidden="true"><Icon name={showSwitcher ? 'chevron-down' : 'chevron-right'} size={13} /></span>
         </button>
         {SHOW_DEMO_BUTTON ? (
-          <button className={`btn${demoOn ? ' btn-on' : ''}`} onClick={() => setDemo(!demoOn)} title="Simulated agent sessions">
+          <button className={`btn btn-extra${demoOn ? ' btn-on' : ''}`} onClick={() => setDemo(!demoOn)} title="Simulated agent sessions">
             <Icon name={demoOn ? 'pause' : 'play'} size={13} /> Demo
             {demoOn && autoDemo ? <em>auto</em> : null}
           </button>
@@ -132,7 +139,7 @@ export function TopBar() {
         >
           <Icon name={timeIcon(hour)} size={18} /> <span className="lbl">{timeMode === 'auto' ? `${String(Math.floor(hour)).padStart(2, '0')}:${String(Math.floor((hour % 1) * 60)).padStart(2, '0')}` : timeMode}</span>
         </button>
-        <button className="btn btn-names" onClick={() => setShowNames(true)} title="Names for the director and the staff" aria-label={`Names${nameCount ? ` (${nameCount})` : ''}`}>
+        <button className="btn btn-names btn-extra" onClick={() => setShowNames(true)} title="Names for the director and the staff" aria-label={`Names${nameCount ? ` (${nameCount})` : ''}`}>
           <Icon name="users" size={18} />
           <span className="lbl" aria-hidden="true">Names</span>
           {nameCount ? <em aria-hidden="true">{nameCount}</em> : null}
@@ -155,7 +162,12 @@ export function TopBar() {
         >
           <Icon name={muted ? 'volume-x' : 'volume'} size={18} />
         </button>
+        <LevelChip />
+        <button className={`btn btn-icon btn-extra btn-music${musicOn ? ' btn-on' : ''}`} onClick={() => setMusicOn(!musicOn)} aria-pressed={musicOn} aria-label={musicOn ? 'Lo-fi music on' : 'Lo-fi music off'} title={musicOn ? 'Lo-fi music is on – click to stop (K)' : 'Play lo-fi music (K)'}><Icon name="music" size={18} /></button>
+        <button className="btn btn-icon btn-extra" onClick={() => takePhoto()} aria-label="Take a photo" title="Save a photo of the office (P)"><Icon name="camera" size={18} /></button>
+        <button className="btn btn-icon btn-extra" onClick={() => setCinema(true)} aria-label="Screensaver mode" title="Screensaver: hide the buttons and tour the rooms (C)"><Icon name="maximize" size={18} /></button>
         <button className="btn btn-icon" onClick={resetView} aria-label="Reset camera" title="Reset camera (R)"><Icon name="crosshair" size={18} /></button>
+        <button className="btn btn-icon" onClick={() => setShowSettings(true)} aria-label="Settings" title="Settings: graphics, weather, decorations, sound"><Icon name="settings" size={18} /></button>
         <button className="btn btn-icon" onClick={() => setHelp(true)} aria-label="Help" title="Help (?)"><Icon name="help" size={18} /></button>
       </div>
     </header>
@@ -320,6 +332,7 @@ export function RoomHeader() {
   const openSummary = useStore((s) => s.openSummary);
   const status = useRoomStatus();
   const ask = useStore((s) => (s.activeRoomId ? s.asks[s.activeRoomId] : undefined));
+  const ctxPref = useStore((s) => s.contextWindow);
   const [folded, setFolded] = useState(smallScreen);
   // the window grows or shrinks past the limit: fold or unfold to match (a click on the fold button lasts until the next change)
   useEffect(() => {
@@ -332,6 +345,7 @@ export function RoomHeader() {
   if (!room) return null;
   const st = status[room.id] ?? NO_STATUS;
   const theme = themeFor(room.themeIndex);
+  const ctxShare = contextShare(room.context, ctxPref);
   const askChip = ask ? <span className="room-header-ask" title={ask.full ?? ask.text}><Icon name="help" size={13} /> Needs your input</span> : null;
   return (
     <section className={`room-header${folded ? ' folded' : ''}`} style={{ ['--accent' as string]: theme.accent }} aria-label="Current room">
@@ -351,6 +365,7 @@ export function RoomHeader() {
           <div className="room-header-stats">
             <span className={st.working ? 'on' : ''}><Icon name={st.working ? 'briefcase' : 'coffee'} size={13} /> {st.working ? 'Working' : 'Idle'}</span>
             <span><Icon name="users" size={13} /> {st.people} in the office</span>
+            {ctxShare ? <span className={`ctx-chip ctx-${ctxShare.level}`} title={ctxShare.title}><Icon name="layers" size={13} /> {ctxShare.text}</span> : null}
             {askChip}
             <button className={`stat-btn${listTab === 'tasks' ? ' open' : ''}`} onClick={() => toggleList('tasks')} aria-pressed={listTab === 'tasks'} aria-controls="tasklist" title="Tasks of this session (sub-agent runs and the main agent's own work) – click for the full list, click again to close">
               <Icon name="list-checks" size={13} /> Tasks
@@ -379,6 +394,7 @@ export function RoomSwitcher() {
   const unseen = useStore((s) => s.unseen);
   const asks = useStore((s) => s.asks);
   const show = useStore((s) => s.showSwitcher);
+  const ctxPref = useStore((s) => s.contextWindow);
   const status = useRoomStatus();
   const listRef = useRef<HTMLDivElement>(null);
   // the room that is opened stays in view when the list scrolls
@@ -395,6 +411,7 @@ export function RoomSwitcher() {
           if (!r) return null;
           const st = status[id] ?? NO_STATUS;
           const theme = themeFor(r.themeIndex);
+          const ctx = contextShare(r.context, ctxPref);
           return (
             <button key={id} className={`room-card${id === active ? ' active' : ''}`} style={{ ['--accent' as string]: theme.accent, ['--wall' as string]: theme.wall }} onClick={() => setActive(id)} aria-current={id === active ? 'true' : undefined} title={`${r.title} · ${PROVIDER_NAME[r.provider]}${i < 9 ? ` (${i + 1})` : ''}`}>
               <span className="room-card-logo" title={PROVIDER_NAME[r.provider]}>
@@ -404,6 +421,12 @@ export function RoomSwitcher() {
                 <b>{i + 1}. {r.project}</b>
                 {shortTitle(r) ? <small className="room-card-name">{shortTitle(r)}</small> : null}
                 <small>{st.working ? 'working' : 'idle'}{asks[id] ? ' · needs your input' : unseen[id] ? ' · summary ready' : ''}</small>
+                {ctx ? (
+                  <span className={`room-card-ctx ctx-${ctx.level}`} title={ctx.title}>
+                    <i aria-hidden="true"><b style={{ width: `${Math.min(100, ctx.pct)}%` }} /></i>
+                    <em>{ctx.text}</em>
+                  </span>
+                ) : null}
               </span>
               <span className={`room-card-status${st.working ? ' on' : ''}`} />
               {asks[id] ? <i className="room-card-ask" title={`Waiting for your answer: ${asks[id].text}`} aria-hidden="true"><Icon name="help" size={12} /></i> : unseen[id] ? <i className="room-card-alert" title="This session is done – click to read its summary" aria-hidden="true" /> : null}
@@ -737,7 +760,8 @@ export function Help() {
         <li><kbd>←</kbd> <kbd>→</kbd> or <kbd>1</kbd>–<kbd>9</kbd> switch room</li>
         <li>Drag = rotate · Wheel = zoom · <kbd>R</kbd> = reset camera</li>
         <li>Click a character to follow it and see its log · <kbd>Esc</kbd> to close</li>
-        <li><kbd>N</kbd> previews day / dusk / night · <kbd>M</kbd> mutes sound · <kbd>?</kbd> opens this help</li>
+        <li><kbd>N</kbd> previews day / dusk / night · <kbd>W</kbd> changes the weather · <kbd>M</kbd> mutes sound · <kbd>K</kbd> lo-fi music · <kbd>?</kbd> opens this help</li>
+        <li><kbd>P</kbd> saves a photo · <kbd>C</kbd> screensaver mode (<kbd>Esc</kbd> or a click leaves it) · <kbd>L</kbd> levels and achievements</li>
       </ul>
       <h3>The office</h3>
       <ul className="help-list">

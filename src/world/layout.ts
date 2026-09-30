@@ -205,7 +205,7 @@ const DESK_CANDIDATES = 14;
 const DESK_CANDIDATES_GRAND = 30;
 
 /** footprint [width along the wall, depth, height] of every prop */
-const FOOT: Record<PropKind, [number, number, number]> = {
+export const FOOT: Record<PropKind, [number, number, number]> = {
   bookshelf: [2.0, 0.6, 2.0],
   plant: [0.75, 0.75, 1.0],
   tallPlant: [0.95, 0.95, 1.7],

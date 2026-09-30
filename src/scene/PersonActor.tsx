@@ -8,7 +8,7 @@ import { rot2 } from '../world/layout';
 import type { RoomLayout } from '../world/layout';
 import { Actor, laptopDist, SEAT_LIFT, type ActorCtx, type Pose } from '../sim/actor';
 import { anchors, catsInRoom, enqueueSpeech, lastSpeech, queueLength, runtimeFor, sims, simsInRoom, view, type SimState } from '../sim/registry';
-import { frame, roomStep, stepDt } from '../sim/frame';
+import { CALM_STEP, frame, roomStep, stepDt } from '../sim/frame';
 import { buildCharacter, RIG_SCALE, type Rig } from './character';
 import { buildLaptop } from './laptop';
 import { disposeOwned } from './bake';
@@ -17,6 +17,7 @@ import { buildDumbbells } from './dumbbells';
 import { G } from './kit';
 import { DESK_TOP } from './furniture';
 import { sfx } from '../audio';
+import { blobGeometry, FX, initFx } from './fx';
 
 const qHand = new THREE.Quaternion();
 const qRoot = new THREE.Quaternion();
@@ -119,6 +120,7 @@ interface Props {
 }
 
 export function PersonActor({ personKey, roomId, layout }: Props) {
+  initFx();
   const seed = useStore((s) => s.people[personKey]?.seed ?? 0);
   const role = useStore((s) => s.people[personKey]?.role ?? 'staff');
   const desk = useStore((s) => s.people[personKey]?.desk ?? -1);
@@ -144,6 +146,9 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
   }, [rig, layout.theme]);
 
   const ring = useRef<THREE.Mesh>(null);
+  const blob = useRef<THREE.Mesh>(null);
+  /** the person sat still at the last update: the next one may wait (CALM_STEP) */
+  const calm = useRef(false);
   const outer = useRef<THREE.Group>(null);
   const clockRef = useRef(0);
   const ctx = useRef<ActorCtx | null>(null);
@@ -175,7 +180,9 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
   useFrame((_, rawDt) => {
     const visible = frame.visibleRooms.has(roomId);
     pending.current += rawDt;
-    const step = roomStep(roomId);
+    // somebody who sits still needs far fewer updates than somebody who walks or types (a followed person stays smooth)
+    const step0 = roomStep(roomId);
+    const step = calm.current && !selected ? Math.max(step0, CALM_STEP) : step0;
     if (pending.current < step) return;
     const dt = stepDt(pending.current, step);
     pending.current = 0;
@@ -217,6 +224,25 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
 
     actor.update(dt, c);
     const sim = actor.sim;
+    sim.calm = (sim.phase === 'working' || sim.phase === 'waiting') && !sim.walking && actor.typing < 0.2 && rt.cheerUntil < now;
+    calm.current = !!sim.calm;
+    // a celebration (run finished, commit, push): arms up, big smile, a little hop
+    const cheer = rt.cheerUntil - now;
+    if (cheer > 0 && sim.onStage && !sim.walking && sim.phase !== 'waiting') {
+      const p = actor.pose;
+      const w = Math.min(1, cheer * 2);
+      const c2 = clockRef.current * 9;
+      p.armLx = -2.75 + Math.sin(c2) * 0.3 * w;
+      p.armRx = -2.75 + Math.cos(c2) * 0.3 * w;
+      p.armLz = p.armRz = 0.3;
+      p.foreLx = p.foreRx = -0.25;
+      p.happy = 1;
+      p.mouth = 'o';
+      p.headX = -0.15;
+      p.lookUp = 1;
+      if (sim.phase !== 'working' && sim.phase !== 'sitting' && sim.phase !== 'unpacking') p.bob += Math.abs(Math.sin(c2 * 0.8)) * 0.1 * w;
+      actor.typing = 0;
+    }
     if (isDirector) {
       rt.directorSeated = sim.phase === 'working' || sim.phase === 'unpacking';
       rt.directorKey = personKey;
@@ -241,7 +267,10 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
     root.visible = sim.onStage;
     const ph = sim.phase;
     const atDesk = ph === 'working' || ph === 'sitting' || ph === 'unpacking' || ph === 'packing' || ph === 'standing';
-    root.position.set(sim.x, sim.y + (atDesk ? SEAT_LIFT * sim.sitT : 0), sim.z);
+    const lift = sim.y + (atDesk ? SEAT_LIFT * sim.sitT : 0);
+    root.position.set(sim.x, lift, sim.z);
+    // soft shadow: stays on the floor while the body is lifted (seat cushion, chair)
+    if (blob.current) blob.current.position.y = (0.032 - lift) / scale;
     root.rotation.y = sim.yaw;
     // seated / talking characters glance towards the viewer so their cute faces stay visible
     let glance = 0;
@@ -454,6 +483,7 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
           useStore.getState().select(personKey);
         }}
       >
+        <mesh ref={blob} geometry={blobGeometry()} material={FX.blob} position={[0, 0.032, 0]} scale={[1.05, 1, 1.05]} renderOrder={1} raycast={() => null} />
         <mesh ref={ring} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]} visible={false} geometry={G.torus(0.62, 0.05, Math.PI * 2, 6, 40)}>
           <meshBasicMaterial color={accent} transparent opacity={0.9} />
         </mesh>

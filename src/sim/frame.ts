@@ -35,6 +35,9 @@ export const HIDDEN_STEP = 1;
 export const ACTIVE_MAX_DT = 0.1;
 export const SLOW_MAX_DT = 1.5;
 
+/** Somebody who sits still (resting, asleep, waiting) is updated at most this often (seconds): the ones who move get the time. */
+export const CALM_STEP = 0.1;
+
 /** Minimum time between two updates of the sim / animation of a room (0: every frame). Reads `frame`, allocates nothing. */
 export function roomStep(roomId: string): number {
   if (roomId === frame.activeId) return 0;

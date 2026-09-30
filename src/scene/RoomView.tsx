@@ -14,6 +14,14 @@ import { DoorView, FloorDecals, layoutOpenings, Sign, Sunbeam, Wall, WallDecorVi
 import { floorTexture } from './textures';
 import { PersonActor } from './PersonActor';
 import { StaticBake } from './StaticBake';
+import { RoomAO } from './RoomAO';
+import { RoomLightFx } from './RoomLightFx';
+import { SeasonDecor } from './SeasonDecor';
+import { CelebrationFx } from './CelebrationFx';
+import { boardPlan, StatsBoard } from './StatsBoard';
+import { PropHits, Radio } from './Interactive';
+import { bonusCats, levelOf, useProgress } from '../progress';
+import type { Season } from '../season';
 import { CatView } from './CatView';
 import { shade } from './kit';
 
@@ -29,11 +37,12 @@ export function roomOrigin(index: number): [number, number, number] {
  * re-render when the room record changes (new report, new title, new timestamp...): the props
  * (layout identity, room id, sign text) decide.
  */
-const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle }: { roomId: string; layout: RoomLayout; signTitle: string }) {
+const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle, season }: { roomId: string; layout: RoomLayout; signTitle: string; season: Season }) {
   const { width: W, depth: D, theme, wallHeight: H } = layout;
   const t = WALL_T;
   const floorTex = useMemo(() => floorTexture(theme.floorKind, theme.floor, theme.floor2, theme.floorKind === 'wood' || theme.floorKind === 'carpetTile' ? W / 4 : W / 3, theme.floorKind === 'wood' || theme.floorKind === 'carpetTile' ? D / 4 : D / 3), [theme, W, D]);
   const { back, left } = useMemo(() => layoutOpenings(layout), [layout]);
+  const skipDecor = boardPlan(layout)?.replaces ?? null;
   const doorLocalBack = layout.door.wall === 'back' ? layout.door.pos + t / 2 : null;
   const doorLocalLeft = layout.door.wall === 'left' ? -layout.door.pos : null;
 
@@ -68,6 +77,7 @@ const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle }: { roo
 
       <FloorDecals decals={layout.decals} />
       </StaticBake>
+      <RoomAO layout={layout} />
 
       {/* walls */}
       <group position={[-t / 2, 0, -D / 2]}>
@@ -80,7 +90,7 @@ const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle }: { roo
           </group>
         ))}
         {layout.door.wall === 'back' ? <DoorView door={layout.door} theme={theme} roomId={roomId} localX={layout.door.pos + t / 2} /> : null}
-        {layout.wallDecor.filter((d) => d.wall === 'back').map((d, i) => (
+        {layout.wallDecor.filter((d) => d.wall === 'back' && d !== skipDecor).map((d, i) => (
           <WallDecorView key={i} d={d} theme={theme} roomId={roomId} localX={d.pos + t / 2} />
         ))}
         {layout.signPos?.wall === 'back' ? <Sign title={signTitle} localX={layout.signPos.pos + t / 2} y={layout.signPos.y} theme={theme} /> : null}
@@ -96,7 +106,7 @@ const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle }: { roo
           </group>
         ))}
         {layout.door.wall === 'left' ? <DoorView door={layout.door} theme={theme} roomId={roomId} localX={-layout.door.pos} /> : null}
-        {layout.wallDecor.filter((d) => d.wall === 'left').map((d, i) => (
+        {layout.wallDecor.filter((d) => d.wall === 'left' && d !== skipDecor).map((d, i) => (
           <WallDecorView key={i} d={d} theme={theme} roomId={roomId} localX={-d.pos} />
         ))}
         </StaticBake>
@@ -113,6 +123,12 @@ const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle }: { roo
           <PropView key={i} p={p} theme={theme} roomId={roomId} />
         ))}
       </StaticBake>
+      {/* festive decorations (Halloween, Christmas, Tết): baked again when the season changes */}
+      {season === 'none' ? null : (
+        <StaticBake key={season}>
+          <SeasonDecor layout={layout} season={season} />
+        </StaticBake>
+      )}
     </>
   );
 });
@@ -124,6 +140,9 @@ export const RoomView = memo(function RoomView({ roomId }: { roomId: string }) {
   const seed = useStore((s) => s.rooms[roomId]?.seed ?? 0);
   const themeIndex = useStore((s) => s.rooms[roomId]?.themeIndex ?? 0);
   const reports = useStore((s) => s.rooms[roomId]?.reports ?? 0);
+  const season = useStore((s) => s.season);
+  const quality = useStore((s) => s.quality);
+  const extraCats = useProgress((s) => bonusCats(levelOf(s.xp).level));
   const signTitle = useStore((s) => {
     const r = s.rooms[roomId];
     return r ? r.project || r.title : '';
@@ -160,7 +179,7 @@ export const RoomView = memo(function RoomView({ roomId }: { roomId: string }) {
 
   return (
     <group ref={group} position={origin}>
-      <RoomStatic roomId={roomId} layout={layout} signTitle={signTitle} />
+      <RoomStatic roomId={roomId} layout={layout} signTitle={signTitle} season={season} />
 
       {/* movable furniture */}
       {layout.desks.map((d) => (
@@ -172,9 +191,15 @@ export const RoomView = memo(function RoomView({ roomId }: { roomId: string }) {
       <Chair x={layout.director.seat.x} z={layout.director.seat.z} rot={0} turn={0} color={shade(theme.accent2, -0.05)} roomId={roomId} deskIndex={-1} big approachSide={layout.director.approachSide} seed={99} />
 
       {/* the office cats */}
-      {Array.from({ length: layout.catCount }, (_, i) => (
+      {Array.from({ length: layout.catCount ? layout.catCount + extraCats : 0 }, (_, i) => (
         <CatView key={i} catKey={`${roomId}::cat${i}`} roomId={roomId} layout={layout} seed={seed + i * 977} />
       ))}
+
+      <StatsBoard roomId={roomId} layout={layout} />
+      <PropHits roomId={roomId} layout={layout} />
+      <Radio roomId={roomId} layout={layout} />
+      <CelebrationFx roomId={roomId} layout={layout} />
+      <RoomLightFx layout={layout} roomId={roomId} halos={quality !== 'low'} dust={quality !== 'low'} />
 
       {/* people */}
       {personKeys.map((k) => (

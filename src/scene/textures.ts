@@ -2,7 +2,31 @@ import * as THREE from 'three';
 import type { FloorKind } from '../world/palettes';
 import { Rng } from '../util/rng';
 
+/**
+ * Textures are cached by what they show (the same floor, the same sign text). The cache is bounded: a session with a new title
+ * brings a new sign and calendar, and an app that stays open for days sees hundreds of them. The least recently used texture
+ * is released from the GPU and dropped; a room that still shows it just uploads it again.
+ */
+const CACHE_MAX = 36;
 const cache = new Map<string, THREE.CanvasTexture>();
+
+function recall(key: string): THREE.CanvasTexture | undefined {
+  const t = cache.get(key);
+  if (t) {
+    cache.delete(key);
+    cache.set(key, t);
+  }
+  return t;
+}
+
+function remember(key: string, t: THREE.CanvasTexture) {
+  cache.set(key, t);
+  while (cache.size > CACHE_MAX) {
+    const oldest = cache.keys().next().value as string;
+    cache.get(oldest)?.dispose();
+    cache.delete(oldest);
+  }
+}
 
 function canvas(w: number, h: number) {
   const c = document.createElement('canvas');
@@ -32,7 +56,7 @@ const jitter = (hex: string, r: Rng, amt: number) => {
 
 export function floorTexture(kind: FloorKind, c1: string, c2: string, repX: number, repY: number): THREE.CanvasTexture {
   const key = `floor|${kind}|${c1}|${c2}|${repX}|${repY}`;
-  const hit = cache.get(key);
+  const hit = recall(key);
   if (hit) return hit;
   const S = 512;
   const { c, g } = canvas(S, S);
@@ -154,13 +178,13 @@ export function floorTexture(kind: FloorKind, c1: string, c2: string, repX: numb
     }
   }
   const t = finish(c, repX, repY);
-  cache.set(key, t);
+  remember(key, t);
   return t;
 }
 
 export function textTexture(text: string, w: number, h: number, bg: string, fg: string, opts: { font?: string; icon?: string; border?: string } = {}): THREE.CanvasTexture {
   const key = `text|${text}|${w}|${h}|${bg}|${fg}|${opts.icon ?? ''}|${opts.border ?? ''}`;
-  const hit = cache.get(key);
+  const hit = recall(key);
   if (hit) return hit;
   const px = 2;
   const { c, g } = canvas(w * px, h * px);
@@ -197,13 +221,13 @@ export function textTexture(text: string, w: number, h: number, bg: string, fg: 
   draw();
   // redraw once webfonts are ready so the sign uses Nunito
   document.fonts?.ready.then(draw).catch(() => undefined);
-  cache.set(key, t);
+  remember(key, t);
   return t;
 }
 
 export function calendarTexture(month: string, accent: string, seed: number): THREE.CanvasTexture {
   const key = `cal|${month}|${accent}|${seed}`;
-  const hit = cache.get(key);
+  const hit = recall(key);
   if (hit) return hit;
   const { c, g } = canvas(256, 340);
   g.fillStyle = '#ffffff';
@@ -234,6 +258,6 @@ export function calendarTexture(month: string, accent: string, seed: number): TH
     g.fillText(String(i + 1), x, y + 1);
   }
   const t = finish(c, 1, 1, false);
-  cache.set(key, t);
+  remember(key, t);
   return t;
 }

@@ -4,14 +4,16 @@ import App from './App';
 import '@fontsource-variable/nunito';
 import '@fontsource-variable/jetbrains-mono';
 import './styles.css';
+import './styles.fx.css';
 import { useStore } from './store';
 import * as registry from './sim/registry';
 import { getLayout } from './world/layout';
+import { useProgress } from './progress';
 
 const CatLab = lazy(() => import('./scene/CatLab').then((m) => ({ default: m.CatLab })));
 const WardrobeLab = lazy(() => import('./scene/WardrobeLab').then((m) => ({ default: m.WardrobeLab })));
 
-if (import.meta.env.DEV) Object.assign(window, { __office: useStore, __registry: registry, __layout: getLayout });
+if (import.meta.env.DEV) Object.assign(window, { __office: useStore, __registry: registry, __layout: getLayout, __progress: useProgress });
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

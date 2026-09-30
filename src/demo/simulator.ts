@@ -34,6 +34,8 @@ const S = (text: string): Line => ({ kind: 'text', text });
 const R = (file: string): Line => ({ kind: 'tool', tool: 'Read', text: `Reading ${file}` });
 const E = (file: string): Line => ({ kind: 'tool', tool: 'Edit', text: `Editing ${file}` });
 const W = (file: string): Line => ({ kind: 'tool', tool: 'Write', text: `Writing ${file}` });
+/** the celebration cue of a tool line (what the monitor derives from the real command) */
+const cueFrom = (text: string): 'commit' | 'push' | undefined => (/git push/.test(text) ? 'push' : /git commit/.test(text) ? 'commit' : undefined);
 const B = (cmd: string): Line => ({ kind: 'tool', tool: 'Bash', text: `$ ${cmd}` });
 const G = (pat: string): Line => ({ kind: 'tool', tool: 'Grep', text: `Searching “${pat}”` });
 
@@ -47,7 +49,7 @@ const SCENARIOS: Scenario[] = [
       { label: 'Refresh token endpoint', type: 'general-purpose', lines: [R('src/routes/auth.ts'), W('src/routes/refresh.ts'), T('Need to invalidate the old refresh token on use.'), E('src/db/tokens.ts')], summary: 'POST /auth/refresh implemented with rotation and reuse detection.' },
       { label: 'Update tests', type: 'general-purpose', lines: [G('describe\\('), E('tests/auth.test.ts'), B('npm test'), T('One flaky test depends on the clock, freezing time.'), E('tests/helpers/clock.ts')], summary: 'Tests migrated. Suite green: 48 passed, 0 failed.' },
     ],
-    outro: [S('All four parts are merged. Auth now uses JWT with refresh rotation.')],
+    outro: [B('git commit -am "Use JWT with refresh rotation"'), S('All four parts are merged. Auth now uses JWT with refresh rotation.')],
   },
   {
     prompt: 'The checkout page is slow on mobile, find out why',
@@ -108,7 +110,7 @@ export function startDemo(emit: Emit, count = 3): () => void {
     await sleep(rnd(2800, 4200)); // walking in + unpacking
     for (const l of script.lines) {
       if (stopped) return;
-      emit({ type: 'agent_say', sessionId, agentId: id, kind: l.kind, text: l.text, tool: l.tool });
+      emit({ type: 'agent_say', sessionId, agentId: id, kind: l.kind, text: l.text, tool: l.tool, cue: cueFrom(l.text) });
       await sleep(rnd(3200, 5200));
     }
     if (stopped) return;
@@ -118,18 +120,21 @@ export function startDemo(emit: Emit, count = 3): () => void {
   async function runSession(idx: number) {
     const p = PROJECTS[idx % PROJECTS.length];
     let run = idx;
+    let used = 0;
     await sleep(idx * 6500 + 300);
     emit({ type: 'session', sessionId: p.id, title: '', cwd: p.cwd, project: p.project, provider: p.provider, updatedAt: Date.now() });
     while (!stopped) {
       const sc = SCENARIOS[run++ % SCENARIOS.length];
       const title = sc.prompt.length > 46 ? `${sc.prompt.slice(0, 45)}…` : sc.prompt;
-      emit({ type: 'session', sessionId: p.id, title, cwd: p.cwd, project: p.project, provider: p.provider, updatedAt: Date.now() });
+      // (the demo's context fills up a bit with every run and starts over when it is full)
+      used = used > 175_000 ? rnd(12_000, 30_000) : (used || rnd(20_000, 70_000)) + rnd(14_000, 34_000);
+      emit({ type: 'session', sessionId: p.id, title, cwd: p.cwd, project: p.project, provider: p.provider, updatedAt: Date.now(), context: { used: Math.round(used), window: 200_000, exact: false, model: 'demo' } });
       emit({ type: 'agent_start', sessionId: p.id, agentId: 'main', role: 'main', label: 'Director' });
       emit({ type: 'agent_say', sessionId: p.id, agentId: 'main', kind: 'task', text: sc.prompt });
       await sleep(5200);
       for (const l of sc.opening) {
         if (stopped) return;
-        emit({ type: 'agent_say', sessionId: p.id, agentId: 'main', kind: l.kind, text: l.text, tool: l.tool });
+        emit({ type: 'agent_say', sessionId: p.id, agentId: 'main', kind: l.kind, text: l.text, tool: l.tool, cue: cueFrom(l.text) });
         await sleep(rnd(3000, 4200));
       }
       if (sc.ask) {
@@ -161,7 +166,7 @@ export function startDemo(emit: Emit, count = 3): () => void {
         await sleep(rnd(4200, 6500));
         if (!waiting || stopped) break;
         const l = chatter[ci++ % chatter.length];
-        emit({ type: 'agent_say', sessionId: p.id, agentId: 'main', kind: l.kind, text: l.text, tool: l.tool });
+        emit({ type: 'agent_say', sessionId: p.id, agentId: 'main', kind: l.kind, text: l.text, tool: l.tool, cue: cueFrom(l.text) });
       }
       await sleep(1800);
       for (const l of sc.outro) {

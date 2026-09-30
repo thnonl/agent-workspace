@@ -4,6 +4,11 @@ import { frame } from '../sim/frame';
 import { walkMatrices } from './matrixWalk';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
+/** called when the GPU has a copy of an attribute: the CPU copy of a baked room is never read again (see below) */
+function dropCpuCopy(this: THREE.BufferAttribute) {
+  (this as unknown as { array: null }).array = null;
+}
+
 /**
  * Bakes all static meshes below it into a few merged meshes (one per material).
  * A room has thousands of tiny primitives; merging turns thousands of draw calls into a few dozen.
@@ -63,6 +68,11 @@ export function StaticBake({ children }: { children: ReactNode }) {
       const geo = mergeGeometries(b.geos, false);
       b.geos.forEach((g) => g.dispose());
       if (!geo) continue;
+      // Nothing reads the vertices of a baked mesh again (it is never picked with the pointer), so once they are on the GPU the
+      // CPU copy goes: a room's baked geometry is ~15 MB of typed arrays. The bounds are needed for culling and are made now.
+      geo.computeBoundingSphere();
+      geo.computeBoundingBox();
+      for (const attr of Object.values(geo.attributes)) (attr as THREE.BufferAttribute).onUpload(dropCpuCopy);
       const mesh = new THREE.Mesh(geo, b.mat);
       mesh.castShadow = b.cast;
       mesh.receiveShadow = b.recv;

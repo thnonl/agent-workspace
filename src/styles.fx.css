@@ -1,0 +1,183 @@
+
+/* --- weather outside the windows -------------------------------------- */
+@property --wx { syntax: '<number>'; inherits: true; initial-value: 0; }
+.app { transition: --sky1 1.2s ease, --sky2 1.2s ease, --night 1.2s ease, --warm 1.2s ease, --wx 2.5s ease; }
+.weather { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.weather-flash { position: absolute; inset: 0; pointer-events: none; background: #eef2ff; opacity: 0; transition: opacity 0.08s linear; mix-blend-mode: screen; }
+/* grey veil over the sky: clouds, rain, fog take the colour (and the sun and the stars) away */
+.sky::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, #6f768b, #a4aabd); opacity: calc(var(--wx) * 0.62); mix-blend-mode: multiply; }
+.stars { opacity: calc(clamp(0, calc(var(--night) * 1.35 - 0.25), 1) * (1 - var(--wx))); }
+.cloud.cx { opacity: calc(var(--wx) * 1.6); }
+.cloud { filter: blur(1px) brightness(calc(1 - var(--wx) * 0.32)); }
+.c4 { top: 24%; left: -300px; animation-duration: 95s; animation-delay: -30s; transform: scale(1.7); }
+.c5 { top: 48%; left: -280px; animation-duration: 120s; animation-delay: -80s; transform: scale(1.2); }
+.c6 { top: 8%; left: -320px; animation-duration: 140s; animation-delay: -10s; transform: scale(2); }
+.sky-fog { position: absolute; inset: 0; opacity: 0; transition: opacity 2.5s ease; background: radial-gradient(ellipse at 30% 70%, rgba(236, 240, 250, 0.75), transparent 60%), radial-gradient(ellipse at 75% 40%, rgba(236, 240, 250, 0.6), transparent 55%); filter: blur(10px); animation: fogdrift 40s ease-in-out infinite alternate; }
+.app.wx-fog .sky-fog { opacity: calc(0.9 - var(--night) * 0.45); }
+@keyframes fogdrift { from { translate: -4% 0; } to { translate: 4% 2%; } }
+@media (prefers-reduced-motion: reduce) { .sky-fog { animation: none; } }
+
+/* --- settings dialog ---------------------------------------------------- */
+.modal-settings h3 { margin: 18px 0 8px; font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-soft); }
+.modal-settings .muted { margin: 8px 0 0; font-size: 13px; line-height: 1.45; }
+.seg { display: flex; flex-wrap: wrap; gap: 6px; }
+.app .modal-card .seg button { padding: 6px 13px; border-radius: 999px; border: 1.5px solid #d9cfee; background: #f7f3fd; color: var(--ink); font: inherit; font-size: 13px; font-weight: 800; cursor: pointer; }
+.app .modal-card .seg button:hover { background: #ece4fb; }
+.app .modal-card .seg button.on { background: linear-gradient(135deg, #7a5cf0, #b25ad8); border-color: #fff; color: #fff; box-shadow: 0 4px 12px rgba(122, 92, 240, 0.35); }
+.set-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.app .modal-card .btn.btn-on { background: linear-gradient(135deg, #7a5cf0, #b25ad8); color: #fff; border-color: #fff; }
+
+/* --- toasts --------------------------------------------------------------- */
+.toasts { position: absolute; right: 16px; bottom: 16px; z-index: 90; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; pointer-events: none; max-width: min(360px, calc(100% - 32px)); }
+.toast { display: flex; align-items: center; gap: 10px; padding: 10px 16px 10px 10px; border-radius: 18px; background: #fff; color: #3b3350; border: 2px solid #ffd166; box-shadow: 0 10px 28px rgba(60, 40, 90, 0.3); animation: toastIn 0.35s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+.toast-ico { flex: none; width: 36px; height: 36px; display: grid; place-items: center; border-radius: 50%; background: linear-gradient(135deg, #ffd166, #ff9e5e); color: #fff; }
+.toast-body { display: flex; flex-direction: column; min-width: 0; }
+.toast-body b { font-weight: 900; font-size: 14px; }
+.toast-body small { font-size: 12px; color: #6a6084; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@keyframes toastIn { from { opacity: 0; transform: translateY(14px) scale(0.92); } }
+
+/* --- photo flash and screensaver ---------------------------------------- */
+.app::after { content: ''; position: absolute; inset: 0; z-index: 200; background: #fff; opacity: 0; pointer-events: none; }
+.app.photo-flash::after { animation: shutterFlash 0.4s ease-out; }
+@keyframes shutterFlash { 0% { opacity: 0.85; } 100% { opacity: 0; } }
+.app.cinema .topbar, .app.cinema .room-header, .app.cinema .switcher, .app.cinema .panel, .app.cinema .empty, .app.cinema .toasts { opacity: 0; pointer-events: none; transition: opacity 0.6s ease; }
+.app.cinema { cursor: none; }
+.cinema-hint { position: absolute; left: 50%; bottom: 22px; translate: -50% 0; z-index: 90; padding: 8px 18px; border-radius: 999px; background: rgba(30, 24, 60, 0.7); color: #fff; font-weight: 800; font-size: 13px; pointer-events: none; animation: cinemaHint 5s ease both; }
+@keyframes cinemaHint { 0%, 80% { opacity: 1; } 100% { opacity: 0; } }
+
+/* --- level chip, progress dialog ---------------------------------------- */
+.btn-level { position: relative; padding-bottom: 7px; }
+.level-bar { position: absolute; left: 12px; right: 12px; bottom: 4px; height: 3px; border-radius: 3px; background: rgba(120, 100, 170, 0.25); overflow: hidden; }
+.level-bar b { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, #ffb020, #ff6fa5); }
+.modal-progress { width: min(640px, calc(100% - 32px)); }
+.modal-progress h3 { margin: 18px 0 8px; font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-soft); }
+.modal-progress .muted { margin: 8px 0 0; font-size: 13px; line-height: 1.45; }
+.xp { height: 12px; border-radius: 99px; background: #ece4fb; overflow: hidden; }
+.xp b { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, #ffb020, #ff6fa5); transition: width 0.6s ease; }
+.unlocks { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 4px; font-size: 13px; color: var(--ink-soft); }
+.unlocks li { display: flex; align-items: center; gap: 7px; }
+.unlocks li.on { color: #1f8f5f; font-weight: 800; }
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; margin: 0; }
+.stat-grid div { padding: 10px 12px; border-radius: 14px; background: #f5f0fd; display: flex; flex-direction: column-reverse; }
+.stat-grid dd { margin: 0; font-size: 20px; font-weight: 900; }
+.stat-grid dt { font-size: 11.5px; color: var(--ink-soft); }
+.ach-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px; }
+.ach-grid li { display: flex; gap: 10px; align-items: center; padding: 9px 12px; border-radius: 14px; background: #f5f0fd; opacity: 0.62; }
+.ach-grid li.got { opacity: 1; background: #fff6df; box-shadow: inset 0 0 0 1.5px #ffd166; }
+.ach-ico { flex: none; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; background: #ddd3f3; color: #fff; }
+.ach-grid li.got .ach-ico { background: linear-gradient(135deg, #ffd166, #ff9e5e); }
+.ach-body { display: flex; flex-direction: column; min-width: 0; gap: 1px; flex: 1; }
+.ach-body b { font-weight: 900; font-size: 13.5px; }
+.ach-body small { font-size: 12px; color: var(--ink-soft); }
+.ach-bar { display: block; height: 4px; border-radius: 4px; background: #e0d6f4; margin-top: 4px; overflow: hidden; }
+.ach-bar b { display: block; height: 100%; background: #9a82e0; }
+.modal-card ul.ach-grid { display: grid; padding: 0; gap: 8px; font-weight: 400; }
+.modal-card ul.unlocks { padding: 0; gap: 4px; }
+
+/* --- responsive HUD ------------------------------------------------------
+   The top bar and the room header live in one column (.hud-top), so when the bar needs a second row the header moves down
+   instead of hiding it. Three steps as the window shrinks:
+   1. <= 1240px  icons only (no labels, no brand text)
+   2. <=  860px  only the essentials stay in the bar (status, time of day, sound, camera, settings, help); names, music, level,
+                 photo, screensaver and demo live in the settings dialog
+   3. <=  560px  a phone: the bar is one full-width row, dialogs use the whole width */
+.hud-top { position: absolute; z-index: 20; top: 14px; left: 14px; right: 14px; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; pointer-events: none; }
+.hud-top .topbar { position: static; width: 100%; row-gap: 8px; flex-wrap: wrap; }
+.hud-top .topbar-right { flex-wrap: wrap; justify-content: flex-end; margin-left: auto; row-gap: 8px; }
+.hud-top .room-header { position: relative; top: auto; left: auto; max-width: min(360px, 100%); pointer-events: auto; }
+
+@media (max-width: 1240px) {
+  .brand > div { display: none; }
+  .brand { padding: 8px; }
+  .lbl { display: none; }
+  .btn-names { padding: 8px 12px; }
+  .btn-names em { display: none; }
+}
+@media (max-width: 860px) {
+  .topbar .btn-extra { display: none; }
+  .hud-top .room-header { max-width: 100%; }
+  .toasts { bottom: 112px; }
+}
+@media (max-width: 560px) {
+  .hud-top { top: 10px; left: 10px; right: 10px; gap: 8px; }
+  .hud-top .topbar { gap: 6px; }
+  .hud-top .brand { display: none; }
+  .hud-top .topbar-right { width: 100%; margin-left: 0; justify-content: space-between; gap: 6px; }
+  .topbar .btn-icon { width: 38px; height: 38px; }
+  .topbar .pill { min-width: 0; flex: 0 1 auto; }
+  .toasts { left: 10px; right: 10px; align-items: stretch; max-width: none; }
+  .modal-card { width: calc(100% - 20px); padding: 22px 18px; border-radius: 22px; }
+  .modal-settings .set-row .btn { flex: 1 1 auto; }
+  .modal-settings .seg button { padding: 7px 12px; }
+  .stat-grid { grid-template-columns: repeat(2, 1fr); }
+  .modal-card ul.ach-grid { grid-template-columns: 1fr; }
+  .cinema-hint { max-width: calc(100% - 24px); text-align: center; }
+}
+/* a phone held sideways: little height, so everything is tighter */
+@media (max-height: 480px) {
+  .hud-top { top: 8px; gap: 6px; }
+  .toasts { bottom: 8px; }
+}
+/* the time-of-day button is a plain icon button once its label is gone */
+@media (max-width: 1240px) {
+  .topbar .btn-time { width: 38px; height: 38px; padding: 0; display: grid; place-items: center; }
+}
+@media (max-width: 560px) {
+  .topbar .btn-time { width: 38px; height: 38px; }
+}
+@media (max-width: 1240px) {
+  .topbar .btn-time { min-width: 0; }
+}
+@media (max-width: 560px) {
+  .hud-top .topbar-right { flex-wrap: nowrap; }
+  .topbar .pill { flex: 1 1 0; min-width: 0; overflow: hidden; }
+  .topbar .btn, .topbar .btn-icon { flex: none; }
+}
+.pill-dot, .pill-caret { flex: none; }
+
+/* a phone held sideways (or any window that is very short): the header and the bar share one row, the session strip shrinks */
+@media (max-height: 480px) {
+  .hud-top { flex-direction: row-reverse; align-items: flex-start; gap: 8px; }
+  .hud-top .topbar { flex: 1 1 auto; width: auto; min-width: 0; }
+  .hud-top .brand { display: none; }
+  .hud-top .room-header { flex: 0 1 300px; min-width: 0; }
+  .room-card-text small.room-card-name { display: none; }
+  .room-card { width: 168px; padding-top: 4px; padding-bottom: 4px; }
+  .room-card-logo { width: 30px; height: 30px; min-width: 30px; }
+  .switcher { bottom: 8px; }
+  .switcher-list { padding: 5px; gap: 6px; }
+  .topbar .btn-icon, .topbar .btn-time { width: 34px; height: 34px; }
+  .topbar .btn, .topbar .pill { padding-top: 5px; padding-bottom: 5px; }
+}
+
+/* --- context window use on the session buttons and in the room header ------ */
+.room-card-ctx { display: flex; align-items: center; gap: 6px; margin-top: 3px; --ctx: #3ddc97; }
+.room-card-ctx.ctx-warn, .ctx-chip.ctx-warn { --ctx: #ffb020; }
+.room-card-ctx.ctx-hot, .ctx-chip.ctx-hot { --ctx: #ff5d73; }
+.room-card-ctx i { flex: 1 1 auto; min-width: 26px; height: 5px; border-radius: 5px; background: rgba(120, 100, 170, 0.22); overflow: hidden; }
+.room-card-ctx i b { display: block; height: 100%; border-radius: 5px; background: var(--ctx); transition: width 0.6s ease; }
+.room-card-ctx em { flex: none; font-style: normal; font-size: 11px; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--ink-soft); }
+.room-card-ctx.ctx-hot em { color: #d63c55; }
+.ctx-chip { --ctx: #3ddc97; }
+.ctx-chip .ico { color: var(--ctx); }
+.ctx-chip.ctx-hot { color: #d63c55; }
+.app.is-night .room-card-ctx i { background: rgba(255, 255, 255, 0.2); }
+.app.is-night .room-card-ctx.ctx-hot em, .app.is-night .ctx-chip.ctx-hot { color: #ff9aa8; }
+/* text over the bar: the card text column is narrow on a phone */
+.room-card-ctx { flex-direction: column-reverse; align-items: stretch; gap: 3px; }
+.room-card-ctx i { flex: none; width: 100%; height: 4px; }
+.room-card-ctx em { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* --- session strip (phones and tablets): wider cards, and the "release idle rooms" button fills the strip's height --- */
+@media (max-width: 1040px) {
+  .switcher-list { scroll-snap-type: x proximity; scroll-padding: 8px; }
+  .room-card { width: min(300px, 78vw); scroll-snap-align: start; }
+  .room-clear { align-self: stretch; flex-direction: column; gap: 4px; padding: 8px 16px; white-space: normal; text-align: center; max-width: 130px; line-height: 1.25; }
+}
+@media (max-width: 560px) {
+  .room-card { width: min(330px, 74vw); }
+}
+
+/* the pending question of the agent: a warmer glow and a thicker rim */
+.bubble-ask .bubble-shape { filter: drop-shadow(0 9px 10px rgba(160, 100, 10, 0.32)); }
+.bubble-ask .bubble-shape .shape-ring { stroke-width: 6; }

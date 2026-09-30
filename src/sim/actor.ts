@@ -6,6 +6,7 @@ import { env } from '../env';
 import { SLOW_MAX_DT } from './frame';
 import { CHAT_SCRIPTS, eatLine, goodbyeLine, greetingLine, reportLine, serveLine, thoughts } from './phrases';
 import { kickDummy, takeDumbbells } from './gym';
+import { notePet } from '../progress';
 import { debugFlags, dismissIdle, enqueueSpeech, greet, parcelDone, roomRuntime, tickParcel, sims, simsInRoom, spotOwners, type CatSim, type Phase, type RoomRuntime, type SimState } from './registry';
 
 export interface Pose {
@@ -919,7 +920,10 @@ export class Actor {
     if (this.deskPetT >= 0) {
       this.deskPetT += dt;
       const cat = this.act?.catKey ? ctx.cats.find((c) => c.key === this.act!.catKey) : undefined;
-      if (cat) cat.petUntil = ctx.now + 0.6;
+      if (cat) {
+        if (cat.petUntil < ctx.now && !ctx.person.demo) notePet();
+        cat.petUntil = ctx.now + 0.6;
+      }
       if (this.deskPetT > (this.act?.dur ?? 6) || !cat || !cat.onStage) {
         dismissIdle(this.sim.key);
         this.deskPetT = -1;
@@ -1356,6 +1360,7 @@ export class Actor {
       case 'pet': {
         const cat = ctx.cats.find((c) => c.key === a.catKey);
         if (cat) {
+          if (cat.petUntil < ctx.now && !ctx.person.demo) notePet();
           cat.petUntil = ctx.now + 0.6;
           this.faceYaw(Math.atan2(cat.x - s.x, cat.z - s.z), dt, 8);
         }

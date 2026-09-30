@@ -39,9 +39,9 @@ export function lightParams(): LightParams {
   params.dirOffset.copy(sun).lerp(moon, env.night);
   // at night the shadow-casting light stands in for the room lamps: warm, and strong enough that people and furniture still cast clear shadows
   params.dirColor.copy(c.sun).lerp(c.warm, env.warm * env.day).lerp(c.moon, env.night).lerp(c.lamp, env.lamps);
-  params.dirIntensity = 0.42 + 1.5 * env.day + 0.25 * env.warm + 1.05 * env.lamps * env.night;
+  params.dirIntensity = (0.42 + 1.5 * env.day + 0.25 * env.warm + 1.05 * env.lamps * env.night) * (1 - 0.3 * env.overcast * env.day);
   params.hemiSky.copy(c.skyNight).lerp(c.skyDay, env.day);
   params.hemiGround.copy(c.groundNight).lerp(c.groundDay, env.day);
-  params.hemiIntensity = 0.44 + 0.62 * env.day;
+  params.hemiIntensity = 0.44 + 0.62 * env.day + 0.1 * env.overcast * env.day;
   return params;
 }

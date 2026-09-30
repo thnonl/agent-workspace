@@ -310,8 +310,7 @@ kbd { font-family: 'JetBrains Mono Variable', monospace; font-size: 12px; paddin
 .bubble {
   --bg: #ffffff;
   position: relative; width: max-content; min-width: 92px; max-width: 236px; padding: 6px 11px 8px; border-radius: 16px;
-  background: var(--bg); color: var(--ink); font: 600 11.5px/1.36 'Nunito Variable', sans-serif;
-  box-shadow: 0 8px 18px rgba(70, 50, 110, 0.24), 0 0 0 2.5px var(--accent);
+  color: var(--ink); font: 600 11.5px/1.36 'Nunito Variable', sans-serif;
   transform-origin: 50% 100%; animation: pop 0.32s cubic-bezier(0.3, 1.7, 0.5, 1) both;
 }
 .bubble-head { display: flex; align-items: center; gap: 5px; margin-bottom: 2px; font-size: 12px; font-weight: 800; color: var(--accent); letter-spacing: 0.2px; /* the accent darkened towards the ink: at least 5.5:1 on the bubble in all nine themes */ color: color-mix(in srgb, var(--accent) 40%, #1d1830); }
@@ -327,27 +326,26 @@ kbd { font-family: 'JetBrains Mono Variable', monospace; font-size: 12px; paddin
 .bubble-body { display: flex; gap: 6px; align-items: flex-start; overflow-wrap: anywhere; }
 .bubble-icon { flex: none; font-size: 12px; line-height: 1.3; }
 .bubble-body.mono { font-family: 'JetBrains Mono Variable', ui-monospace, monospace; font-size: 10.5px; font-weight: 500; }
-/* tails and thought puffs live in their own layer below all bubbles; their origin is the bottom centre of the bubble */
-.bubble-tails, .bubble-bodies { position: absolute; inset: 0; pointer-events: none; }
-.bubble-tails { z-index: 1; }
-.bubble-bodies { z-index: 2; }
-.bubble-tail-pos { position: absolute; left: 0; top: 0; width: 0; height: 0; will-change: transform; animation: fadeIn 0.3s both; }
-.bubble-tail { position: absolute; left: -6px; top: -5px; width: 12px; height: 12px; background: var(--bg); transform: rotate(45deg); border-radius: 0 0 4px 0; box-shadow: 2.5px 2.5px 0 0 var(--accent); }
+.bubble-bodies { position: absolute; inset: 0; pointer-events: none; }
+/* the outline of a bubble – box and tail in one path – is drawn by the layout loop (BubbleLayer.tsx).
+   The ring path (wide stroke) comes first and the fill path covers its inner half, so only an outer rim of 2.5px is seen. */
+.bubble-shape { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; pointer-events: none; filter: drop-shadow(0 7px 7px rgba(70, 50, 110, 0.22)); }
+.bubble-shape .shape-ring { fill: none; stroke: var(--accent); stroke-width: 5; stroke-linejoin: round; }
+.bubble-shape .shape-fill { fill: var(--bg); stroke: none; }
+.bubble-shape .puff { fill: var(--bg); stroke: var(--accent); stroke-width: 2.5; }
+.bubble > :not(.bubble-shape) { position: relative; }
 
+/* a thought is a chat bubble with softer corners, a lavender fill and italic text – and two round puffs instead of a spike */
 .bubble-thinking { --bg: #f4f0ff; border-radius: 22px; }
 .bubble-thinking .bubble-body { font-style: italic; }
-.bubble-puff { position: absolute; border-radius: 50%; background: var(--bg); box-shadow: 0 0 0 2px var(--accent); }
-.bubble-puff.p1 { width: 11px; height: 11px; left: -4px; top: 2px; }
-.bubble-puff.p2 { width: 6px; height: 6px; left: 2px; top: 14px; }
-/* hides the outline where the tail leaves the bubble, so the two look like one shape */
-.bubble:not(.bubble-thinking)::after { content: ''; position: absolute; left: 50%; bottom: -3px; width: 12px; height: 5px; margin-left: -6px; background: var(--bg); }
 .bubble-tool { --bg: #262a44; color: #eef0ff; border-radius: 12px; }
 .bubble-tool .bubble-head { color: color-mix(in srgb, var(--accent) 55%, #ffffff); }
 .bubble-task { --bg: #fff5c2; transform: rotate(-1.5deg); border-radius: 8px; }
 /* the user's message arrives as a phone message: a rounded chat bubble in messenger blue */
 .bubble-phone { --bg: #d8f3ff; --accent: #2f9de4; transform: none; border-radius: 16px 16px 16px 5px; }
 /* ...or as an email on the laptop: a sheet of paper with a coloured strip along the top */
-.bubble-email { --bg: #fff8e6; --accent: #e0a020; transform: none; border-radius: 6px; padding-top: 9px; background: linear-gradient(var(--accent), var(--accent)) top / 100% 4px no-repeat, var(--bg); }
+.bubble-email { --bg: #fff8e6; --accent: #e0a020; transform: none; border-radius: 6px; padding-top: 9px; }
+.bubble-email::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 4px; z-index: 1; border-radius: 6px 6px 0 0; background: var(--accent); }
 /* the director announcing that the work is done: wider than the usual bubble */
 .bubble-talk { max-width: 330px; }
 .bubble-talk .bubble-body > span:last-child { white-space: pre-line; }
@@ -359,7 +357,7 @@ kbd { font-family: 'JetBrains Mono Variable', monospace; font-size: 12px; paddin
 .bubble-settled .bubble-body.mono { font-size: 10px; }
 .bubble-done.bubble-failed { --bg: #ffe6e6; --accent: #ff6b6b; }
 /* the agent waits for the user: amber chat bubble, a pulsing glow ring and a small hop every few seconds (transform / opacity only) */
-.bubble-ask { --bg: #fff7dc; --accent: #f59e0b; max-width: 268px; pointer-events: auto; border-radius: 16px 16px 16px 5px; box-shadow: 0 10px 22px rgba(160, 100, 10, 0.3), 0 0 0 3px var(--accent); animation: pop 0.32s cubic-bezier(0.3, 1.7, 0.5, 1) both, askHop 4.2s ease-in-out 1s infinite; }
+.bubble-ask { --bg: #fff7dc; --accent: #f59e0b; max-width: 268px; pointer-events: auto; border-radius: 16px 16px 16px 5px; animation: pop 0.32s cubic-bezier(0.3, 1.7, 0.5, 1) both, askHop 4.2s ease-in-out 1s infinite; }
 .bubble-ask::before { content: ''; position: absolute; inset: -3px; border-radius: inherit; border: 3px solid var(--accent); pointer-events: none; will-change: transform, opacity; animation: askRing 1.7s ease-out infinite; }
 .bubble-ask .bubble-name { max-width: 230px; }
 .bubble-ask .bubble-body > span:last-child { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
