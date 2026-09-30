@@ -201,6 +201,12 @@ interface Activity {
 
 /** height of the hip above the floor for an appearance scale of 1 (model hip * rig scale) */
 const HIP = 0.47 * 0.85;
+/** thigh radius at the hip relative to the hip height (the sofa cushion carries the underside of the thigh) */
+const THIGH_R = 0.098 / 0.47;
+/** on a sofa the person sits this far forward of the seat point (the cushion is deeper than the legs are long) */
+const SOFA_FWD = 0.14;
+/** knee bend on a sofa relative to a chair: the lower legs point forward and down over the front edge */
+const SOFA_KNEE = 0.4;
 
 /** top of the staff desks (the director's desk is 2 cm higher) */
 export const DESK_Y = 0.74;
@@ -1044,7 +1050,7 @@ export class Actor {
   private awayPose(p: Pose) {
     const c = this.clock;
     this.idlePose(p);
-    if (this.sim.sitT > 0.5) this.seatedPose(p, this.sim.sitT);
+    if (this.sim.sitT > 0.5) this.seatedPose(p, this.sim.sitT, SOFA_KNEE);
     p.lean = 0.1;
     p.headX = 0.32 + Math.sin(c * 1.3) * 0.04;
     p.headY = Math.sin(c * 0.5) * 0.1;
@@ -1280,15 +1286,19 @@ export class Actor {
       }
       case 'sofa': {
         const spot = ctx.layout.spots[a.spot!];
-        const yOn = spot.y - this.hip + 0.02;
+        // the thighs lie on the cushion (not in it) and the knees hang over the front edge
+        const yOn = spot.y - this.hip + this.hip * THIGH_R;
+        const k = this.hip / HIP;
+        const seatX = spot.x + Math.sin(spot.yaw) * SOFA_FWD * k;
+        const seatZ = spot.z + Math.cos(spot.yaw) * SOFA_FWD * k;
         if (this.actStage === 0) {
           const u = smooth(t / 0.9);
-          s.x = lerp(this.from.x, spot.x, u);
-          s.z = lerp(this.from.z, spot.z, u);
+          s.x = lerp(this.from.x, seatX, u);
+          s.z = lerp(this.from.z, seatZ, u);
           s.y = lerp(0, yOn, u);
           s.sitT = u;
           this.faceYaw(spot.yaw, dt, 10);
-          this.seatedPose(pose, u);
+          this.seatedPose(pose, u, SOFA_KNEE);
           if (t >= 0.9) {
             this.actStage = 1;
             this.t = 0;
@@ -1296,7 +1306,7 @@ export class Actor {
         } else if (this.actStage === 1) {
           s.sitT = 1;
           this.faceYaw(spot.yaw, dt);
-          this.seatedPose(pose, 1);
+          this.seatedPose(pose, 1, SOFA_KNEE);
           if (a.sleep) {
             this.sleepPose(pose, true);
             this.zzz(ctx, t);
@@ -1311,12 +1321,12 @@ export class Actor {
           }
         } else {
           const u = smooth(t / 0.9);
-          s.x = lerp(spot.x, spot.approach.x, u);
-          s.z = lerp(spot.z, spot.approach.z, u);
+          s.x = lerp(seatX, spot.approach.x, u);
+          s.z = lerp(seatZ, spot.approach.z, u);
           s.y = lerp(yOn, 0, u);
           s.sitT = 1 - u;
           this.held = 'none';
-          this.seatedPose(pose, s.sitT);
+          this.seatedPose(pose, s.sitT, SOFA_KNEE);
           if (t >= 0.9) this.goHome(ctx);
         }
         break;
@@ -1391,7 +1401,7 @@ export class Actor {
   /** on the sofa: head down over the phone, the thumb flicks the screen now and then, a smile at something funny */
   private phonePose(p: Pose, t: number) {
     const c = this.clock;
-    this.seatedPose(p, 1);
+    this.seatedPose(p, 1, SOFA_KNEE);
     p.lean = 0.1;
     p.headX = 0.42 + Math.sin(c * 0.7) * 0.03;
     p.headY = Math.sin(c * 0.4) * 0.05;
@@ -2015,9 +2025,10 @@ export class Actor {
     p.armLz = p.armRz = 0.1 + Math.sin(c * 1.6) * 0.02;
   }
 
-  private seatedPose(p: Pose, sit: number) {
+  /** `kneeBend` 1 = the shins hang straight down (a chair); less = the lower legs stick out forward (a low, deep sofa) */
+  private seatedPose(p: Pose, sit: number, kneeBend = 1) {
     const l = -Math.PI / 2 * sit;
-    const k = Math.PI / 2 * sit;
+    const k = Math.PI / 2 * sit * kneeBend;
     p.thighLx = l;
     p.thighRx = l;
     p.kneeLx = k;
