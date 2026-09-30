@@ -26,8 +26,3 @@ export function chunkText(text: string, max = 130, maxChunks = 2): string[] {
 export function clamp(v: number, a: number, b: number): number {
   return Math.min(b, Math.max(a, v));
 }
-
-export function shortPath(p: string): string {
-  const parts = p.split(/[\/]/).filter(Boolean);
-  return parts.slice(-2).join('/') || p;
-}
