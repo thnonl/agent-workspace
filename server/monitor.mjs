@@ -9,7 +9,7 @@ import os from 'node:os';
 import { EventEmitter } from 'node:events';
 import { createCodexParser, createTitleIndex, defaultCodexHome, listCodexFiles } from './codex.mjs';
 import { createOpenCodeSource, defaultOpenCodeDb } from './opencode.mjs';
-import { MIN, MUSINGS, pick, clip, base, toolSummary, askOf, cleanPrompt, isInterrupt, resultText, readNewLines, parseJson } from './util.mjs';
+import { MIN, MUSINGS, pick, clip, base, toolSummary, cueOf, claudeContext, askOf, cleanPrompt, isInterrupt, resultText, readNewLines, parseJson } from './util.mjs';
 
 const SPAWN_TOOLS = new Set(['Agent', 'Task']);
 /** with a file watcher, a session's sub-agent folder is listed again at most this often unless the watcher fires */
@@ -128,7 +128,25 @@ export function createMonitor({
     updatedAt: s.lastActivity,
     ...(s.lastPrompt ? { lastPrompt: s.lastPrompt } : {}),
     ...(s.lastFinal ? { lastFinal: s.lastFinal } : {}),
+    ...(s.context ? { context: s.context } : {}),
   });
+
+  /**
+   * How full the main agent's context window is. Remembered on every message, told to the page a moment later (a transcript that is
+   * read from the start holds thousands of messages – only the last value is worth an event).
+   */
+  const noteContext = (s, c) => {
+    if (!c || !(c.used > 0) || !(c.window > 0)) return;
+    const p = s.context;
+    if (p && p.window === c.window && Math.abs(p.used - c.used) < 500 && p.model === c.model) return;
+    s.context = c;
+    if (s.contextTimer) return;
+    s.contextTimer = setTimeout(() => {
+      s.contextTimer = null;
+      out(s, sessionEvent(s));
+    }, 300);
+    s.contextTimer.unref?.();
+  };
 
   const announceTitle = (s) => {
     const key = `${s.title}\u0000${s.root}`;
@@ -138,7 +156,7 @@ export function createMonitor({
     }
   };
 
-  const say = (s, agentKey, kind, text, tool) => {
+  const say = (s, agentKey, kind, text, tool, cue) => {
     // the main agent's messages also travel unclipped (line breaks kept): the last one is the session summary
     const full = agentKey === 'main' && kind === 'text' ? String(text ?? '').replace(/\r/g, '').trim().slice(0, 6000) : undefined;
     // remembered for the session event: an idle session can still show what was asked and how it ended
@@ -148,13 +166,13 @@ export function createMonitor({
     }
     text = clip(text, 400);
     if (!text) return;
-    const rec = { kind, text, tool, ...(full ? { full } : {}) };
+    const rec = { kind, text, tool, ...(full ? { full } : {}), ...(cue ? { cue } : {}) };
     if (agentKey === 'main') s.mainLastSay = rec;
     else {
       const ag = s.agents.get(agentKey);
       if (ag) ag.lastSay = rec;
     }
-    out(s, { type: 'agent_say', sessionId: s.id, agentId: agentKey, kind, text, tool, ...(full ? { full } : {}) });
+    out(s, { type: 'agent_say', sessionId: s.id, agentId: agentKey, kind, text, tool, ...(full ? { full } : {}), ...(cue ? { cue } : {}) });
     if (agentKey === 'main' && kind === 'task') askEnd(s); // the user moved on
   };
 
@@ -253,7 +271,7 @@ export function createMonitor({
         } else if (ownerKey === 'main') {
           s.pendingTools.add(b.id);
         }
-        say(s, ownerKey, 'tool', toolSummary(b.name, b.input), b.name);
+        say(s, ownerKey, 'tool', toolSummary(b.name, b.input), b.name, cueOf(b.name, b.input));
         if (ownerKey === 'main') askStart(s, b.id, askOf(b.name, b.input));
       }
     }
@@ -315,6 +333,7 @@ export function createMonitor({
         const m = o.message;
         if (!m || o.isApiErrorMessage) break;
         mainStart(s);
+        noteContext(s, claudeContext(m));
         handleBlocks(s, 'main', m.content, m.stop_reason);
         if (m.stop_reason && m.stop_reason !== 'tool_use') mainEnd(s);
         break;
@@ -334,7 +353,7 @@ export function createMonitor({
     }
   };
 
-  const codexLine = createCodexParser({ say, mainStart, mainEnd });
+  const codexLine = createCodexParser({ say, mainStart, mainEnd, context: noteContext });
   const codexTitle = codexDir ? createTitleIndex(path.dirname(codexDir)) : () => '';
 
   // ------------------------------------------------------------------ files
@@ -674,7 +693,7 @@ export function createMonitor({
 
   const oc = opencodeDb
     ? createOpenCodeSource(
-        { sessions, newSession: (id, file, provider) => new Session(id, file, '', provider), register, say, askStart, askEnd, mainStart, mainEnd, spawnAgent, finishAgent, runningAgents, afterPoll },
+        { sessions, newSession: (id, file, provider) => new Session(id, file, '', provider), register, say, context: noteContext, askStart, askEnd, mainStart, mainEnd, spawnAgent, finishAgent, runningAgents, afterPoll },
         { dbFile: opencodeDb, windowMs },
       )
     : null;

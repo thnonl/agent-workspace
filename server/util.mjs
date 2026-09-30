@@ -52,6 +52,48 @@ export function toolSummary(name, input = {}) {
   }
 }
 
+/** A tool call worth a small celebration in the office: 'commit' | 'push' (a git command run by the agent), else null. */
+export function cueOf(name, input = {}) {
+  if (name !== 'Bash' && name !== 'PowerShell') return null;
+  const cmd = String(input?.command ?? '');
+  if (/\bgit\s+(?:-[Cc]\s+\S+\s+)*push\b/.test(cmd)) return 'push';
+  if (/\bgit\s+(?:-[Cc]\s+\S+\s+)*commit\b/.test(cmd)) return 'commit';
+  return null;
+}
+
+// ---------------------------------------------------------------- context window
+const ONE_M = 1_000_000;
+const DEFAULT_WINDOW = 200_000;
+
+/** "200000", "200k", "1m", "1.5M" -> tokens (0 when it is not a size) */
+export function parseTokens(v) {
+  const m = String(v ?? '').trim().match(/^(\d+(?:\.\d+)?)\s*([km]?)$/i);
+  if (!m) return 0;
+  return Math.round(Number(m[1]) * (m[2].toLowerCase() === 'm' ? ONE_M : m[2].toLowerCase() === 'k' ? 1000 : 1));
+}
+
+/**
+ * The context window of a model when the transcript does not say: CONTEXT_WINDOW_TOKENS wins, a "[1m]" / "-1m" model name means a
+ * million, anything else is taken as 200k – and as a million once the session has outgrown that. Only a guess (the caller marks it so).
+ */
+export function guessWindow(model, used) {
+  const forced = parseTokens(process.env.CONTEXT_WINDOW_TOKENS);
+  if (forced) return forced;
+  if (/\[1m\]|[-_]1m\b|1m-context/i.test(String(model ?? ''))) return ONE_M;
+  if (used <= DEFAULT_WINDOW) return DEFAULT_WINDOW;
+  return Math.ceil(used / ONE_M) * ONE_M;
+}
+
+/** Tokens the context holds after a Claude Code assistant message (what the next request starts from), or null. */
+export function claudeContext(message) {
+  const u = message?.usage;
+  const model = String(message?.model ?? '');
+  if (!u || !model || model.startsWith('<')) return null;
+  const used = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.output_tokens || 0);
+  if (!used) return null;
+  return { used, window: guessWindow(model, used), exact: false, model };
+}
+
 /**
  * Interactive tool calls: the agent stops and waits for the user. Claude Code's AskUserQuestion / ExitPlanMode and OpenCode's
  * question tool share the input shape { questions: [{ question, header, options: [{ label }] }] } (plan: string for ExitPlanMode).

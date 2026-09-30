@@ -6,7 +6,38 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { MUSINGS, pick, clip, cleanPrompt, toolSummary, askOf } from './util.mjs';
+import { MUSINGS, pick, clip, cleanPrompt, toolSummary, cueOf, guessWindow, askOf } from './util.mjs';
+
+const defaultConfig = () => process.env.OPENCODE_CONFIG || path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'opencode', 'opencode.json');
+let limits = { at: 0, map: new Map() };
+
+/** Context size of a model from the OpenCode config (provider.<id>.models.<id>.limit.context); 0 when the config does not say. */
+export function modelLimit(providerID, modelID) {
+  if (!providerID || !modelID) return 0;
+  const now = Date.now();
+  if (now - limits.at > 60_000) {
+    const map = new Map();
+    try {
+      const raw = fs.readFileSync(defaultConfig(), 'utf8');
+      let j;
+      try {
+        j = JSON.parse(raw);
+      } catch {
+        j = JSON.parse(raw.replace(/^\s*\/\/.*$/gm, ''));
+      }
+      for (const [pid, prov] of Object.entries(j.provider ?? j.providers ?? {})) {
+        for (const [mid, m] of Object.entries(prov?.models ?? {})) {
+          const c = Number(m?.limit?.context);
+          if (c > 0) map.set(`${pid}/${mid}`, c);
+        }
+      }
+    } catch {
+      /* no config (or not readable): the window is guessed */
+    }
+    limits = { at: now, map };
+  }
+  return limits.map.get(`${providerID}/${modelID}`) || 0;
+}
 
 export const defaultOpenCodeDb = () =>
   process.env.OPENCODE_DB ||
@@ -143,6 +174,13 @@ export function createOpenCodeSource(host, { dbFile, windowMs, log = console.war
       return;
     }
     if (row.type !== 'assistant') return;
+    // tokens of a finished main-agent message = the context it leaves behind
+    if (ctx.isMain && d.tokens && d.time?.completed) {
+      const t = d.tokens;
+      const used = (t.input || 0) + (t.output || 0) + (t.cache?.read || 0) + (t.cache?.write || 0);
+      const limit = modelLimit(d.model?.providerID, d.model?.id);
+      if (used > 0) host.context?.(s, { used, window: limit || guessWindow(d.model?.id, used), exact: limit > 0, model: d.model?.id || 'opencode' });
+    }
     let m = ctx.open.get(row.id);
     if (!m) {
       m = { count: 0 };
@@ -164,7 +202,7 @@ export function createOpenCodeSource(host, { dbFile, windowMs, log = console.war
           host.say(s, ctx.key, 'tool', `Delegating: ${clip(inp.description || inp.agent || 'a task', 80)}`, 'Agent');
         } else {
           const [name, input] = toolOf(it);
-          host.say(s, ctx.key, 'tool', toolSummary(name, input), name);
+          host.say(s, ctx.key, 'tool', toolSummary(name, input), name, cueOf(name, input));
         }
       }
       m.count = i + 1;

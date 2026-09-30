@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { MUSINGS, pick, clip, base, toolSummary, cleanPrompt } from './util.mjs';
+import { MUSINGS, pick, clip, base, toolSummary, cueOf, guessWindow, cleanPrompt } from './util.mjs';
 
 export const defaultCodexHome = () => process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
 
@@ -115,11 +115,12 @@ function toolOf(item) {
 /** Items that are conversation, not work: no tool bubble for them. */
 const NOT_TOOLS = new Set(['UserMessage', 'AgentMessage', 'Reasoning', 'ContextCompaction', 'Plan']);
 
-export function createCodexParser({ say, mainStart, mainEnd }) {
+export function createCodexParser({ say, mainStart, mainEnd, context }) {
   return function handleLine(s, o) {
     const p = o.payload;
     if (!p || typeof p !== 'object') return;
     if (o.type === 'session_meta' || o.type === 'turn_context') {
+      if (p.model) s.model = String(p.model);
       if (p.cwd) {
         if (p.cwd !== s.cwd) s.cwd = p.cwd;
         if (!s.firstCwd) s.firstCwd = p.cwd;
@@ -128,6 +129,14 @@ export function createCodexParser({ say, mainStart, mainEnd }) {
     }
     if (o.type !== 'event_msg') return;
     switch (p.type) {
+      case 'token_count': {
+        // the size of the last request (prompt + answer) is what the context holds now; Codex also says how big the window is
+        const last = p.info?.last_token_usage;
+        const used = last ? last.total_tokens || (last.input_tokens || 0) + (last.output_tokens || 0) : 0;
+        const window = Number(p.info?.model_context_window) || 0;
+        if (used > 0) context?.(s, { used, window: window || guessWindow(s.model, used), exact: window > 0, model: s.model || 'codex' });
+        break;
+      }
       case 'task_started':
         mainStart(s);
         break;
@@ -167,7 +176,7 @@ export function createCodexParser({ say, mainStart, mainEnd }) {
         } else if (!NOT_TOOLS.has(item.type)) {
           const [name, input] = toolOf(item);
           mainStart(s);
-          say(s, 'main', 'tool', toolSummary(name, input), name);
+          say(s, 'main', 'tool', toolSummary(name, input), name, cueOf(name, input));
         }
         break;
       }
