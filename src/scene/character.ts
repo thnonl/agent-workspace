@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import type { Appearance } from '../world/appearance';
 import { G, M, MB, group, mesh, shade } from './kit';
+import { buildHair } from './hair';
+import { buildBag, buildStraps, type BagCarry } from './bags';
 import { bakeGroup } from './bake';
 
 /**
@@ -36,6 +38,10 @@ export interface Rig {
   handHoldL: THREE.Group;
   bag: THREE.Group;
   folder: THREE.Group;
+  /** how the bag is carried: where it hangs while the person walks, and how big it is */
+  bagCarry: BagCarry;
+  /** the straps over the torso (shown while the bag is carried) */
+  bagStraps: THREE.Group;
 }
 
 export const HIP_Y = 0.47;
@@ -83,23 +89,38 @@ export function buildCharacter(a: Appearance): Rig {
   const shortsLeg = a.bottom === 'shorts';
   const bareLeg = a.bottom === 'skirt' || a.bottom === 'none' || a.bottom === 'midi';
   const legs = (side: -1 | 1) => {
+    // one continuous leg: a tapered thigh, a round knee of the same radius, a tapered shin. Trousers are the limb itself
+    // in the fabric colour; shorts are a tube pulled over the skin limb.
+    const legMat = shortsLeg || bareLeg ? skin : bottomMat;
+    const THIGH = 0.22;
+    const SHIN = 0.14;
+    const rHip = 0.098;
+    const rKnee = 0.09;
+    const rAnkle = 0.078;
     const thigh = group(side * 0.125, HIP_Y, 0);
-    thigh.add(mesh(G.capsule(0.098, 0.03), bareLeg ? skin : bottomMat, 0, -0.11, 0));
-    const knee = group(0, -0.22, 0);
+    thigh.add(mesh(G.limb(rHip, rKnee, THIGH), legMat, 0, 0, 0));
+    if (shortsLeg) {
+      const hemY = 0.15;
+      const rHem = rHip - (rHip - rKnee) * (hemY / THIGH) + 0.012;
+      thigh.add(mesh(G.sleeve(rHip + 0.012, rHem, hemY), bottomMat, 0, 0, 0));
+      thigh.add(mesh(G.torus(rHem, 0.011, Math.PI * 2, 6, 20), bottomMat, 0, -hemY, 0, { r: [Math.PI / 2, 0, 0], cast: false }));
+    }
+    const knee = group(0, -THIGH, 0);
     thigh.add(knee);
-    knee.add(mesh(G.capsule(0.088, 0.03), shortsLeg || bareLeg ? skin : bottomMat, 0, -0.1, 0));
+    knee.add(mesh(G.sphere(rKnee, 16, 12), legMat, 0, 0, 0));
+    knee.add(mesh(G.limb(rKnee, rAnkle, SHIN), legMat, 0, 0, 0));
     if (a.bottom === 'slacks') {
       // a pressed crease down the front of each leg
       const crease = M(shade(a.bottomColor, -0.08), { rough: 0.8 });
-      thigh.add(mesh(G.box(0.012, 0.2, 0.012), crease, 0, -0.11, 0.097, { cast: false }));
-      knee.add(mesh(G.box(0.012, 0.2, 0.012), crease, 0, -0.1, 0.087, { cast: false }));
+      thigh.add(mesh(G.box(0.012, 0.22, 0.012), crease, 0, -0.11, 0.097, { cast: false }));
+      knee.add(mesh(G.box(0.012, 0.16, 0.012), crease, 0, -0.08, 0.083, { cast: false }));
     }
-    if (a.bottom === 'joggers') knee.add(mesh(G.torus(0.088, 0.02, Math.PI * 2, 6, 16), accentMat, 0, -0.165, 0, { r: [Math.PI / 2, 0, 0], cast: false }));
+    if (a.bottom === 'joggers') knee.add(mesh(G.torus(0.08, 0.02, Math.PI * 2, 6, 16), accentMat, 0, -0.15, 0, { r: [Math.PI / 2, 0, 0], cast: false }));
     // ---- shoes
     const sole = M(shade(a.shoes, -0.25), { rough: 0.7 });
     switch (a.shoeStyle) {
       case 'loafer':
-        if (shortsLeg || bareLeg) knee.add(mesh(G.cyl(0.092, 0.092, 0.05, 14), white, 0, -0.145, 0)); // sock cuff
+        if (shortsLeg || bareLeg) knee.add(mesh(G.cyl(0.084, 0.084, 0.05, 14), white, 0, -0.145, 0)); // sock cuff
         knee.add(mesh(G.sphere(0.12, 18, 12), shoeMat, 0, -0.2, 0.05, { s: [0.84, 0.5, 1.5] }));
         knee.add(mesh(G.sphere(0.12, 14, 8), sole, 0, -0.243, 0.05, { s: [0.86, 0.14, 1.52], cast: false }));
         knee.add(mesh(G.sphere(0.05, 10, 8), M(shade(a.shoes, 0.08), { rough: 0.45 }), 0, -0.172, 0.115, { s: [1.5, 0.45, 0.9], cast: false }));
@@ -112,13 +133,13 @@ export function buildCharacter(a: Appearance): Rig {
         knee.add(mesh(G.sphere(0.12, 14, 8), sole, 0, -0.245, 0.05, { s: [0.96, 0.14, 1.42], cast: false }));
         break;
       case 'mary-jane':
-        knee.add(mesh(G.cyl(0.092, 0.092, 0.055, 14), white, 0, -0.14, 0)); // sock
+        knee.add(mesh(G.cyl(0.084, 0.084, 0.055, 14), white, 0, -0.14, 0)); // sock
         knee.add(mesh(G.sphere(0.12, 18, 12), shoeMat, 0, -0.2, 0.048, { s: [0.9, 0.5, 1.38] }));
         knee.add(mesh(G.box(0.17, 0.022, 0.03), shoeMat, 0, -0.165, 0.06, { cast: false }));
         knee.add(mesh(G.sphere(0.014, 8, 6), gold, side * 0.085, -0.165, 0.06, { cast: false }));
         break;
       default:
-        if (shortsLeg || bareLeg) knee.add(mesh(G.cyl(0.092, 0.092, 0.05, 14), white, 0, -0.145, 0)); // sock cuff
+        if (shortsLeg || bareLeg) knee.add(mesh(G.cyl(0.084, 0.084, 0.05, 14), white, 0, -0.145, 0)); // sock cuff
         knee.add(mesh(G.sphere(0.12, 18, 12), shoeMat, 0, -0.19, 0.045, { s: [0.92, 0.66, 1.42] }));
         knee.add(mesh(G.sphere(0.06, 10, 8), white, 0, -0.215, 0.13, { s: [1.5, 0.4, 0.9], cast: false }));
     }
@@ -317,28 +338,46 @@ export function buildCharacter(a: Appearance): Rig {
   const sleeveMat = a.top === 'vest' ? shirtMat : topMat;
   const cuffMat = a.top === 'vest' || a.top === 'blazer' || a.top === 'suit' ? shirtMat : a.top === 'cardigan' || a.top === 'coat' ? M(shade(a.topColor, -0.1), { rough: 0.8 }) : accentMat;
   const arm = (side: -1 | 1) => {
+    // one continuous limb: a tapered upper arm, a round elbow of the same radius, a tapered forearm, then the hand.
+    // Long sleeves are the limb itself in the fabric colour (a little fatter); a short sleeve is a tube over the skin limb.
+    const long = sleeve === 'long';
+    const fab = long ? 0.012 : 0;
+    const limbMat = long ? sleeveMat : skin;
+    const rShoulder = 0.068 + fab;
+    const rElbow = 0.065 + fab;
+    const rWrist = 0.056 + fab;
+    const UPPER = 0.22;
+    const FORE = 0.2;
     const shoulder = group(side * 0.285, 0.5, 0);
-    shoulder.add(mesh(G.sphere(0.085, 12, 10), sleeve === 'none' ? skin : topMat, 0, 0, 0));
-    shoulder.add(mesh(G.capsule(0.07, 0.09), sleeve === 'none' ? skin : sleeve === 'long' ? sleeveMat : topMat, 0, -0.11, 0));
-    if (a.top === 'polo') shoulder.add(mesh(G.torus(0.074, 0.016, Math.PI * 2, 6, 16), accentMat, 0, -0.2, 0, { r: [Math.PI / 2, 0, 0], cast: false }));
-    const fore = group(0, -0.22, 0);
+    shoulder.add(mesh(G.limb(rShoulder, rElbow, UPPER), limbMat, 0, 0, 0));
+    if (sleeve === 'short') {
+      // hem of the short sleeve, a hand's breadth above the elbow
+      const hemY = 0.13;
+      const rHem = rShoulder - (rShoulder - rElbow) * (hemY / UPPER) + 0.014;
+      shoulder.add(mesh(G.sleeve(rShoulder + 0.014, rHem, hemY), topMat, 0, 0, 0));
+      shoulder.add(mesh(G.torus(rHem, 0.012, Math.PI * 2, 6, 20), a.top === 'polo' ? accentMat : topMat, 0, -hemY, 0, { r: [Math.PI / 2, 0, 0], cast: false }));
+    }
+    const fore = group(0, -UPPER, 0);
     shoulder.add(fore);
-    fore.add(mesh(G.capsule(0.064, 0.07), sleeve === 'long' ? sleeveMat : skin, 0, -0.09, 0));
-    if (sleeve === 'long') fore.add(mesh(G.torus(0.062, 0.018, Math.PI * 2, 6, 14), cuffMat, 0, -0.16, 0, { r: [Math.PI / 2, 0, 0], cast: false }));
+    fore.add(mesh(G.sphere(rElbow, 14, 10), limbMat, 0, 0, 0));
+    fore.add(mesh(G.limb(rElbow, rWrist, FORE), limbMat, 0, 0, 0));
+    const rAt = (y: number) => rElbow - (rElbow - rWrist) * (-y / FORE);
+    if (long) fore.add(mesh(G.torus(rAt(-0.19) + 0.004, 0.019, Math.PI * 2, 6, 16), cuffMat, 0, -0.19, 0, { r: [Math.PI / 2, 0, 0], cast: false }));
     // ---- watch, bracelets or a sweat band on the left wrist (the right hand holds things)
     if (side === -1 && a.wrist !== 'none') {
       if (a.wrist === 'watch') {
-        fore.add(mesh(G.torus(0.07, 0.013, Math.PI * 2, 6, 18), leather, 0, -0.14, 0, { r: [Math.PI / 2, 0, 0], cast: false }));
-        fore.add(mesh(G.rbox(0.02, 0.058, 0.058, 0.008), gold, -0.074, -0.14, 0, { cast: false }));
-        fore.add(mesh(G.plane(0.046, 0.046), MB('#1d2134'), -0.0855, -0.14, 0, { r: [0, -Math.PI / 2, 0], cast: false }));
+        const r = rAt(-0.14) + 0.004;
+        fore.add(mesh(G.torus(r, 0.013, Math.PI * 2, 6, 18), leather, 0, -0.14, 0, { r: [Math.PI / 2, 0, 0], cast: false }));
+        fore.add(mesh(G.rbox(0.02, 0.058, 0.058, 0.008), gold, -(r + 0.004), -0.14, 0, { cast: false }));
+        fore.add(mesh(G.plane(0.046, 0.046), MB('#1d2134'), -(r + 0.0155), -0.14, 0, { r: [0, -Math.PI / 2, 0], cast: false }));
       } else if (a.wrist === 'bracelet') {
-        for (let i = 0; i < 3; i++) fore.add(mesh(G.torus(0.069, 0.008, Math.PI * 2, 6, 18), i === 1 ? accMat : gold, 0, -0.125 - i * 0.022, 0, { r: [Math.PI / 2, 0, 0], cast: false }));
+        for (let i = 0; i < 3; i++) fore.add(mesh(G.torus(rAt(-0.125 - i * 0.022) + 0.003, 0.008, Math.PI * 2, 6, 18), i === 1 ? accMat : gold, 0, -0.125 - i * 0.022, 0, { r: [Math.PI / 2, 0, 0], cast: false }));
       } else {
-        fore.add(mesh(G.torus(0.07, 0.026, Math.PI * 2, 6, 18), accMat, 0, -0.14, 0, { r: [Math.PI / 2, 0, 0], s: [1, 1, 1] }));
+        fore.add(mesh(G.torus(rAt(-0.14) + 0.004, 0.026, Math.PI * 2, 6, 18), accMat, 0, -0.14, 0, { r: [Math.PI / 2, 0, 0], s: [1, 1, 1] }));
       }
     }
     const hand = group(0, -0.215, 0.005);
-    hand.add(mesh(G.sphere(0.078, 14, 10), skin, 0, 0, 0));
+    hand.add(mesh(G.sphere(0.074, 14, 10), skin, 0, -0.006, 0, { s: [1, 1.05, 0.88] }));
     fore.add(hand);
     torso.add(shoulder);
     return { shoulder, fore, hand };
@@ -352,6 +391,8 @@ export function buildCharacter(a: Appearance): Rig {
 
   // ------------------------------------------------------------------ head
   const head = group(0, 0.94, 0);
+  // (a head a little smaller than the raw sphere reads as friendlier next to the body)
+  head.scale.setScalar(0.94);
   torso.add(head);
   head.add(mesh(G.sphere(0.44, 32, 24), skin, 0, 0, 0, { s: [1, 0.9, 0.95] }));
   // ears
@@ -403,112 +444,11 @@ export function buildCharacter(a: Appearance): Rig {
   // ------------------------------------------------------------------ hair
   const hair = group();
   head.add(hair);
-  const cap = (theta = 0.52, tilt = -0.38, rad = 0.472, mat: THREE.Material = hairMat) => {
-    const m = mesh(G.cap(rad, 28, 16, Math.PI * theta), mat, 0, 0.01, -0.005, { s: [1, 0.93, 1.0], r: [tilt, 0, 0] });
-    hair.add(m);
-    return m;
-  };
-  const bangs = (n = 5, y = 0.17, size = 0.095) => {
-    for (let i = 0; i < n; i++) {
-      const t = n === 1 ? 0 : i / (n - 1) - 0.5;
-      hair.add(mesh(G.sphere(size, 12, 8), hairMat, t * 0.42, y - Math.abs(t) * 0.09, 0.385 - Math.abs(t) * 0.11, { s: [1, 1.25, 0.6], r: [0, t * -0.6, t * 0.4] }));
-    }
-  };
-  let tail: THREE.Group | null = null;
+  const hairFade = M(`#${new THREE.Color(a.hair).lerp(new THREE.Color(a.skin), 0.55).getHexString()}`, { rough: 0.6 });
+  const hairBuilt = buildHair(a.hairStyle, { hairMat, hairDark, hairFade, accMat, hatOn: a.hat !== 'none' });
+  for (const part of hairBuilt.parts) hair.add(part);
+  const tail: THREE.Group | null = hairBuilt.tail;
   const ears: THREE.Group[] = [];
-  switch (a.hairStyle) {
-    case 'short':
-      cap();
-      bangs(5);
-      break;
-    case 'sidepart':
-      cap();
-      hair.add(mesh(G.sphere(0.2, 14, 10), hairMat, 0.12, 0.22, 0.32, { s: [1.5, 0.8, 0.7], r: [0.3, 0, -0.35] }));
-      bangs(3, 0.15, 0.08);
-      break;
-    case 'spiky':
-      cap(0.5, -0.3);
-      for (let i = 0; i < 7; i++) {
-        const ang = (i / 7) * Math.PI * 2;
-        const rr = i === 0 ? 0 : 0.27;
-        hair.add(mesh(G.cone(0.1, 0.28, 8), hairMat, Math.sin(ang) * rr, 0.43 - (i === 0 ? 0 : 0.03), Math.cos(ang) * rr * 0.9 - 0.02, { r: [Math.cos(ang) * 0.55, 0, -Math.sin(ang) * 0.55] }));
-      }
-      bangs(3, 0.2, 0.08);
-      break;
-    case 'mohawk':
-      for (let i = 0; i < 7; i++) {
-        const t = i / 6;
-        const ang = -0.3 + t * 2.3;
-        hair.add(mesh(G.sphere(0.11 - Math.abs(t - 0.5) * 0.05, 10, 8), hairMat, 0, Math.sin(ang) * 0.5, Math.cos(ang) * 0.4, { s: [0.7, 1.15, 1] }));
-      }
-      break;
-    case 'bob':
-      cap(0.55, -0.34, 0.478);
-      bangs(5, 0.16);
-      for (const side of [-1, 1]) {
-        hair.add(mesh(G.capsule(0.12, 0.18, 6, 10), hairMat, side * 0.38, -0.1, -0.02, { s: [0.85, 1, 1.1] }));
-      }
-      hair.add(mesh(G.sphere(0.4, 20, 14), hairMat, 0, -0.02, -0.12, { s: [1.02, 0.95, 0.85] }));
-      break;
-    case 'long':
-      cap(0.55, -0.34, 0.478);
-      bangs(5, 0.16);
-      hair.add(mesh(G.sphere(0.42, 20, 14), hairMat, 0, -0.06, -0.12, { s: [1.02, 1, 0.85] }));
-      hair.add(mesh(G.capsule(0.3, 0.42, 6, 14), hairMat, 0, -0.42, -0.2, { s: [1.05, 1, 0.55] }));
-      for (const side of [-1, 1]) hair.add(mesh(G.capsule(0.085, 0.3, 6, 10), hairMat, side * 0.4, -0.22, 0.02));
-      break;
-    case 'ponytail': {
-      cap(0.53, -0.36);
-      bangs(5, 0.17);
-      hair.add(mesh(G.sphere(0.06, 8, 6), accMat, 0, 0.26, -0.42));
-      tail = group(0, 0.26, -0.44);
-      tail.add(mesh(G.capsule(0.11, 0.22, 6, 12), hairMat, 0, -0.16, -0.06, { r: [0.25, 0, 0] }));
-      tail.add(mesh(G.sphere(0.1, 10, 8), hairMat, 0, -0.34, -0.1, { s: [0.9, 1.2, 0.9] }));
-      hair.add(tail);
-      break;
-    }
-    case 'twintails': {
-      cap(0.53, -0.36);
-      bangs(5, 0.17);
-      tail = group();
-      for (const side of [-1, 1]) {
-        hair.add(mesh(G.sphere(0.06, 8, 6), accMat, side * 0.38, 0.2, -0.08));
-        const t = group(side * 0.38, 0.2, -0.08);
-        t.add(mesh(G.capsule(0.1, 0.3, 6, 12), hairMat, side * 0.08, -0.22, 0, { r: [0, 0, side * 0.2] }));
-        t.add(mesh(G.sphere(0.09, 10, 8), hairMat, side * 0.14, -0.42, 0, { s: [0.9, 1.3, 0.9] }));
-        tail.add(t);
-      }
-      hair.add(tail);
-      break;
-    }
-    case 'buns':
-      cap(0.52, -0.34);
-      bangs(5, 0.17);
-      for (const side of [-1, 1]) {
-        hair.add(mesh(G.sphere(0.17, 14, 10), hairMat, side * 0.28, 0.43, -0.06));
-        hair.add(mesh(G.torus(0.11, 0.02, Math.PI * 2, 6, 16), accMat, side * 0.28, 0.35, -0.06, { r: [Math.PI / 2 - 0.5, side * 0.4, 0], cast: false }));
-      }
-      break;
-    case 'afro':
-      hair.add(mesh(G.sphere(0.58, 24, 18), hairMat, 0, 0.2, -0.2, { s: [1.02, 0.92, 1] }));
-      for (let i = 0; i < 6; i++) {
-        const ang = (i / 6) * Math.PI * 2;
-        hair.add(mesh(G.sphere(0.16, 10, 8), hairDark, Math.sin(ang) * 0.42, 0.42 + (i % 2) * 0.12, Math.cos(ang) * 0.28 - 0.18));
-      }
-      break;
-    case 'curly':
-      cap(0.5, -0.36);
-      for (let i = 0; i < 12; i++) {
-        const ang = (i / 12) * Math.PI * 2;
-        const rr = 0.33 + (i % 2) * 0.06;
-        hair.add(mesh(G.sphere(0.13, 10, 8), i % 3 === 0 ? hairDark : hairMat, Math.sin(ang) * rr, 0.24 + (i % 3) * 0.06, Math.cos(ang) * rr * 0.9 - 0.06));
-      }
-      hair.add(mesh(G.sphere(0.14, 10, 8), hairMat, 0, 0.44, 0));
-      break;
-    case 'bald':
-      hair.add(mesh(G.sphere(0.03, 6, 4), hairMat, 0, 0.4, 0.05, { s: [1, 3, 1], cast: false }));
-      break;
-  }
 
   // -------------------------------------------------------------- eyewear
   const dark = M('#3a3345', { rough: 0.4 });
@@ -569,40 +509,40 @@ export function buildCharacter(a: Appearance): Rig {
       break;
     case 'cap':
       hatG.add(mesh(G.cap(0.49, 24, 14, Math.PI * 0.5), hatMat, 0, 0.06, -0.02, { s: [1, 0.95, 1.02], r: [-0.3, 0, 0] }));
-      hatG.add(mesh(G.cyl(0.3, 0.3, 0.03, 20), hatDark, 0, 0.16, 0.36, { s: [1.05, 1, 0.9], r: [0.28, 0, 0] }));
+      hatG.add(mesh(G.cyl(0.27, 0.27, 0.03, 20), hatDark, 0, 0.235, 0.35, { s: [1.05, 1, 0.85], r: [0.2, 0, 0] }));
       hatG.add(mesh(G.sphere(0.04, 8, 6), white, 0, 0.5, -0.08, { cast: false }));
       break;
     case 'beret':
-      hatG.add(mesh(G.sphere(0.4, 22, 14), hatMat, 0.05, 0.36, -0.01, { s: [1.02, 0.34, 1.0], r: [0.08, 0, -0.16] }));
-      hatG.add(mesh(G.torus(0.335, 0.02, Math.PI * 2, 6, 30), hatDark, 0, 0.245, -0.005, { r: [Math.PI / 2 - 0.02, 0, 0], s: [1, 0.95, 1], cast: false }));
-      hatG.add(mesh(G.cyl(0.014, 0.02, 0.05, 8), hatDark, 0.06, 0.505, -0.01, { cast: false }));
+      hatG.add(mesh(G.sphere(0.42, 24, 14), hatMat, 0.03, 0.3, -0.01, { s: [1.05, 0.4, 1.02], r: [0.08, 0, -0.14] }));
+      hatG.add(mesh(G.torus(0.35, 0.02, Math.PI * 2, 6, 30), hatDark, 0.0, 0.245, -0.005, { r: [Math.PI / 2 - 0.02, 0, -0.03], s: [1, 0.95, 1], cast: false }));
+      hatG.add(mesh(G.cyl(0.014, 0.02, 0.05, 8), hatDark, 0.05, 0.47, -0.01, { cast: false }));
       break;
     case 'fedora':
       hatG.rotation.x = 0.05;
-      hatG.add(mesh(G.cyl(0.24, 0.3, 0.24, 24), hatMat, 0, 0.42, -0.01));
-      hatG.add(mesh(G.cyl(0.302, 0.302, 0.055, 24), band, 0, 0.335, -0.01, { cast: false }));
-      hatG.add(mesh(G.cyl(0.58, 0.58, 0.03, 36), hatMat, 0, 0.3, 0.03, { s: [1, 1, 1.05] }));
-      brimRim(0.58, 0.31, 0.03, hatDark);
+      hatG.add(mesh(G.cyl(0.25, 0.32, 0.24, 24), hatMat, 0, 0.385, -0.01));
+      hatG.add(mesh(G.cyl(0.322, 0.322, 0.055, 24), band, 0, 0.3, -0.01, { cast: false }));
+      hatG.add(mesh(G.cyl(0.52, 0.52, 0.028, 36), hatMat, 0, 0.265, 0.03, { s: [1, 1, 1.05] }));
+      brimRim(0.52, 0.277, 0.03, hatDark);
       // the pinch in the crown
-      hatG.add(mesh(G.box(0.05, 0.03, 0.26), hatDark, 0, 0.545, -0.01, { cast: false }));
+      hatG.add(mesh(G.box(0.05, 0.03, 0.26), hatDark, 0, 0.51, -0.01, { cast: false }));
       break;
     case 'tophat':
-      hatG.add(mesh(G.cyl(0.26, 0.27, 0.4, 24), hatMat, 0, 0.5, -0.01));
-      hatG.add(mesh(G.torus(0.262, 0.014, Math.PI * 2, 6, 28), hatDark, 0, 0.7, -0.01, { r: [Math.PI / 2, 0, 0], cast: false }));
-      hatG.add(mesh(G.cyl(0.274, 0.274, 0.075, 24), band, 0, 0.36, -0.01, { cast: false }));
-      hatG.add(mesh(G.cyl(0.42, 0.42, 0.03, 32), hatMat, 0, 0.3, 0.02));
-      brimRim(0.42, 0.31, 0.02, hatDark);
+      hatG.add(mesh(G.cyl(0.27, 0.29, 0.32, 24), hatMat, 0, 0.42, -0.01));
+      hatG.add(mesh(G.torus(0.272, 0.014, Math.PI * 2, 6, 28), hatDark, 0, 0.58, -0.01, { r: [Math.PI / 2, 0, 0], cast: false }));
+      hatG.add(mesh(G.cyl(0.292, 0.292, 0.07, 24), band, 0, 0.3, -0.01, { cast: false }));
+      hatG.add(mesh(G.cyl(0.42, 0.42, 0.028, 32), hatMat, 0, 0.26, 0.02));
+      brimRim(0.42, 0.272, 0.02, hatDark);
       break;
     case 'bowler':
-      hatG.add(mesh(G.cap(0.33, 24, 14, Math.PI * 0.55), hatMat, 0, 0.29, -0.01, { s: [1, 1.2, 1.08] }));
-      hatG.add(mesh(G.cyl(0.336, 0.336, 0.045, 24), band, 0, 0.3, -0.01, { cast: false }));
-      hatG.add(mesh(G.cyl(0.42, 0.42, 0.025, 32), hatMat, 0, 0.25, 0.02));
-      brimRim(0.42, 0.262, 0.02, hatDark, 0.014);
+      hatG.add(mesh(G.cap(0.35, 24, 14, Math.PI * 0.55), hatMat, 0, 0.245, -0.01, { s: [1, 1.15, 1.08] }));
+      hatG.add(mesh(G.cyl(0.352, 0.352, 0.045, 24), band, 0, 0.26, -0.01, { cast: false }));
+      hatG.add(mesh(G.cyl(0.44, 0.44, 0.025, 32), hatMat, 0, 0.225, 0.02));
+      brimRim(0.44, 0.237, 0.02, hatDark, 0.014);
       break;
     case 'bucket':
-      hatG.add(mesh(G.cyl(0.31, 0.34, 0.2, 24), hatMat, 0, 0.38, 0));
-      hatG.add(mesh(G.cyl(0.34, 0.52, 0.07, 32), hatMat, 0, 0.265, 0.02));
-      hatG.add(mesh(G.cyl(0.345, 0.345, 0.03, 24), band, 0, 0.33, 0, { cast: false }));
+      hatG.add(mesh(G.cyl(0.31, 0.35, 0.2, 24), hatMat, 0, 0.36, 0));
+      hatG.add(mesh(G.cyl(0.35, 0.5, 0.07, 32), hatMat, 0, 0.245, 0.02));
+      hatG.add(mesh(G.cyl(0.355, 0.355, 0.03, 24), band, 0, 0.3, 0, { cast: false }));
       break;
     case 'newsboy':
       hatG.add(mesh(G.sphere(0.44, 22, 16), hatMat, 0, 0.27, 0, { s: [1.03, 0.42, 1.08], r: [0.12, 0, 0] }));
@@ -610,10 +550,10 @@ export function buildCharacter(a: Appearance): Rig {
       hatG.add(mesh(G.sphere(0.03, 8, 6), hatDark, 0, 0.455, -0.02, { cast: false }));
       break;
     case 'sunhat':
-      hatG.add(mesh(G.cap(0.31, 24, 14, Math.PI * 0.5), hatMat, 0, 0.29, -0.01, { s: [1, 0.85, 1] }));
-      hatG.add(mesh(G.cyl(0.36, 0.72, 0.05, 40), hatMat, 0, 0.27, 0.03));
-      hatG.add(mesh(G.torus(0.31, 0.03, Math.PI * 2, 6, 30), ribbon, 0, 0.32, -0.01, { r: [Math.PI / 2, 0, 0], cast: false }));
-      for (const side of [-1, 1]) hatG.add(mesh(G.cone(0.06, 0.12, 8), ribbon, 0.3 + side * 0.06, 0.34, 0.14, { r: [0, 0, side * -Math.PI / 2 - 0.4], cast: false }));
+      hatG.add(mesh(G.cap(0.33, 24, 14, Math.PI * 0.5), hatMat, 0, 0.25, -0.01, { s: [1, 0.85, 1] }));
+      hatG.add(mesh(G.cyl(0.38, 0.62, 0.045, 40), hatMat, 0, 0.245, 0.03));
+      hatG.add(mesh(G.torus(0.33, 0.028, Math.PI * 2, 6, 30), ribbon, 0, 0.29, -0.01, { r: [Math.PI / 2, 0, 0], cast: false }));
+      for (const side of [-1, 1]) hatG.add(mesh(G.cone(0.06, 0.12, 8), ribbon, 0.3 + side * 0.06, 0.31, 0.14, { r: [0, 0, side * -Math.PI / 2 - 0.4], cast: false }));
       break;
     default:
   }
@@ -687,15 +627,11 @@ export function buildCharacter(a: Appearance): Rig {
   }
 
   // -------------------------------------------------------- props (in rig space)
-  const bag = group();
-  const bagBody = M(a.backpack, { rough: 0.65 });
-  const bagDark = M(shade(a.backpack, -0.12), { rough: 0.7 });
-  bag.add(mesh(G.rbox(0.36, 0.44, 0.2, 0.07), bagBody, 0, 0, 0));
-  bag.add(mesh(G.rbox(0.3, 0.14, 0.212, 0.05), bagDark, 0, 0.16, 0));
-  bag.add(mesh(G.rbox(0.24, 0.16, 0.06, 0.03), bagDark, 0, -0.08, 0.12));
-  bag.add(mesh(G.torus(0.05, 0.014, Math.PI, 6, 12), bagDark, 0, 0.26, 0, { r: [0, 0, 0] }));
-  for (const side of [-1, 1]) bag.add(mesh(G.rbox(0.05, 0.36, 0.05, 0.02), bagDark, side * 0.12, 0.02, -0.11));
-  bag.add(mesh(G.sphere(0.03, 8, 6), M('#ffd166', { metal: 0.5 }), 0.1, 0.16, 0.11, { cast: false }));
+  const built = buildBag(a.bag, a.backpack);
+  const bag = built.model;
+  // the straps that cross the body while the bag is carried (they belong to the torso, so they move with it)
+  const bagStraps = buildStraps(a.bag, a.backpack, frontZ);
+  torso.add(bagStraps);
 
   const folder = group();
   folder.add(mesh(G.rbox(0.34, 0.04, 0.44, 0.015), M(a.isDirector ? '#ffd166' : a.accessoryColor, { rough: 0.6 }), 0, 0, 0));
@@ -706,11 +642,12 @@ export function buildCharacter(a: Appearance): Rig {
 
   // Merge the static parts of every joint: ~90 primitives become ~35 meshes per character.
   const joints: THREE.Object3D[] = [pelvis, torso, head, armL, armR, foreL, foreR, thighL, thighR, kneeL, kneeR, eyes, eyeL, eyeR, ...(tail ? [tail] : []), ...ears];
-  const skip = new Set<THREE.Object3D>([...joints, browL, browR, mouthSmile, mouthO, handHold, handHoldL]);
+  const skip = new Set<THREE.Object3D>([...joints, browL, browR, mouthSmile, mouthO, handHold, handHoldL, bagStraps]);
   root.updateMatrixWorld(true);
   for (const j of joints) bakeGroup(j, skip);
   bakeGroup(bag);
+  bakeGroup(bagStraps);
   bakeGroup(folder);
 
-  return { root, pelvis, torso, head, armL, armR, foreL, foreR, thighL, thighR, kneeL, kneeR, eyeL, eyeR, eyes, browL, browR, mouthSmile, mouthO, tail, ears, handHold, handHoldL, bag, folder };
+  return { root, pelvis, torso, head, armL, armR, foreL, foreR, thighL, thighR, kneeL, kneeR, eyeL, eyeR, eyes, browL, browR, mouthSmile, mouthO, tail, ears, handHold, handHoldL, bag, bagCarry: built.carry, bagStraps, folder };
 }

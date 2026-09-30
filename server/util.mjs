@@ -46,7 +46,7 @@ export function toolSummary(name, input = {}) {
     default:
       if (name?.startsWith('mcp__')) {
         const [, server, ...rest] = name.split('__');
-        return `Using ${server}: ${rest.join('_')}`;
+        return `Using ${server} · ${rest.join('_').replace(/[_-]+/g, ' ')}`;
       }
       return `Using ${name}`;
   }

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
+import { usePointerCursor } from './hover';
 import { disposeOwned } from './bake';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
@@ -182,10 +183,12 @@ export function CatView({ catKey, roomId, layout, seed }: Props) {
     });
   });
 
+  const pointer = usePointerCursor();
   return (
     <group>
       <primitive
         object={rig.root}
+        {...pointer}
         onClick={(e: { stopPropagation: () => void }) => {
           e.stopPropagation();
           useStore.getState().select(catKey);

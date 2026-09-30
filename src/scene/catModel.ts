@@ -179,8 +179,8 @@ export function buildCat(look: CatLook): CatRig {
       pts: [v(0, 0.2, -0.235), v(0, 0.212, -0.19), pHips, v(0, 0.222, -0.06), pSpine1, v(0, 0.222, 0.07), pSpine2, v(0, 0.222, 0.17), pNeck, v(0, 0.272, 0.255), pHead],
       rx: fat([0.06, 0.07, 0.074, 0.066, 0.06, 0.065, 0.071, 0.066, 0.056, 0.052, 0.05].map((x, i) => (i < 9 ? x * girth : x)), 1.12),
       ry: fat([0.064, 0.074, 0.078, 0.07, 0.066, 0.071, 0.079, 0.074, 0.062, 0.056, 0.05].map((x, i) => (i < 9 ? x * girth : x)), 1.1),
-      samples: 34,
-      radial: 22,
+      samples: 56,
+      radial: 30,
       region: 'body',
       joints: [
         { bone: 0, p: pHips },
@@ -199,8 +199,8 @@ export function buildCat(look: CatLook): CatRig {
       pts: tailPts,
       rx: fat([0.036, 0.034, 0.031, 0.029, 0.027, 0.026, 0.024], 1.2 * tailThick),
       ry: fat([0.036, 0.034, 0.031, 0.029, 0.027, 0.026, 0.024], 1.2 * tailThick),
-      samples: 28,
-      radial: 12,
+      samples: 40,
+      radial: 14,
       region: 'tail',
       joints: [
         { bone: 0, p: pHips },

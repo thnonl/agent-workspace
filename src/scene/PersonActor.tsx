@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
+import { usePointerCursor } from './hover';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { useStore } from '../store';
@@ -263,24 +264,26 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
     const laptopSpot = isDirector ? layout.director.laptop : layout.desks[Math.max(0, sim.desk)]?.laptop ?? { x: 0, z: 0 };
     const deskTop = isDirector ? DESK_TOP + 0.02 : DESK_TOP;
 
-    // bag: back → floor beside the chair
+    // bag: carried (on the back, across the body, on the chest or in the hand) → floor beside the chair
     const bag = rig.bag;
+    const carry = rig.bagCarry;
     // the bag is set down on the side opposite to where the worker came from
     const lat = rot2(1, 0, seatRot);
     const side = -approachSide;
     const floor = { x: seat.x + lat.x * side * 0.62, z: seat.z + lat.z * side * 0.62 };
-    const bp = toRoom(sim, 0, -0.3 * scale);
+    const bp = toRoom(sim, carry.x * scale, carry.z * scale);
     const bx = bp.x;
     const bz = bp.z;
     const bt = ease(actor.bagT);
     bag.visible = sim.onStage;
     bag.position.set(
       bx + (floor.x - bx) * bt,
-      (0.86 * scale + (0.23 - 0.86 * scale) * bt) + Math.sin(bt * Math.PI) * 0.35,
+      (carry.y * scale + (carry.floorY - carry.y * scale) * bt) + Math.sin(bt * Math.PI) * 0.35,
       bz + (floor.z - bz) * bt,
     );
-    bag.rotation.set(bt * 0.15, sim.yaw + bt * 0.4 * side, 0);
-    bag.scale.setScalar(scale / 0.85 * 0.92);
+    bag.rotation.set(bt * 0.15, sim.yaw + carry.yaw * (1 - bt) + bt * 0.4 * side, 0);
+    bag.scale.setScalar(scale * carry.scale);
+    rig.bagStraps.visible = sim.onStage && bt < 0.4;
 
     // laptop
     const lp = actor.lapP;
@@ -438,12 +441,14 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
     }
   });
 
+  const pointer = usePointerCursor();
   const accent = isDirector ? '#ffb020' : layout.theme.accent;
 
   return (
     <group ref={outer} name={`actor-${personKey}`}>
       <primitive
         object={rig.root}
+        {...pointer}
         onClick={(e: { stopPropagation: () => void }) => {
           e.stopPropagation();
           useStore.getState().select(personKey);

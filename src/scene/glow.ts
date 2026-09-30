@@ -24,7 +24,7 @@ export const GLOW = {
     color: '#cdefff', roughness: 0.05, transparent: true, opacity: 0.32, emissive: new THREE.Color('#ffcf7a'), emissiveIntensity: 0,
   }),
   cone: new THREE.MeshBasicMaterial({ color: '#ffe6a8', transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }),
-  sunbeam: new THREE.MeshBasicMaterial({ color: '#fff6c8', transparent: true, opacity: 0.2, depthWrite: false }),
+  sunbeam: new THREE.MeshBasicMaterial({ color: '#fff6c8', transparent: true, opacity: 0.26, depthWrite: false, vertexColors: true }),
 };
 
 const bulbDim = new THREE.Color('#d8cf9c');

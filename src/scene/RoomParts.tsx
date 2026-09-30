@@ -223,16 +223,38 @@ export function DoorView({ door, theme, roomId, localX }: { door: DoorSpec; them
 // -------------------------------------------------------------------- sunbeams
 export function Sunbeam({ w, localX, dir }: { w: number; localX: number; dir: 1 | -1 }) {
   const geo = useMemo(() => {
-    const s = new THREE.Shape();
+    // a skewed strip of light whose alpha fades out towards its sides and its far end (no hard glass-pane edge)
     const z0 = 0.05;
     const z1 = 3.4;
     const shift = 1.5 * dir;
-    s.moveTo(-w / 2, -z0);
-    s.lineTo(w / 2, -z0);
-    s.lineTo(w / 2 + shift, -z1);
-    s.lineTo(-w / 2 + shift, -z1);
-    s.closePath();
-    return new THREE.ShapeGeometry(s);
+    const NU = 10;
+    const NV = 12;
+    const pos: number[] = [];
+    const col: number[] = [];
+    const idx: number[] = [];
+    const sm = (x: number) => {
+      const t = Math.min(1, Math.max(0, x));
+      return t * t * (3 - 2 * t);
+    };
+    for (let j = 0; j <= NV; j++) {
+      const v = j / NV;
+      for (let i = 0; i <= NU; i++) {
+        const u = i / NU;
+        pos.push(-w / 2 + u * w + shift * v, -(z0 + (z1 - z0) * v), 0);
+        col.push(1, 1, 1, sm(u / 0.3) * sm((1 - u) / 0.3) * (1 - sm(v)) * (0.35 + 0.65 * sm(v * 8 + 0.3)));
+      }
+    }
+    for (let j = 0; j < NV; j++) {
+      for (let i = 0; i < NU; i++) {
+        const a = j * (NU + 1) + i;
+        idx.push(a, a + NU + 1, a + 1, a + 1, a + NU + 1, a + NU + 2);
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 4));
+    g.setIndex(idx);
+    return g;
   }, [w, dir]);
   return (
     <mesh geometry={geo} material={GLOW.sunbeam} position={[localX, 0.014, 0]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={2} />

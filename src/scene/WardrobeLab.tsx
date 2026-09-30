@@ -33,12 +33,21 @@ function Person({ seed, index, x, z, back, director, over }: { seed: number; ind
     for (const [k, v] of Object.entries(over)) picked[k] = Array.isArray(v) ? v[index % v.length] : v;
     const a = { ...makeAppearance(seed, { director }), ...picked } as Appearance;
     const r = buildCharacter(a);
-    r.root.scale.setScalar(RIG_SCALE * a.scale);
+    const sc = RIG_SCALE * a.scale;
+    r.root.scale.setScalar(sc);
+    // the bag hangs where the person carries it (unless ?nobag)
+    const k = r.bagCarry;
+    r.bag.position.set(k.x * sc, k.y * sc, k.z * sc);
+    r.bag.rotation.y = k.yaw;
+    r.bag.scale.setScalar(sc * k.scale);
+    r.bag.visible = !q().has('nobag');
+    r.bagStraps.visible = r.bag.visible;
     return r;
   }, [seed, index, director, over]);
   return (
     <group position={[x, 0, z]} rotation={[0, back ? Math.PI : 0, 0]}>
       <primitive object={rig.root} />
+      <primitive object={rig.bag} />
     </group>
   );
 }

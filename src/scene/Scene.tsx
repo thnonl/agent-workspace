@@ -31,6 +31,62 @@ const LOW_FPS = 40;
 const HIGH_FPS = 57;
 const MIN_DPR = 1;
 
+/** world-space offset of the default room framing (keeps the room clear of the HUD cards); applied by computeActive while the room itself is followed */
+const viewShift = new THREE.Vector3();
+/** the room the camera frames right now (null while a cat or a person is followed) */
+let framedRoom: ReturnType<typeof getLayout> | null = null;
+const reduceMotionQuery = typeof window !== 'undefined' && window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
+const reducedMotion = () => !!reduceMotionQuery?.matches;
+
+/**
+ * Camera distance and target shift that put the whole room (floor + the two visible walls) inside the part of the
+ * screen the HUD leaves free, for the default viewing angles. Solved by bisection on the distance; the room is
+ * re-centred in the free area by shifting the target along the camera's right / up axes.
+ */
+function frameRoom(layout: ReturnType<typeof getLayout>, fovDeg: number, aspect: number, width: number, out: THREE.Vector3): number {
+  const sp = Math.sin(POLAR), cp = Math.cos(POLAR), sa = Math.sin(AZIMUTH), ca = Math.cos(AZIMUTH);
+  const n = [sa * sp, cp, ca * sp];
+  const r = [ca, 0, -sa];
+  const u = [-sa * cp, sp, -ca * cp];
+  const hw = layout.width / 2 + 0.35, hd = layout.depth / 2 + 0.35, wh = layout.wallHeight + 0.4;
+  // room corners relative to the camera target (o.x - 0.4, 1.0, o.z + 0.2)
+  const pts: number[][] = [];
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) pts.push([sx * hw + 0.4, -1, sz * hd - 0.2]);
+  pts.push([-hw + 0.4, wh - 1, -hd - 0.2], [hw + 0.4, wh - 1, -hd - 0.2], [-hw + 0.4, wh - 1, hd - 0.2]);
+  const rel = pts.map((q) => ({ x: q[0] * r[0] + q[1] * r[1] + q[2] * r[2], y: q[0] * u[0] + q[1] * u[1] + q[2] * u[2], d: q[0] * n[0] + q[1] * n[1] + q[2] * n[2] }));
+  const Ty = Math.tan((fovDeg * Math.PI) / 360), Tx = Ty * aspect;
+  const m = 0.05;
+  // the HUD cards only cover the top corners: reserve half of their width on wide screens
+  const wide = width >= 1100;
+  const lo = -1 + (wide ? Math.min(360, width * 0.3) : 0) / width + m;
+  const hi = 1 - (wide ? 310 : 0) / width - m;
+  const ylo = -0.86, yhi = 0.84;
+  const cx = (lo + hi) / 2, cy = (ylo + yhi) / 2;
+  let sx = 0, sy = 0;
+  const test = (dist: number) => {
+    let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+    for (const q of rel) {
+      const dep = dist - q.d;
+      if (dep <= 0.1) return false;
+      const nx = q.x / (dep * Tx), ny = q.y / (dep * Ty);
+      x0 = Math.min(x0, nx); x1 = Math.max(x1, nx); y0 = Math.min(y0, ny); y1 = Math.max(y1, ny);
+    }
+    sx = (cx - (x0 + x1) / 2) * Tx * dist;
+    sy = (cy - (y0 + y1) / 2) * Ty * dist;
+    return x1 - x0 <= hi - lo && y1 - y0 <= yhi - ylo;
+  };
+  let a = 6, b = 200;
+  for (let i = 0; i < 40; i++) {
+    const mid = (a + b) / 2;
+    if (test(mid)) b = mid;
+    else a = mid;
+  }
+  test(b);
+  // moving the target by -shift along right/up shifts the picture by +shift
+  out.set(-(r[0] * sx + u[0] * sy), -(r[1] * sx + u[1] * sy), -(r[2] * sx + u[2] * sy));
+  return b;
+}
+
 /** centre of the active room in world space */
 const center = new THREE.Vector3();
 const tmpA = new THREE.Vector3();
@@ -46,6 +102,7 @@ type StoreState = ReturnType<typeof useStore.getState>;
 function computeActive(st: StoreState, out: THREE.Vector3): number {
   const { activeRoomId, rooms, selectedKey, people } = st;
   const room = activeRoomId ? rooms[activeRoomId] : null;
+  framedRoom = null;
   if (!room) return 0;
   const o = roomOrigin(room.index);
   // a selected cat / character is followed by the camera, RTS style
@@ -60,8 +117,9 @@ function computeActive(st: StoreState, out: THREE.Vector3): number {
     out.set(anchor.x, 0.85, anchor.z);
     return 13;
   }
-  out.set(o[0] - 0.4, 1.0, o[2] + 0.2);
-  return getLayout(room.seed, room.themeIndex).fitDistance;
+  out.set(o[0] - 0.4, 1.0, o[2] + 0.2).add(viewShift);
+  framedRoom = getLayout(room.seed, room.themeIndex);
+  return framedRoom.fitDistance;
 }
 
 /** Center of the active room in world space (used outside the frame loop; inside it read `center`). */
@@ -216,15 +274,26 @@ function CameraRig() {
   const controls = useRef<React.ComponentRef<typeof OrbitControls>>(null);
   const { camera, size } = useThree();
   const activeRoomId = useStore((s) => s.activeRoomId);
-  const fit = useRef({ active: false, dist: 30, snap: true });
+  const fit = useRef({ active: false, dist: 30, snap: true, angles: false });
   const resetTick = useStore((s) => s.resetTick);
+  const lastTick = useRef(resetTick);
+  const sph = useRef(new THREE.Spherical());
   const focused = useStore((s) => !!s.selectedKey);
 
   useEffect(() => {
     const a = activeCenter();
     if (!a) return;
     const aspect = size.width / Math.max(1, size.height);
-    fit.current.dist = a.fit * (aspect < 1.5 && a.fit > 14 ? (1.5 / Math.max(0.6, aspect)) * 0.85 : 1);
+    if (framedRoom) fit.current.dist = frameRoom(framedRoom, (camera as THREE.PerspectiveCamera).fov, aspect, size.width, viewShift);
+    else {
+      viewShift.set(0, 0, 0);
+      fit.current.dist = a.fit;
+    }
+    // R / the reset button: back to the default angles too, not only the distance
+    if (lastTick.current !== resetTick) {
+      lastTick.current = resetTick;
+      fit.current.angles = true;
+    }
     fit.current.active = true;
     frame.cameraBusy = true;
   }, [activeRoomId, resetTick, focused, size.width, size.height]);
@@ -243,18 +312,31 @@ function CameraRig() {
       frame.cameraBusy = true;
       return;
     }
-    const k = 1 - Math.exp(-3.6 * dt);
+    const k = reducedMotion() ? 1 : 1 - Math.exp(-3.6 * dt);
     const delta = tmpA.copy(center).sub(c.target).multiplyScalar(k);
     c.target.add(delta);
     camera.position.add(delta);
     let moving = delta.lengthSq() > 1e-6;
     if (fit.current.active) {
       moving = true;
-      const off = tmpB.copy(camera.position).sub(c.target);
-      const len = off.length();
-      off.setLength(len + (fit.current.dist - len) * k);
-      camera.position.copy(c.target).add(off);
-      if (Math.abs(fit.current.dist - len) < 0.06 && delta.length() < 0.01) fit.current.active = false;
+      const s = sph.current.setFromVector3(tmpB.copy(camera.position).sub(c.target));
+      const len = s.radius;
+      s.radius = len + (fit.current.dist - len) * k;
+      let anglesDone = true;
+      if (fit.current.angles) {
+        s.theta += (AZIMUTH - s.theta) * k;
+        s.phi += (POLAR - s.phi) * k;
+        anglesDone = Math.abs(AZIMUTH - s.theta) < 0.004 && Math.abs(POLAR - s.phi) < 0.004;
+        if (anglesDone) {
+          s.theta = AZIMUTH;
+          s.phi = POLAR;
+        }
+      }
+      camera.position.copy(c.target).add(tmpB.setFromSpherical(s));
+      if (Math.abs(fit.current.dist - len) < 0.06 && delta.length() < 0.01 && anglesDone) {
+        fit.current.active = false;
+        fit.current.angles = false;
+      }
     }
     frame.cameraBusy = moving;
   });
@@ -274,7 +356,10 @@ function CameraRig() {
       maxPolarAngle={1.3}
       minAzimuthAngle={0.12}
       maxAzimuthAngle={1.4}
-      onStart={() => (fit.current.active = false)}
+      onStart={() => {
+        fit.current.active = false;
+        fit.current.angles = false;
+      }}
     />
   );
 }

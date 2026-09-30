@@ -563,7 +563,7 @@ export class Actor {
         this.deskPetT = -1;
         this.nextIdleAt = debugFlags.activity ? 1.5 : 12 + Math.random() * 8;
         // at the door: a greeting first, the job they came for follows five seconds later
-        greet(s.key, greetingLine(this.isDirector, new Date().getHours(), this.colleaguesHere(ctx)), 'wave', GREET_MS);
+        greet(s.key, greetingLine(this.isDirector, Math.floor(env.hour), this.colleaguesHere(ctx)), 'wave', GREET_MS);
         sfx('door', s.roomId);
         s.onStage = true;
         s.yaw = Math.atan2(layout.door.dir.x, layout.door.dir.z);

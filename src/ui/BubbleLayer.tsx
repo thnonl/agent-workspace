@@ -159,6 +159,10 @@ const BubbleItem = memo(function BubbleItem({ personKey, tails }: { personKey: s
   const hideAt = useRef(0);
   const shownAt = useRef(0);
   const settledRef = useRef(false);
+  /** the task title goes into the header of the first bubble of a task only (repeating it on every bubble just eats width) */
+  const taskRef = useRef('');
+  const lastTitled = useRef('');
+  const titledId = useRef<string | number | null>(null);
 
   const { name, task, role, failed, selected, themeIndex, askRec } = useStore(
     useShallow((s) => {
@@ -175,6 +179,7 @@ const BubbleItem = memo(function BubbleItem({ personKey, tails }: { personKey: s
       };
     }),
   );
+  taskRef.current = task;
   const accent = role === 'director' ? '#ffb020' : themeFor(themeIndex).accent;
   // the agent waits for the user's answer: one persistent, highlighted bubble over the director until it is answered (the class is set once, the layout loop only positions it)
   const asking = !!askRec;
@@ -198,6 +203,7 @@ const BubbleItem = memo(function BubbleItem({ personKey, tails }: { personKey: s
           setCur(null);
           setSettled(false);
         }
+        lastTitled.current = '';
         return;
       }
       const c = curRef.current;
@@ -254,6 +260,10 @@ const BubbleItem = memo(function BubbleItem({ personKey, tails }: { personKey: s
       // the answer to the call / email: the handset stays at the ear (the director stays at the laptop) until it has been read
       if (next.tool === 'ack' && sim && (sim.msgUntil ?? 0) * 1000 > now) sim.msgUntil = hideAt.current / 1000;
       curRef.current = next;
+      if (taskRef.current !== lastTitled.current && next.kind !== 'idle') {
+        titledId.current = next.id;
+        lastTitled.current = taskRef.current;
+      }
       settledRef.current = false;
       setSettled(false);
       setCur(next);
@@ -318,7 +328,7 @@ const BubbleItem = memo(function BubbleItem({ personKey, tails }: { personKey: s
           <div key={cur.id} className={`bubble bubble-${look}${via ? ` bubble-${via === 'call' ? 'phone' : 'email'}` : ''}${cur.hold && cur.kind === 'text' ? ' bubble-talk' : ''}${isFail ? ' bubble-failed' : ''}${settled && !cur.hold ? ' bubble-settled' : ''}`}>
             <div className="bubble-head">
               <span className="bubble-dot" />
-              <span className="bubble-name">{via ? (via === 'call' ? '☎️ You (phone)' : '✉️ Email from You') : <>{role === 'director' ? <Crown /> : null}<span className="nm">{name}</span>{task && cur.kind !== 'idle' ? <em className="nm"> · {task}</em> : null}</>}</span>
+              <span className="bubble-name">{via ? (via === 'call' ? '☎️ You (phone)' : '✉️ Email from You') : <>{role === 'director' ? <Crown /> : null}<span className="nm">{name}</span>{task && cur.kind !== 'idle' && titledId.current === cur.id ? <em className="nm"> · {task}</em> : null}</>}</span>
             </div>
             <div className={`bubble-body${cur.kind === 'tool' ? ' mono' : ''}`}>
               <span className="bubble-icon">{iconFor(cur)}</span>

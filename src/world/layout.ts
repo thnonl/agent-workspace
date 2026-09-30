@@ -201,6 +201,8 @@ const DESK_D = 1.0;
 export const MAX_DESKS = 6;
 /** the random generators try for more than we need, then the best seats are kept */
 const DESK_CANDIDATES = 14;
+/** the big room offers more candidates so seats farther from the director make it into the choice */
+const DESK_CANDIDATES_GRAND = 30;
 
 /** footprint [width along the wall, depth, height] of every prop */
 const FOOT: Record<PropKind, [number, number, number]> = {
@@ -235,6 +237,9 @@ const FOOT: Record<PropKind, [number, number, number]> = {
   punchDummy: [0.62, 0.62, 1.7],
   dumbbells: [0.9, 0.5, 0.3],
 };
+
+/** props taller than this stay on the back / left walls (the default camera looks at those from the front) */
+const TALL_PROP = 1.1;
 
 /** furniture tall enough to hide posters / boards behind it */
 const BLOCKS_WALL = new Set<PropKind>(['bookshelf', 'vending', 'serverRack', 'fridge', 'coffee', 'cooler', 'fishtank', 'sink', 'stove']);
@@ -372,6 +377,7 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
     return true;
   };
   const raw: RawDesk[] = [];
+  const maxCandidates = kind.name === 'grand' ? DESK_CANDIDATES_GRAND : DESK_CANDIDATES;
   const visitorArea: OR = { x: dirX, z: dirDeskZ + 1.6, w: 3.6, d: 2.4, rot: 0 };
   const fits = (d: RawDesk) => {
     if (!inBounds(d)) return false;
@@ -405,7 +411,7 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
           seatInGroup: 0,
           groupSize: 1,
         };
-        if (raw.length < DESK_CANDIDATES && fits(d) && !r.chance(0.06)) raw.push(d);
+        if (raw.length < maxCandidates && fits(d) && !r.chance(0.06)) raw.push(d);
       }
     }
   } else {
@@ -420,7 +426,7 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
           const w = 1.9;
           const d: RawDesk = { x: x + w / 2, z, rot: Math.PI, w, group, seatInGroup: s, groupSize: size };
           x += w + 0.02;
-          if (raw.length < DESK_CANDIDATES && fits(d)) raw.push(d);
+          if (raw.length < maxCandidates && fits(d)) raw.push(d);
         }
         group++;
         x += r.range(1.3, 1.9);
@@ -446,6 +452,22 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
   if (raw.length > MAX_DESKS) {
     const score = (d: RawDesk) => Math.abs(Math.atan2(d.x - dirX, d.z - dirDeskZ)) * 2.2 + Math.hypot(d.x - dirX, d.z - dirDeskZ) * 0.12;
     raw.sort((a, b) => score(a) - score(b));
+    if (kind.name === 'grand') {
+      // spread the staff over the rows (two per row) instead of crowding the director: the front half of the big room stays lively
+      const rowOf = (d: RawDesk) => Math.max(0, Math.min(kind.rows - 1, Math.floor(((seating === 'bench' ? d.z - dirDeskZ : Math.hypot(d.x - dirX, d.z - dirDeskZ)) - 3.3) / 3.2)));
+      const quota = Math.ceil(MAX_DESKS / kind.rows);
+      const taken = new Map<number, number>();
+      const chosen: RawDesk[] = [];
+      for (const d of raw) {
+        const row = rowOf(d);
+        if ((taken.get(row) ?? 0) >= quota) continue;
+        taken.set(row, (taken.get(row) ?? 0) + 1);
+        chosen.push(d);
+      }
+      for (const d of raw) if (chosen.length < MAX_DESKS && !chosen.includes(d)) chosen.push(d);
+      raw.length = 0;
+      raw.push(...chosen.slice(0, MAX_DESKS));
+    }
     raw.length = MAX_DESKS;
     if (seating === 'bench') {
       // benches lost some seats: renumber them so dividers only stand between neighbours
@@ -599,7 +621,10 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
 
   /** try to put a prop against a wall (front faces into the room) */
   const tryWall = (k: PropKind, walls: ('back' | 'left' | 'right' | 'front')[] = ['back', 'left', 'right']): boolean => {
-    const [w, d] = FOOT[k];
+    const [w, d, h] = FOOT[k];
+    // tall furniture on the right / front wall would show its back to the camera and hide whoever uses it (or the desks behind it)
+    if (h > TALL_PROP) walls = walls.filter((x) => x === 'back' || x === 'left');
+    if (!walls.length) return false;
     for (let t = 0; t < 26; t++) {
       const wall = r.pick(walls);
       if (wall === 'back') {
@@ -696,6 +721,32 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
     wallDecor.push({ kind: dcr.kind, wall, pos, y: dcr.y, w: dcr.w, h: dcr.h, color: r.pick(colorsAll), color2: r.pick(colorsAll), variant: r.int(0, 3) });
   }
 
+  // one clock is enough, and no two posters / pictures look the same
+  {
+    const seenLook = new Set<string>();
+    let clocks = 0;
+    for (let i = wallDecor.length - 1; i >= 0; i--) {
+      const dc = wallDecor[i];
+      if (dc.kind === 'clock' && ++clocks > 1) wallDecor.splice(i, 1);
+    }
+    for (let i = 0; i < wallDecor.length; i++) {
+      const dc = wallDecor[i];
+      if (dc.kind !== 'poster' && dc.kind !== 'frame') continue;
+      const look = (c: string, c2: string) => `${dc.kind}${dc.kind === 'poster' ? dc.variant % 2 : 0}${c}${c2}`;
+      let done = !seenLook.has(look(dc.color, dc.color2));
+      for (let a = 0; !done && a < colorsAll.length; a++) {
+        for (let b = 0; !done && b < colorsAll.length; b++) {
+          if (!seenLook.has(look(colorsAll[a], colorsAll[b]))) {
+            dc.color = colorsAll[a];
+            dc.color2 = colorsAll[b];
+            done = true;
+          }
+        }
+      }
+      seenLook.add(look(dc.color, dc.color2));
+    }
+  }
+
   // wall lights: they glow when the room lights come on
   for (let t = 0, n = 0; t < 80 && n < 4; t++) {
     const wall = r.chance(0.55) ? 'back' : 'left';
@@ -739,6 +790,52 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
     nav = buildNav(props);
   }
 
+  // ------------------------------------------------ a sofa for every room that has space
+  // own generator and placed after everything else: rooms that already had a lounge set keep exactly what they had
+  if (!props.some((q) => q.kind === 'loungeSet' || q.kind === 'sofa')) {
+    const sofaRng = new Rng((seed ^ 0x2c1b3a6d) >>> 0);
+    const [sw, sd] = FOOT.sofa;
+    // the last tries may clear small clutter (bins, plants, boxes...) out of the way
+    const REMOVABLE = new Set<PropKind>(['bin', 'plant', 'cactus', 'boxes', 'trolley', 'beanbag', 'floorLamp', 'tallPlant', 'recycle', 'printer']);
+    for (let t = 0; t < 320; t++) {
+      const removeOk = t >= 120;
+      const side = t % 3 === 2 ? 'floor' : sofaRng.pick(['back', 'left', 'right', 'front'] as const);
+      let sx: number, sz: number, srot: number;
+      if (side === 'back') { sx = sofaRng.range(-W / 2 + sw / 2 + 0.3, W / 2 - sw / 2 - 0.3); sz = -D / 2 + sd / 2 + 0.06; srot = 0; }
+      else if (side === 'left') { sx = -W / 2 + sd / 2 + 0.06; sz = sofaRng.range(-D / 2 + sw / 2 + 0.4, D / 2 - sw / 2 - 0.4); srot = Math.PI / 2; }
+      else if (side === 'right') { sx = W / 2 - sd / 2 - 0.05; sz = sofaRng.range(-D / 2 + sw / 2 + 0.4, D / 2 - sw / 2 - 0.4); srot = -Math.PI / 2; }
+      else if (side === 'front') { sx = sofaRng.range(-W / 2 + sw / 2 + 0.5, W / 2 - sw / 2 - 0.5); sz = D / 2 - sd / 2 - 0.05; srot = Math.PI; }
+      else { sx = sofaRng.range(-W / 2 + 1.6, W / 2 - 1.6); sz = sofaRng.range(dirDeskZ + 2.6, D / 2 - 1.2); srot = sofaRng.pick([0, Math.PI / 2, Math.PI, -Math.PI / 2]); }
+      const rect: OR = { x: sx, z: sz, w: sw, d: sd, rot: srot };
+      if (!corners(rect).every((c) => c.x > -W / 2 + 0.05 && c.x < W / 2 - 0.05 && c.z > -D / 2 + 0.05 && c.z < D / 2 - 0.05)) continue;
+      // the floor in front of the seats must be free (that is where one walks up to it)
+      const o = rot2(0, sd / 2 + 0.6, srot);
+      const clear: OR = { x: sx + o.x, z: sz + o.z, w: 1.8, d: 0.8, rot: srot };
+      if (!corners(clear).every((c) => c.x > -W / 2 + 0.3 && c.x < W / 2 - 0.3 && c.z > -D / 2 + 0.3 && c.z < D / 2 - 0.3)) continue;
+      if (reserved.some((q) => overlapOR(rect, q) || overlapOR(clear, q))) continue;
+      const drop = props.filter((q) => {
+        const pr = propRect(q);
+        return overlapOR(rect, pr, 0.18) || overlapOR(clear, pr);
+      });
+      if (drop.length && (!removeOk || drop.some((q) => !REMOVABLE.has(q.kind)))) continue;
+      if (placed.some((q) => !drop.some((dq) => { const pr = propRect(dq); return pr.x === q.x && pr.z === q.z && pr.w === q.w && pr.d === q.d && pr.rot === q.rot; }) && (overlapOR(rect, q, 0.18) || overlapOR(clear, q)))) continue;
+      const kept = props.filter((q) => !drop.includes(q));
+      const trial = [...kept, { kind: 'sofa' as const, x: sx, z: sz, rot: srot, variant: sofaRng.int(0, 3), color: sofaRng.pick(colorsAll), color2: sofaRng.pick(colorsAll) }];
+      const nv = buildNav(trial);
+      if (!reachable(nv)) continue;
+      for (const dq of drop) {
+        const pr = propRect(dq);
+        const at = placed.findIndex((q) => q.x === pr.x && q.z === pr.z && q.w === pr.w && q.d === pr.d && q.rot === pr.rot);
+        if (at >= 0) placed.splice(at, 1);
+      }
+      placed.push(rect, clear);
+      props.length = 0;
+      props.push(...trial);
+      nav = nv;
+      break;
+    }
+  }
+
   // ------------------------------------------------ exercise corner (punching dummy, dumbbells)
   // own generator and placed last, so every room keeps exactly the furniture it had before these props existed
   {
@@ -748,7 +845,8 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
       if (!gymRng.chance(0.7)) continue;
       const [gw, gd] = FOOT[gk];
       for (let t = 0; t < 80; t++) {
-        const side = gymRng.int(0, 3);
+        let side = gymRng.int(0, 3);
+        if (side === 2 && FOOT[gk][2] > TALL_PROP) side = 1;
         let gx: number, gz: number, grot: number;
         if (side === 0) { gx = gymRng.range(-W / 2 + gw / 2 + 0.3, W / 2 - gw / 2 - 0.3); gz = -D / 2 + gd / 2 + 0.06; grot = 0; }
         else if (side === 1) { gx = -W / 2 + gd / 2 + 0.06; gz = gymRng.range(-D / 2 + gw / 2 + 0.4, D / 2 - gw / 2 - 0.4); grot = Math.PI / 2; }

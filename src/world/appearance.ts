@@ -2,7 +2,10 @@ import { Rng } from '../util/rng';
 
 export type Gender = 'male' | 'female' | 'nb';
 export type HairStyle =
-  | 'short' | 'bob' | 'ponytail' | 'buns' | 'spiky' | 'long' | 'afro' | 'twintails' | 'bald' | 'mohawk' | 'curly' | 'sidepart';
+  | 'short' | 'sidepart' | 'undercut' | 'twoblock' | 'buzz' | 'manbun' | 'curly' | 'afro' | 'bald'
+  | 'bob' | 'lob' | 'long' | 'ponytail' | 'bun' | 'lowtails';
+/** what somebody carries: worn on the back, across the body, on the chest, or in the hand */
+export type BagKind = 'backpack' | 'rolltop' | 'minipack' | 'sling' | 'messenger' | 'chest' | 'tote' | 'suitcase' | 'briefcase';
 export type TopStyle =
   | 'tee' | 'hoodie' | 'shirt' | 'sweater' | 'dress' | 'overalls' | 'suit' | 'jacket' | 'tank'
   | 'blazer' | 'vest' | 'cardigan' | 'polo' | 'coat' | 'stripe';
@@ -44,6 +47,7 @@ export interface Appearance {
   /** a folded square in the breast pocket of a suit or blazer */
   pocketSquare: boolean;
   backpack: string;
+  bag: BagKind;
   scale: number;
   blush: string;
   freckles: boolean;
@@ -73,9 +77,10 @@ const SHIRTS = ['#ffffff', '#f4f1ea', '#dbe8ff', '#ffe3ec', '#e4f5e8', '#fff1c9'
 const HATS = ['#3a3f5c', '#7a5a44', '#c9b79c', '#5a5f6e', '#ffb3c6', '#e34c67', '#2f6b5a', '#f1d9a0', '#a58bff', '#6ec6ff', '#ffb347'];
 const NECK_COLORS = ['#ff5d73', '#3a3f5c', '#ffd166', '#6ec6ff', '#8f4a5a', '#5ed3b0', '#b79bff', '#ff9ec4'];
 
-const MALE_HAIR: HairStyle[] = ['short', 'spiky', 'sidepart', 'mohawk', 'curly', 'afro', 'bald', 'short', 'sidepart'];
-const FEMALE_HAIR: HairStyle[] = ['bob', 'ponytail', 'buns', 'long', 'twintails', 'curly', 'afro', 'sidepart', 'bob', 'long'];
-const NB_HAIR: HairStyle[] = ['bob', 'short', 'spiky', 'curly', 'buns', 'sidepart', 'mohawk', 'ponytail', 'afro'];
+// current cuts: crops, side parts, undercuts and curtains for the boys; bobs, long hair and buns for the girls
+const MALE_HAIR: HairStyle[] = ['short', 'sidepart', 'undercut', 'twoblock', 'short', 'undercut', 'twoblock', 'sidepart', 'manbun', 'curly', 'buzz', 'afro', 'short'];
+const FEMALE_HAIR: HairStyle[] = ['bob', 'long', 'lob', 'ponytail', 'bun', 'lowtails', 'curly', 'twoblock', 'sidepart', 'long', 'bob', 'lob'];
+const NB_HAIR: HairStyle[] = ['bob', 'short', 'twoblock', 'curly', 'sidepart', 'ponytail', 'undercut'];
 
 const FORMAL_TOPS: readonly TopStyle[] = ['suit', 'vest', 'blazer', 'shirt'];
 /** the tops a tie, bow tie or ascot goes with */
@@ -85,7 +90,8 @@ export function makeAppearance(seed: number, opts: { director?: boolean } = {}):
   // (the first stream keeps the draws of the original look – skin, hair, eyes… – in place; everything added later comes from `w`)
   const r = new Rng(seed ^ 0x51ed270b);
   const w = new Rng(seed ^ 0x2c1b3c6d);
-  const gender: Gender = r.weighted<Gender>([['male', 4], ['female', 4], ['nb', 1.4]]);
+  // four boys to every girl
+  const gender: Gender = r.weighted<Gender>([['male', 8], ['female', 2]]);
   const hairStyle = r.pick(gender === 'male' ? MALE_HAIR : gender === 'female' ? FEMALE_HAIR : NB_HAIR);
   const director = !!opts.director;
   const fem = gender === 'female';
@@ -121,7 +127,7 @@ export function makeAppearance(seed: number, opts: { director?: boolean } = {}):
   ]);
 
   // hats need room: hair with a lot of volume goes bare (or wears a small accessory instead)
-  const bigHair = hairStyle === 'afro' || hairStyle === 'buns' || hairStyle === 'mohawk' || hairStyle === 'spiky' || hairStyle === 'curly';
+  const bigHair = hairStyle === 'afro' || hairStyle === 'bun' || hairStyle === 'manbun';
   let hat: Hat = director
     ? w.weighted<Hat>([['none', 8], ['bowler', 1], ['fedora', 1], ['tophat', 0.7]])
     : w.weighted<Hat>([
@@ -178,6 +184,15 @@ export function makeAppearance(seed: number, opts: { director?: boolean } = {}):
   const freckles = r.chance(0.18);
 
   // tailored trousers go with the jacket or vest (and never a bright denim blue next to a wine-red blazer)
+  const bag: BagKind = director
+    ? w.weighted<BagKind>([['briefcase', 3], ['messenger', 2], ['suitcase', 1.4], ['sling', 0.4]])
+    : w.weighted<BagKind>([
+        ['backpack', 3], ['rolltop', 1.3], ['minipack', fem ? 1.3 : 0.5], ['sling', 1.7], ['messenger', 1.2], ['chest', 1.1], ['tote', fem ? 1.8 : 0.7],
+        ['suitcase', 1.2], ['briefcase', FORMAL_TOPS.includes(top) ? 1 : 0.2],
+      ]);
+  // (case-like bags are leather; the others come in the bright colours)
+  const bagColor = bag === 'briefcase' || (bag === 'messenger' && director) ? w.pick(LEATHER) : backpack;
+
   const slacksColor = bottom === 'slacks' ? (top === 'suit' || top === 'blazer' || top === 'vest' ? shadeTowards(topColor, w.chance(0.5)) : w.pick(SUITS)) : bottomColor;
 
   return {
@@ -204,7 +219,8 @@ export function makeAppearance(seed: number, opts: { director?: boolean } = {}):
     wrist,
     earrings,
     pocketSquare,
-    backpack,
+    backpack: bagColor,
+    bag,
     scale,
     blush,
     freckles,

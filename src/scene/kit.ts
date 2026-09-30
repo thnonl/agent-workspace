@@ -14,7 +14,27 @@ function cached<T extends THREE.BufferGeometry>(key: string, make: () => T): T {
   return g;
 }
 
+/** Lathe profile of a limb: rounded top (radius rTop, centre at y 0), straight taper, rounded bottom (radius rBot, centre at y -len). Listed bottom to top. */
+function limbProfile(rTop: number, rBot: number, len: number, open = false): THREE.Vector2[] {
+  const pts: THREE.Vector2[] = [];
+  const steps = 6;
+  if (open) pts.push(new THREE.Vector2(rBot, -len));
+  else for (let i = 0; i <= steps; i++) {
+    const t = ((steps - i) / steps) * (Math.PI / 2);
+    pts.push(new THREE.Vector2(rBot * Math.cos(t), -len - rBot * Math.sin(t)));
+  }
+  for (let i = 0; i <= steps; i++) {
+    const t = ((steps - i) / steps) * (Math.PI / 2);
+    pts.push(new THREE.Vector2(rTop * Math.sin(t), rTop * Math.cos(t)));
+  }
+  return pts;
+}
+
 export const G = {
+  /** one smooth tapered limb: a capsule whose two ends may have different radii (top end at y 0, bottom end at y -len) */
+  limb: (rTop: number, rBot: number, len: number, seg = 16) => cached(`m${rTop}|${rBot}|${len}|${seg}`, () => new THREE.LatheGeometry(limbProfile(rTop, rBot, len), seg)),
+  /** the same shape open at the bottom: a sleeve that is pulled over a limb */
+  sleeve: (rTop: number, rBot: number, len: number, seg = 16) => cached(`v${rTop}|${rBot}|${len}|${seg}`, () => new THREE.LatheGeometry(limbProfile(rTop, rBot, len, true), seg)),
   sphere: (r: number, ws = 24, hs = 16) => cached(`s${r}|${ws}|${hs}`, () => new THREE.SphereGeometry(r, ws, hs)),
   cap: (r: number, ws = 24, hs = 14, theta = Math.PI * 0.5) =>
     cached(`c${r}|${ws}|${hs}|${theta}`, () => new THREE.SphereGeometry(r, ws, hs, 0, Math.PI * 2, 0, theta)),
