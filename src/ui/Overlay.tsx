@@ -9,6 +9,9 @@ import { FALLBACK_NAMES, parseNames } from '../names';
 import { sfx } from '../audio';
 import { PROVIDER_NAME, ProviderLogo } from './ProviderLogo';
 
+/** The demo buttons are for development and screenshots: a production build hides them (the D key and ?demo still work). */
+const SHOW_DEMO_BUTTON = import.meta.env.DEV;
+
 const ICON: Record<string, string> = { thinking: '💭', text: '💬', tool: '🔧', task: '📥', done: '✅', error: '⚠️' };
 
 const PHASE_TEXT: Record<Phase, string> = {
@@ -88,7 +91,7 @@ export function TopBar() {
       <div className="brand">
         <span className="brand-logo">🏢</span>
         <div>
-          <b>Claude Office</b>
+          <b>Agent Workspace</b>
           <small>watch your agents at work</small>
         </div>
       </div>
@@ -98,10 +101,12 @@ export function TopBar() {
           {connection === 'live' ? (liveRooms ? `Live · ${liveRooms} session${liveRooms > 1 ? 's' : ''}` : 'Live · idle') : connection === 'connecting' ? 'Connecting…' : 'Monitor offline'}
           {connection === 'live' && dir ? <em>{dir}</em> : null}
         </span>
-        <button className={`btn${demoOn ? ' btn-on' : ''}`} onClick={() => setDemo(!demoOn)} title="Simulated Claude sessions">
-          {demoOn ? '⏸ Demo' : '▶ Demo'}
-          {demoOn && autoDemo ? <em>auto</em> : null}
-        </button>
+        {SHOW_DEMO_BUTTON ? (
+          <button className={`btn${demoOn ? ' btn-on' : ''}`} onClick={() => setDemo(!demoOn)} title="Simulated Claude sessions">
+            {demoOn ? '⏸ Demo' : '▶ Demo'}
+            {demoOn && autoDemo ? <em>auto</em> : null}
+          </button>
+        ) : null}
         <button
           className="btn btn-time"
           onClick={() => setTimeMode(TIME_CYCLE[(TIME_CYCLE.indexOf(timeMode) + 1) % TIME_CYCLE.length])}
@@ -579,7 +584,7 @@ export function EmptyState() {
               ? 'Connecting to the transcript monitor…'
               : 'The monitor is not reachable (run with npm run dev or npm start).'}
         </p>
-        <button className="btn btn-big" onClick={() => setDemo(true)}>▶ Watch a demo</button>
+        {SHOW_DEMO_BUTTON ? <button className="btn btn-big" onClick={() => setDemo(true)}>▶ Watch a demo</button> : null}
       </div>
     </div>
   );

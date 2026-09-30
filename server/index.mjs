@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { createMonitor } from './monitor.mjs';
 import { createAppServer } from './app.mjs';
 
-const HELP = `Claude Office – watch your Claude Code sessions as a 3D office
+const HELP = `Agent Workspace – watch your Claude Code sessions as a 3D office
 
 Usage: agent-workspace [options]
 
@@ -56,7 +56,7 @@ server.on('error', (err) => {
 });
 server.listen(port, host, () => {
   const url = `http://${host === '0.0.0.0' || host === '::' ? 'localhost' : host}:${port}`;
-  console.log(`Claude Office → ${url}`);
+  console.log(`Agent Workspace → ${url}`);
   console.log(`Watching ${monitor.claudeDir} (window ${Math.round(monitor.windowMs / 60000)} min)`);
   if (!args.includes('--no-open')) openBrowser(url);
 });
