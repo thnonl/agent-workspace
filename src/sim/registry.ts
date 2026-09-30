@@ -43,6 +43,18 @@ export interface SimState {
   chatBy: string | null;
   /** sitting at the desk with nothing to do: a bubble that is still up goes away */
   quiet: boolean;
+  /** dozing at the desk (nobody walks over for a chat) */
+  asleep?: boolean;
+  /** away from the desk on a break of its own (walking there, doing it, walking back) */
+  onBreak?: boolean;
+  /** waiting for a free walking slot of the room: 2 = a priority walk (entering, leaving, report), 1 = an idle one */
+  walkWait?: 0 | 1 | 2;
+  /** the director is busy with a message from the user until then: on the desk phone or reading an email at the laptop (performance.now()/1000, set by the bubble layer) */
+  msgUntil?: number;
+  /** how that message arrived (set by the bubble layer with the first chunk) */
+  msgVia?: 'call' | 'email';
+  /** the director holds the handset of the desk phone (the one on the desk is hidden meanwhile; cleared by the actor every frame it is not) */
+  handsetUp?: boolean;
 }
 
 export const sims = new Map<string, SimState>();
@@ -50,6 +62,9 @@ export const sims = new Map<string, SimState>();
 export interface RoomRuntime {
   /** seconds (performance.now()/1000) after which the next character may enter */
   doorFreeAt: number;
+  /** seconds (sim clock) before which nobody else may start a walk, and who started the last one (see Actor.walkSlotOpen) */
+  walkFreeAt: number;
+  walkBy: string | null;
   visitors: (string | null)[];
   /** the director is seated and awake */
   directorSeated: boolean;
@@ -79,16 +94,40 @@ export interface RoomRuntime {
   knownFinal: string;
   /** the director reads the summary aloud until then (Date.now()); a safety net for when nobody watches */
   talkDeadline: number;
+  /** delivery at the door: 'waiting' = a box stands on the porch, 'carried' = somebody has it in their arms */
+  parcel: 'none' | 'waiting' | 'carried';
+  /** performance.now()/1000 of the next delivery (0 = not scheduled yet) */
+  parcelAt: number;
+  /** key of the character who is fetching the parcel */
+  parcelBy: string | null;
+  /** the main agent waits for the user's answer since then (performance.now()/1000, 0 = no question pending): the director waves for attention */
+  askAt: number;
 }
 
 export const roomRuntime = new Map<string, RoomRuntime>();
+
+/** Schedules and delivers the parcels of a room: a first one soon after somebody is on stage, then one every 2-5 minutes once it is collected. Only numbers are compared. Returns true at the moment a parcel arrives. */
+export function tickParcel(rt: RoomRuntime, now: number): boolean {
+  if (rt.parcelAt === 0) rt.parcelAt = now + 40 + Math.random() * 50;
+  if (rt.parcel !== 'none' || now < rt.parcelAt) return false;
+  rt.parcel = 'waiting';
+  return true;
+}
+
+/** The parcel was taken in: the next delivery is 2-5 minutes away. */
+export function parcelDone(rt: RoomRuntime, now: number) {
+  rt.parcel = 'none';
+  rt.parcelBy = null;
+  rt.parcelAt = now + 120 + Math.random() * 180;
+}
 
 export function runtimeFor(roomId: string): RoomRuntime {
   let rt = roomRuntime.get(roomId);
   if (!rt) {
     rt = {
-      doorFreeAt: 0, visitors: [null, null, null], directorSeated: false, directorKey: null, receivedAt: -99,
+      doorFreeAt: 0, walkFreeAt: 0, walkBy: null, visitors: [null, null, null], directorSeated: false, directorKey: null, receivedAt: -99,
       burstKey: null, burstStart: 0, lastToolAt: 0, burstSeq: 0, prompt: '', idleSince: 0, leaving: false, wasBusy: false, lastHire: 0, runStart: 0, lastText: '', knownFinal: '', talkDeadline: 0,
+      parcel: 'none', parcelAt: 0, parcelBy: null, askAt: 0,
     };
     roomRuntime.set(roomId, rt);
   }
@@ -136,6 +175,11 @@ export function enqueueSpeech(key: string, s: Omit<Speech, 'id' | 'at'>, priorit
 
 export function queueLength(key: string): number {
   return queues.get(key)?.length ?? 0;
+}
+
+/** Something with this `tool` is still waiting in the queue of the character. */
+export function hasQueuedTool(key: string, tool: string): boolean {
+  return !!queues.get(key)?.some((x) => x.tool === tool);
 }
 
 export function nextSpeech(key: string): Speech | undefined {
@@ -236,7 +280,20 @@ export function dropRoomRuntime(roomId: string) {
 export const anchors = new Map<string, { x: number; y: number; z: number; live: boolean }>();
 
 /** Camera + viewport, published by the 3D scene each frame for the HTML overlay. */
-export const view: { camera: import('three').Camera | null; width: number; height: number } = { camera: null, width: 1, height: 1 };
+/** a point in normalised device coordinates (x, y, z) and its distance from the camera */
+export interface Projected {
+  x: number;
+  y: number;
+  z: number;
+  dist: number;
+}
+export const view: {
+  camera: import('three').Camera | null;
+  width: number;
+  height: number;
+  /** published by the 3D scene: projects a world point to the screen */
+  project: ((x: number, y: number, z: number, out: Projected) => void) | null;
+} = { camera: null, width: 1, height: 1, project: null };
 
 // ------------------------------------------------------------------------- cats
 export interface CatSim {
@@ -259,7 +316,7 @@ export interface CatSim {
 export const cats = new Map<string, CatSim>();
 
 /** Dev / test switches (exposed as window.__registry in dev builds). */
-export const debugFlags: { activity?: string; catNow?: boolean; catLeave?: boolean; catSpot?: string; catPose?: string } = {};
+export const debugFlags: { activity?: string; catNow?: boolean; catLeave?: boolean; catSpot?: string; catPose?: string; channel?: 'call' | 'email' } = {};
 
 const catLists = new Map<string, { n: number; list: CatSim[] }>();
 

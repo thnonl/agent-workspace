@@ -42,7 +42,8 @@ const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle }: { roo
       <StaticBake>
       {/* diorama base */}
       <RB size={[W + t + 0.3, 0.6, D + t + 0.3]} pos={[(-t + 0.3) / 2 - 0.15, -0.3, (-t + 0.3) / 2 - 0.15]} color={theme.base} r={0.16} receive />
-      <RB size={[W + t + 0.3, 0.09, D + t + 0.3]} pos={[(-t + 0.3) / 2 - 0.15, -0.045, (-t + 0.3) / 2 - 0.15]} color={shade(theme.base, 0.1)} r={0.04} receive />
+      {/* (its top sits 4 mm under the base top: equal heights z-fight in the doorway, where no floor plane covers them) */}
+      <RB size={[W + t + 0.3, 0.09, D + t + 0.3]} pos={[(-t + 0.3) / 2 - 0.15, -0.049, (-t + 0.3) / 2 - 0.15]} color={shade(theme.base, 0.1)} r={0.04} receive />
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.004, 0]} receiveShadow>
         <planeGeometry args={[W, D]} />
         <meshStandardMaterial map={floorTex} roughness={0.85} />
@@ -80,7 +81,7 @@ const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle }: { roo
         ))}
         {layout.door.wall === 'back' ? <DoorView door={layout.door} theme={theme} roomId={roomId} localX={layout.door.pos + t / 2} /> : null}
         {layout.wallDecor.filter((d) => d.wall === 'back').map((d, i) => (
-          <WallDecorView key={i} d={d} theme={theme} localX={d.pos + t / 2} />
+          <WallDecorView key={i} d={d} theme={theme} roomId={roomId} localX={d.pos + t / 2} />
         ))}
         {layout.signPos?.wall === 'back' ? <Sign title={signTitle} localX={layout.signPos.pos + t / 2} y={layout.signPos.y} theme={theme} /> : null}
         </StaticBake>
@@ -96,7 +97,7 @@ const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle }: { roo
         ))}
         {layout.door.wall === 'left' ? <DoorView door={layout.door} theme={theme} roomId={roomId} localX={-layout.door.pos} /> : null}
         {layout.wallDecor.filter((d) => d.wall === 'left').map((d, i) => (
-          <WallDecorView key={i} d={d} theme={theme} localX={-d.pos} />
+          <WallDecorView key={i} d={d} theme={theme} roomId={roomId} localX={-d.pos} />
         ))}
         </StaticBake>
       </group>
@@ -109,7 +110,7 @@ const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle }: { roo
       </StaticBake>
       <StaticBake>
         {layout.props.map((p, i) => (
-          <PropView key={i} p={p} theme={theme} />
+          <PropView key={i} p={p} theme={theme} roomId={roomId} />
         ))}
       </StaticBake>
     </>
@@ -161,7 +162,9 @@ export const RoomView = memo(function RoomView({ roomId }: { roomId: string }) {
       {layout.desks.map((d) => (
         <Chair key={d.index} x={d.seat.x} z={d.seat.z} rot={d.rot} turn={d.chairTurn} color={d.chairColor} roomId={roomId} deskIndex={d.index} approachSide={d.approachSide} seed={d.index} />
       ))}
-      <DirectorDesk layout={layout} reports={reports} />
+      <StaticBake key={Math.min(reports, 12)}>
+        <DirectorDesk layout={layout} reports={reports} roomId={roomId} />
+      </StaticBake>
       <Chair x={layout.director.seat.x} z={layout.director.seat.z} rot={0} turn={0} color={shade(theme.accent2, -0.05)} roomId={roomId} deskIndex={-1} big approachSide={layout.director.approachSide} seed={99} />
 
       {/* the office cats */}

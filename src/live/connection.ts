@@ -7,6 +7,26 @@ export function connectLive(): () => void {
   let es: EventSource | null = null;
   let closed = false;
 
+  // events are applied in one store update per frame; rAF is paused in hidden tabs, so a timeout flushes there too
+  let queue: MonitorEvent[] = [];
+  let raf = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const flush = () => {
+    cancelAnimationFrame(raf);
+    clearTimeout(timer);
+    raf = 0;
+    timer = undefined;
+    if (!queue.length) return;
+    const list = queue;
+    queue = [];
+    useStore.getState().applyEvents(list);
+  };
+  const schedule = () => {
+    if (raf || timer !== undefined) return;
+    raf = requestAnimationFrame(flush);
+    timer = setTimeout(flush, 100);
+  };
+
   const open = () => {
     if (closed) return;
     es = new EventSource('/api/events');
@@ -18,15 +38,11 @@ export function connectLive(): () => void {
       } catch {
         return;
       }
-      const s = useStore.getState();
-      if (ev.type === 'hello') {
-        s.beginSync();
-        s.setConnection('live', ev.sources ?? { claude: ev.claudeDir });
-      }
-      s.applyEvent(ev, false);
-      if (ev.type === 'ready') s.endSync();
+      queue.push(ev);
+      schedule();
     };
     es.onerror = () => {
+      flush();
       useStore.getState().setConnection('offline');
       // EventSource reconnects on its own; when the server is gone for good it keeps retrying quietly
     };
@@ -37,5 +53,6 @@ export function connectLive(): () => void {
   return () => {
     closed = true;
     es?.close();
+    flush();
   };
 }

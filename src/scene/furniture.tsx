@@ -11,8 +11,10 @@ import { G, M, MB, shade } from './kit';
 import { textTexture } from './textures';
 import { StaticBake } from './StaticBake';
 import { GLOW, glowMat } from './glow';
+import { useBaked } from './bake';
+import { DESK_Y, SEAT_LIFT } from '../sim/actor';
 
-export const DESK_TOP = 0.74;
+export const DESK_TOP = DESK_Y;
 
 type V3 = [number, number, number];
 
@@ -230,7 +232,7 @@ export function Chair({ x, z, rot, turn, color, roomId, deskIndex, big = false, 
 }) {
   const pullG = useRef<THREE.Group>(null);
   const sw = useRef<THREE.Group>(null);
-  const seatH = big ? 0.46 : 0.36;
+  const seatH = (big ? 0.46 : 0.36) + SEAT_LIFT;
   const dark = M('#4b4f63', { rough: 0.5 });
   const lat = useMemo(() => rot2(1, 0, rot), [rot]);
   const state = useRef({ pull: 0, turn });
@@ -267,18 +269,18 @@ export function Chair({ x, z, rot, turn, color, roomId, deskIndex, big = false, 
         <group ref={sw} rotation={[0, rot + turn, 0]}>
           <StaticBake>
           <RB size={[w, big ? 0.13 : 0.09, big ? 0.66 : 0.52]} pos={[0, seatH, 0]} color={color} r={0.04} rough={0.6} />
-          <RB size={[w - 0.04, big ? 0.95 : 0.5, 0.1]} pos={[0, big ? 0.95 : 0.66, big ? -0.3 : -0.25]} rot={[-0.1, 0, 0]} color={color} r={0.05} rough={0.6} />
+          <RB size={[w - 0.04, big ? 0.95 : 0.5, 0.1]} pos={[0, (big ? 0.95 : 0.66) + SEAT_LIFT, big ? -0.3 : -0.25]} rot={[-0.1, 0, 0]} color={color} r={0.05} rough={0.6} />
           {big ? (
             <>
-              <RB size={[0.4, 0.22, 0.1]} pos={[0, 1.5, -0.35]} rot={[-0.1, 0, 0]} color={shade(color, -0.04)} r={0.05} />
+              <RB size={[0.4, 0.22, 0.1]} pos={[0, 1.5 + SEAT_LIFT, -0.35]} rot={[-0.1, 0, 0]} color={shade(color, -0.04)} r={0.05} />
               {[-1, 1].map((s) => (
-                <RB key={s} size={[0.07, 0.07, 0.5]} pos={[s * (w / 2 + 0.03), 0.68, -0.03]} color={shade(color, -0.08)} r={0.03} />
+                <RB key={s} size={[0.07, 0.07, 0.5]} pos={[s * (w / 2 + 0.03), 0.68 + SEAT_LIFT, -0.03]} color={shade(color, -0.08)} r={0.03} />
               ))}
               {[-1, 1].map((s) => (
-                <RB key={s} size={[0.06, 0.24, 0.06]} pos={[s * (w / 2 + 0.03), 0.55, 0.15]} color="#4b4f63" r={0.02} />
+                <RB key={s} size={[0.06, 0.24, 0.06]} pos={[s * (w / 2 + 0.03), 0.55 + SEAT_LIFT, 0.15]} color="#4b4f63" r={0.02} />
               ))}
-              <Ms geo={G.sphere(0.028, 8, 6)} mat={M('#ffd166', { metal: 0.5, rough: 0.3 })} pos={[-0.22, 1.3, -0.25]} cast={false} />
-              <Ms geo={G.sphere(0.028, 8, 6)} mat={M('#ffd166', { metal: 0.5, rough: 0.3 })} pos={[0.22, 1.3, -0.25]} cast={false} />
+              <Ms geo={G.sphere(0.028, 8, 6)} mat={M('#ffd166', { metal: 0.5, rough: 0.3 })} pos={[-0.22, 1.3 + SEAT_LIFT, -0.25]} cast={false} />
+              <Ms geo={G.sphere(0.028, 8, 6)} mat={M('#ffd166', { metal: 0.5, rough: 0.3 })} pos={[0.22, 1.3 + SEAT_LIFT, -0.25]} cast={false} />
             </>
           ) : null}
           <Ms geo={G.cyl(0.04, 0.04, seatH - 0.1, 10)} mat={dark} pos={[0, (seatH - 0.1) / 2 + 0.06, 0]} />
@@ -299,7 +301,37 @@ export function Chair({ x, z, rot, turn, color, roomId, deskIndex, big = false, 
 }
 
 // ------------------------------------------------------------------------ director desk
-export function DirectorDesk({ layout, reports }: { layout: RoomLayout; reports: number }) {
+/** The landline on the director's desk: base and cradle are static, the handset lifts off while the director holds it (a call from the user). */
+function DirectorPhone({ roomId }: { roomId: string }) {
+  const handset = useRef<THREE.Group>(null);
+  useBaked(handset);
+  useFrame(() => {
+    const g = handset.current;
+    if (!g || !frame.visibleRooms.has(roomId)) return;
+    const k = roomRuntime.get(roomId)?.directorKey;
+    const s = k ? sims.get(k) : undefined;
+    const shown = !(s && s.handsetUp && s.onStage);
+    if (g.visible !== shown) g.visible = shown;
+  });
+  return (
+    <group>
+      <RB size={[0.15, 0.03, 0.26]} pos={[0, 0.015, 0]} color="#3a3d50" r={0.012} />
+      <RB size={[0.09, 0.012, 0.05]} pos={[0.01, 0.034, 0.08]} color="#9fe8c1" r={0.005} cast={false} />
+      <RB size={[0.07, 0.008, 0.12]} pos={[0.0, 0.034, -0.05]} color="#2a2c3b" r={0.004} cast={false} />
+      {/* cradle prongs */}
+      <RB size={[0.014, 0.05, 0.03]} pos={[-0.09, 0.045, 0.085]} color="#2a2c3b" r={0.005} cast={false} />
+      <RB size={[0.014, 0.05, 0.03]} pos={[-0.09, 0.045, -0.085]} color="#2a2c3b" r={0.005} cast={false} />
+      {/* the handset rests on the cradle */}
+      <group ref={handset} position={[-0.09, 0.075, 0]} userData={{ dynamic: true }}>
+        <RB size={[0.034, 0.03, 0.17]} color="#2f3244" r={0.012} />
+        <RB size={[0.05, 0.036, 0.055]} pos={[0, -0.004, 0.09]} color="#2f3244" r={0.014} />
+        <RB size={[0.05, 0.036, 0.055]} pos={[0, -0.004, -0.09]} color="#2f3244" r={0.014} />
+      </group>
+    </group>
+  );
+}
+
+export function DirectorDesk({ layout, reports, roomId }: { layout: RoomLayout; reports: number; roomId: string }) {
   const { theme, director } = layout;
   const wood = shade(theme.desk, -0.14);
   const gold = '#ffd166';
@@ -359,8 +391,8 @@ export function DirectorDesk({ layout, reports }: { layout: RoomLayout; reports:
       <group position={[-0.45, DESK_TOP + 0.04, 0.32]}>
         <DeskItem kind="pencils" theme={theme} seed={4} />
       </group>
-      <group position={[-0.55, DESK_TOP + 0.04, -0.33]} rotation={[0, 0.5, 0]}>
-        <DeskItem kind="phone" theme={theme} seed={3} />
+      <group position={[-0.55, DESK_TOP + 0.02, -0.33]} rotation={[0, 0.5, 0]}>
+        <DirectorPhone roomId={roomId} />
       </group>
       {/* report tray + pile */}
       <group position={[0.95, DESK_TOP + 0.02, 0.1]}>

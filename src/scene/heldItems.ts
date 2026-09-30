@@ -22,9 +22,37 @@ export interface HeldItems {
   /** puffs of steam over the pan (room space) */
   steam: THREE.Mesh[];
   fx: THREE.Group;
+  /** a delivery box carried in both arms */
+  parcel: THREE.Group;
+  /** a cigarette with a glowing tip */
+  cig: THREE.Group;
+  /** puffs of smoke at the mouth (room space, pooled) */
+  smoke: THREE.Mesh[];
+  /** a phone (scrolling on the sofa / at the ear during a call); `phoneTilt` turns it, `phoneScreen` swaps between shared glow materials */
+  phone: THREE.Group;
+  phoneTilt: THREE.Group;
+  phoneScreen: THREE.Mesh;
+  /** the handset of the desk phone (at the ear during a call): earpiece up, mouthpiece down, pads towards the head */
+  handset: THREE.Group;
 }
 
+/** the screen glow flickers between these shared materials (no per-frame allocation) */
+export const PHONE_GLOWS = [MB('#9fd6ff'), MB('#bfe4ff'), MB('#8fc4f5'), MB('#d6efff')];
+const _m = new THREE.Matrix4();
+/** orientation of the phone (screen = local +y, top = local +z): held in front of the chest tilted towards the face / upright at the right ear with the screen towards the head */
+export const Q_PHONE_CHEST = new THREE.Quaternion().setFromRotationMatrix(_m.makeBasis(new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0.7071, -0.7071), new THREE.Vector3(0, 0.7071, 0.7071)));
+export const Q_PHONE_EAR = new THREE.Quaternion().setFromRotationMatrix(_m.makeBasis(new THREE.Vector3(0, 0, -1), new THREE.Vector3(-1, 0, 0), new THREE.Vector3(0, 1, 0)));
+
 const DROPS = 9;
+
+/** cardboard box with a tape band (the delivery on the porch and the one in the arms) */
+export function buildParcelBox(): THREE.Group {
+  const box = group();
+  box.add(mesh(G.rbox(0.36, 0.24, 0.28, 0.012), M('#c89b64', { rough: 0.85 }), 0, 0, 0));
+  box.add(mesh(G.box(0.06, 0.247, 0.287), M('#ecdcae', { rough: 0.6 }), 0, 0, 0, { cast: false }));
+  box.add(mesh(G.box(0.09, 0.06, 0.004), M('#ffffff', { rough: 0.7 }), 0.09, -0.02, 0.142, { cast: false }));
+  return box;
+}
 
 export function buildHeldItems(accent: string): HeldItems {
   const white = M('#ffffff', { rough: 0.5 });
@@ -99,5 +127,47 @@ export function buildHeldItems(accent: string): HeldItems {
     fx.add(s);
     steam.push(s);
   }
-  return { cup, book, bookLeft, bookRight, can, bowl, spout, stream, drops, steam, fx };
+  // delivery box
+  const parcel = buildParcelBox();
+  parcel.visible = false;
+
+  // cigarette: slanted forward and up, a glowing tip at the far end
+  const cig = group();
+  const cigInner = group();
+  cigInner.rotation.x = 1.05;
+  cigInner.add(mesh(G.cyl(0.011, 0.011, 0.15, 6), white, 0, 0, 0, { cast: false }));
+  cigInner.add(mesh(G.cyl(0.0115, 0.0115, 0.04, 6), M('#e0903c', { rough: 0.6 }), 0, -0.055, 0, { cast: false }));
+  cigInner.add(mesh(G.sphere(0.014, 6, 5), MB('#ff6a2a'), 0, 0.078, 0, { cast: false }));
+  cig.add(cigInner);
+  cig.visible = false;
+
+  // smoke puffs (pooled, positioned every frame while somebody smokes)
+  const smokeMat = new THREE.MeshBasicMaterial({ color: '#e6eaf0', transparent: true, opacity: 0.4, depthWrite: false });
+  const smoke: THREE.Mesh[] = [];
+  for (let i = 0; i < 4; i++) {
+    const s = new THREE.Mesh(G.sphere(0.05, 8, 6), smokeMat.clone());
+    s.visible = false;
+    fx.add(s);
+    smoke.push(s);
+  }
+  // phone: dark body and a glowing screen on the top face
+  const phone = group();
+  const phoneTilt = group();
+  phoneTilt.add(mesh(G.rbox(0.07, 0.012, 0.14, 0.008), M('#23252f', { rough: 0.4, metal: 0.3 }), 0, 0, 0, { cast: false }));
+  const phoneScreen = mesh(G.box(0.06, 0.002, 0.125), PHONE_GLOWS[0], 0, 0.0068, 0, { cast: false });
+  phoneTilt.add(phoneScreen);
+  phoneTilt.quaternion.copy(Q_PHONE_CHEST);
+  phone.add(phoneTilt);
+  phone.visible = false;
+  // desk phone handset: a slim grip bowed away from the head with an earpiece and a mouthpiece pad at its ends (local +y faces the head, +z = earpiece end)
+  const handset = group();
+  const handsetTilt = group();
+  const hsBody = M('#2f3244', { rough: 0.45, metal: 0.2 });
+  handsetTilt.add(mesh(G.rbox(0.03, 0.028, 0.15, 0.011), hsBody, 0, -0.012, 0, { cast: false }));
+  handsetTilt.add(mesh(G.rbox(0.05, 0.03, 0.05, 0.014), hsBody, 0, 0.004, 0.085, { cast: false }));
+  handsetTilt.add(mesh(G.rbox(0.05, 0.03, 0.05, 0.014), hsBody, 0, 0.004, -0.085, { cast: false }));
+  handsetTilt.quaternion.copy(Q_PHONE_EAR);
+  handset.add(handsetTilt);
+  handset.visible = false;
+  return { cup, book, bookLeft, bookRight, can, bowl, spout, stream, drops, steam, fx, parcel, cig, smoke, phone, phoneTilt, phoneScreen, handset };
 }

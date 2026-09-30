@@ -5,7 +5,7 @@ import { walkMatrices } from './matrixWalk';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 /**
- * Bakes all static meshes below it into a few merged meshes (one per material / shadow flag).
+ * Bakes all static meshes below it into a few merged meshes (one per material).
  * A room has thousands of tiny primitives; merging turns thousands of draw calls into a few dozen.
  * Anything that moves must be flagged with `userData={{ dynamic: true }}` and is left untouched.
  */
@@ -38,9 +38,11 @@ export function StaticBake({ children }: { children: ReactNode }) {
           tmp.multiplyMatrices(inv, m.matrixWorld);
           geo.applyMatrix4(tmp);
           if (tmp.determinant() < 0) flipWinding(geo);
-          const key = `${mat.uuid}|${m.castShadow ? 1 : 0}|${m.receiveShadow ? 1 : 0}`;
-          let b = buckets.get(key);
-          if (!b) buckets.set(key, (b = { mat, cast: m.castShadow, recv: m.receiveShadow, geos: [] }));
+          // shadows are off, so the flags stay out of the key: one merged mesh per material
+          let b = buckets.get(mat.uuid);
+          if (!b) buckets.set(mat.uuid, (b = { mat, cast: false, recv: false, geos: [] }));
+          b.cast ||= m.castShadow;
+          b.recv ||= m.receiveShadow;
           b.geos.push(geo);
           sources.push(m);
         }

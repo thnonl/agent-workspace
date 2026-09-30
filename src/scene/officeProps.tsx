@@ -4,8 +4,10 @@ import { useFrame } from '@react-three/fiber';
 import type { Prop } from '../world/layout';
 import type { RoomTheme } from '../world/palettes';
 import { Rng } from '../util/rng';
+import { frame } from '../sim/frame';
 import { G, M, MB, shade } from './kit';
 import { DeskItem, Ms, RB } from './furniture';
+import { useBaked } from './bake';
 
 const LED_ON = [new THREE.Color('#5ee08a'), new THREE.Color('#5aa8ff'), new THREE.Color('#ffb347')];
 const LED_OFF = new THREE.Color('#2a3140');
@@ -13,6 +15,7 @@ const LED_OFF = new THREE.Color('#2a3140');
 interface PP {
   p: Prop;
   theme: RoomTheme;
+  roomId?: string;
 }
 
 export function FileCabinet({ p, theme }: PP) {
@@ -150,10 +153,13 @@ export function Boxes({ p }: PP) {
   );
 }
 
-export function ServerRack({ p }: PP) {
+export function ServerRack({ p, roomId }: PP) {
+  const rackRef = useRef<THREE.Group>(null);
+  useBaked(rackRef);
   const leds = useMemo(() => Array.from({ length: 14 }, (_, i) => new THREE.MeshBasicMaterial({ color: LED_ON[i % 3] })), []);
   const lit = useRef<boolean[]>([]);
   useFrame((s) => {
+    if (roomId !== undefined && !frame.visibleRooms.has(roomId)) return;
     const t = s.clock.elapsedTime;
     leds.forEach((m, i) => {
       const on = Math.sin(t * (1.5 + (i % 5) * 0.7) + i * 1.9) > -0.2;
@@ -164,7 +170,7 @@ export function ServerRack({ p }: PP) {
     });
   });
   return (
-    <group userData={{ dynamic: true }}>
+    <group ref={rackRef} userData={{ dynamic: true }}>
       <RB size={[0.7, 1.7, 0.78]} pos={[0, 0.85, 0]} color="#2a2d3d" r={0.03} rough={0.5} />
       {Array.from({ length: 8 }).map((_, i) => (
         <group key={i}>

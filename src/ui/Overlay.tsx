@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { orderedRooms, useStore } from '../store';
 import { themeFor } from '../world/palettes';
@@ -44,23 +44,30 @@ interface RoomStatus {
 
 const NO_STATUS: RoomStatus = { working: false, people: 0 };
 
-export function useRoomStatus() {
-  return useStore(
-    useShallow((s) => {
-      const out: Record<string, RoomStatus> = {};
-      for (const id of s.visibleOrder) out[id] = { ...NO_STATUS, working: !!s.rooms[id]?.mainActive };
-      for (const t of Object.values(s.tasks)) {
-        const r = out[t.sessionId];
-        if (!r) continue;
-        r.working = true;
-      }
-      for (const p of Object.values(s.people)) {
-        const r = out[p.sessionId];
-        if (r && p.present) r.people++;
-      }
-      return JSON.stringify(out);
-    }),
-  );
+export function useRoomStatus(): Record<string, RoomStatus> {
+  // the selector returns a primitive key so the store only re-renders when a status really changed; parsed once per change
+  const key = useStore((s) => {
+    const working: Record<string, boolean> = {};
+    const count: Record<string, number> = {};
+    for (const id of s.visibleOrder) {
+      working[id] = !!s.rooms[id]?.mainActive;
+      count[id] = 0;
+    }
+    for (const t of Object.values(s.tasks)) if (t.sessionId in working) working[t.sessionId] = true;
+    for (const p of Object.values(s.people)) if (p.present && p.sessionId in count) count[p.sessionId]++;
+    let k = '';
+    for (const id of s.visibleOrder) k += `${id}\t${working[id] ? 1 : 0}\t${count[id]}\n`;
+    return k;
+  });
+  return useMemo(() => {
+    const out: Record<string, RoomStatus> = {};
+    for (const line of key.split('\n')) {
+      if (!line) continue;
+      const [id, w, n] = line.split('\t');
+      out[id] = { ...NO_STATUS, working: w === '1', people: Number(n) };
+    }
+    return out;
+  }, [key]);
 }
 
 const TIME_CYCLE = ['auto', 'day', 'dusk', 'night'] as const;
@@ -70,7 +77,6 @@ function timeIcon(h: number) {
 
 export function TopBar() {
   const connection = useStore((s) => s.connection);
-  const sources = useStore((s) => s.sources);
   const demoOn = useStore((s) => s.demoOn);
   const autoDemo = useStore((s) => s.autoDemo);
   const liveRooms = useStore((s) => s.visibleOrder.filter((id) => !s.rooms[id].demo).length);
@@ -84,7 +90,8 @@ export function TopBar() {
   const muted = useStore((s) => s.muted);
   const setMuted = useStore((s) => s.setMuted);
   const nameCount = useStore((s) => s.names.length);
-  const watched = watchedSources(sources);
+  const showSwitcher = useStore((s) => s.showSwitcher);
+  const setShowSwitcher = useStore((s) => s.setShowSwitcher);
 
   return (
     <header className="topbar">
@@ -96,11 +103,10 @@ export function TopBar() {
         </div>
       </div>
       <div className="topbar-right">
-        <span className={`pill pill-${connection}`}>
+        <button type="button" className={`pill pill-${connection}${showSwitcher ? '' : ' pill-collapsed'}`} onClick={() => setShowSwitcher(!showSwitcher)} aria-pressed={showSwitcher} title={showSwitcher ? 'Hide the list of sessions' : 'Show the list of sessions'}>
           <i className="pill-dot" />
           {connection === 'live' ? (liveRooms ? `Live · ${liveRooms} session${liveRooms > 1 ? 's' : ''}` : 'Live · idle') : connection === 'connecting' ? 'Connecting…' : 'Monitor offline'}
-          {connection === 'live' && watched.length ? <em>{watched.map((w) => PROVIDER_NAME[w.provider].split(' ')[0]).join(' · ')}</em> : null}
-        </span>
+        </button>
         {SHOW_DEMO_BUTTON ? (
           <button className={`btn${demoOn ? ' btn-on' : ''}`} onClick={() => setDemo(!demoOn)} title="Simulated agent sessions">
             {demoOn ? '⏸ Demo' : '▶ Demo'}
@@ -139,7 +145,8 @@ export function TopBar() {
 function shortTitle(r: { id: string; title: string; project: string }): string {
   const t = r.title.replace(/\s+/g, ' ').trim();
   if (!t || t === r.id.slice(0, 8) || t === r.project) return '';
-  return t.length > 26 ? `${t.slice(0, 25).trimEnd()}…` : t;
+  // the card cuts the line to its own width (text-overflow); this only keeps very long prompts out of the DOM
+  return t.length > 120 ? `${t.slice(0, 119).trimEnd()}…` : t;
 }
 
 const clockText = (ms: number) => {
@@ -168,7 +175,7 @@ function taskTitle(t: { label: string; source: 'sub' | 'main'; first: string; st
 }
 
 const FEED_ICON: Record<ActivityEntry['kind'], string> = {
-  prompt: '📥', thinking: '💭', text: '💬', tool: '🔧', task: '🧩', done: '✅', report: '📄', system: '🏢', error: '⚠️',
+  prompt: '📥', thinking: '💭', text: '💬', tool: '🔧', task: '🧩', done: '✅', report: '📄', system: '🏢', error: '⚠️', ask: '❓',
 };
 const FEED_TOOL_ICON: Record<string, string> = {
   Read: '📖', Edit: '✏️', MultiEdit: '✏️', NotebookEdit: '✏️', Write: '📝', Bash: '⌨️', PowerShell: '⌨️', Grep: '🔍', Glob: '🔍',
@@ -176,7 +183,7 @@ const FEED_TOOL_ICON: Record<string, string> = {
 };
 
 /** Everything that happened in the session – requests, thoughts, messages, tool calls, sub-agents, reports – newest first. */
-function ActivityFeed({ roomId }: { roomId: string }) {
+const ActivityFeed = memo(function ActivityFeed({ roomId }: { roomId: string }) {
   const entries = useStore((s) => s.activity[roomId]);
   const [limit, setLimit] = useState(80);
   if (!entries?.length) return <p className="muted">Nothing has happened yet.</p>;
@@ -199,7 +206,7 @@ function ActivityFeed({ roomId }: { roomId: string }) {
       ) : null}
     </>
   );
-}
+});
 
 /** Full list of the tasks of a room (running ones first), of the reports that were handed over, or of everything that happened. */
 function TaskList({ roomId }: { roomId: string }) {
@@ -209,10 +216,13 @@ function TaskList({ roomId }: { roomId: string }) {
   const tasks = useStore((s) => s.tasks);
   const people = useStore((s) => s.people);
   const [now, setNow] = useState(() => Date.now());
+  const ticking = tab === 'tasks' || tab === 'reports';
   useEffect(() => {
+    if (!ticking) return;
+    setNow(Date.now());
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
-  }, []);
+  }, [ticking]);
   const open = useMemo(
     () => Object.values(tasks).filter((t) => t.sessionId === roomId).sort((a, b) => b.startedAt - a.startedAt),
     [tasks, roomId],
@@ -287,7 +297,8 @@ export function RoomHeader() {
   const listTab = useStore((s) => s.listTab);
   const toggleList = useStore((s) => s.toggleList);
   const openSummary = useStore((s) => s.openSummary);
-  const status = JSON.parse(useRoomStatus()) as Record<string, RoomStatus>;
+  const status = useRoomStatus();
+  const ask = useStore((s) => (s.activeRoomId ? s.asks[s.activeRoomId] : undefined));
   if (!room) return null;
   const st = status[room.id] ?? NO_STATUS;
   const theme = themeFor(room.themeIndex);
@@ -302,6 +313,7 @@ export function RoomHeader() {
       <div className="room-header-stats">
         <span className={st.working ? 'on' : ''}>{st.working ? '💼 Working' : '☕ Idle'}</span>
         <span>👥 {st.people} in the office</span>
+        {ask ? <span className="room-header-ask" title={ask.full ?? ask.text}>❓ Needs your input</span> : null}
         <button className={`stat-btn${listTab === 'tasks' ? ' open' : ''}`} onClick={() => toggleList('tasks')} aria-pressed={listTab === 'tasks'} title="Tasks of this session (sub-agent runs and the main agent's own work) – click for the full list">
           🧩 Tasks
         </button>
@@ -325,13 +337,15 @@ export function RoomSwitcher() {
   const setActive = useStore((s) => s.setActiveRoom);
   const releaseAll = useStore((s) => s.releaseAllRooms);
   const unseen = useStore((s) => s.unseen);
-  const status = JSON.parse(useRoomStatus()) as Record<string, RoomStatus>;
+  const asks = useStore((s) => s.asks);
+  const show = useStore((s) => s.showSwitcher);
+  const status = useRoomStatus();
   const listRef = useRef<HTMLDivElement>(null);
   // the room that is opened stays in view when the list scrolls
   useEffect(() => {
     listRef.current?.querySelector('.room-card.active')?.scrollIntoView({ block: 'nearest' });
   }, [active]);
-  if (!order.length) return null;
+  if (!order.length || !show) return null;
   return (
     <nav className="switcher">
       <div className="switcher-list" ref={listRef}>
@@ -351,7 +365,7 @@ export function RoomSwitcher() {
                 <small>{st.working ? 'working' : 'idle'}</small>
               </span>
               <span className={`room-card-status${st.working ? ' on' : ''}`} />
-              {unseen[id] ? <i className="room-card-alert" title="This session is done – click to read its summary" /> : null}
+              {asks[id] ? <i className="room-card-ask" title={`Waiting for your answer: ${asks[id].text}`}>❓</i> : unseen[id] ? <i className="room-card-alert" title="This session is done – click to read its summary" /> : null}
             </button>
           );
         })}
@@ -513,10 +527,12 @@ export function AgentPanel() {
   const room = useStore((s) => (person ? s.rooms[person.sessionId] : null));
   const select = useStore((s) => s.select);
   const [, tick] = useState(0);
+  const selected = !!key;
   useEffect(() => {
+    if (!selected) return;
     const t = setInterval(() => tick((n) => n + 1), 400);
     return () => clearInterval(t);
-  }, []);
+  }, [selected]);
   const entries = useMemo<Speech[]>(() => (log ? [...log].reverse().slice(0, 14) : []), [log]);
   const cat = key ? cats.get(key) : undefined;
   if (key && cat && !person) {
@@ -653,7 +669,7 @@ export function Help() {
           <li>🔊 Soft sound effects (a door, key clicks, a pop for every speech bubble, a chime when a session is finished, sizzling noodles…) only for the room on screen – no music. The speaker button (or <kbd>M</kbd>) mutes them; the choice is saved in this browser.</li>
           <li>💼 A new task never sends anybody back to their desk: whoever is on a break works on it right where they stand (or sit) and goes on with the break afterwards – after a report to the director they walk back to what they were doing. Somebody with nothing to do shows no speech bubble, only their name tag. Chats and greetings are spoken (round speech bubbles), what they plan to do is a thought cloud.</li>
           <li>👋 Everybody who walks in greets the room first; the job they came for shows up five seconds later.</li>
-          <li>☕ Whoever has nothing to do takes a break: strolls around, sits on the sofa, watches a colleague work, looks out of the window, pets a cat, gets a drink, reads a book, watches the fish, washes their face, waters the plants, cooks noodles at the stove and eats them on the spot, or chats with a colleague at their desk. Breaks are long and far apart, so nobody is busy with one thing after another. The thought bubble goes away the moment the break is over.</li>
+          <li>☕ Whoever has nothing to do takes a break: strolls around, sits on the sofa, watches a colleague work, looks out of the window, pets a cat, gets a drink, reads a book, watches the fish, washes their face, waters the plants, cooks noodles at the stove and eats them on the spot, boxes a punching dummy, lifts dumbbells, or chats with a colleague at their desk. Now and then a delivery rings the bell and somebody fetches the parcel from the porch; some take a nap or smoke a cigarette at the window. Breaks are long and far apart, so nobody is busy with one thing after another. The thought bubble goes away the moment the break is over.</li>
           <li>🧩 The header buttons Tasks / Reports / Activity open the full list – the Activity tab is open by default (the activity feed is everything that happened, newest first), click again to close it. 📜 Summary always shows the last summary of the session on a sheet of paper.</li>
           <li>🗂️ The room buttons in the column on the right (working sessions first, then the most recently updated; it scrolls when there are many) keep every session until you <b>release</b> it (from the summary paper: Release room, or when you close the paper). Releasing only takes the room off the list – continue the session in its agent and the room opens again. A session that has stood still for an hour is released automatically.</li>
           <li>🔵 When a session has finished all its work the director reads the summary aloud in their speech bubble (two lines at a time) and only goes home after the last line. A blinking blue dot in the top-left corner of the room button means the summary is still unread. Whenever you step into a room whose session is done, its summary lies on the screen as a sheet of paper (📜 Summary in the header brings it back). The dot keeps blinking until you release the room or the session starts working again.</li>

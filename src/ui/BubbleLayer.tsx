@@ -1,13 +1,12 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { addAfterEffect } from '@react-three/fiber';
-import * as THREE from 'three';
 import { useShallow } from 'zustand/react/shallow';
 import { useStore } from '../store';
 import { themeFor } from '../world/palettes';
 import { sfx } from '../audio';
 import type { Speech } from '../types';
-import { anchors, holdTalk, sims, idleDismissedAt, nextSpeech, peekSpeech, queueLength, view } from '../sim/registry';
+import { afterRender } from '../sim/frame';
+import { anchors, holdTalk, sims, idleDismissedAt, nextSpeech, peekSpeech, queueLength, view, type Projected } from '../sim/registry';
 
 const TOOL_ICONS: Record<string, string> = {
   Read: '📖', Edit: '✏️', MultiEdit: '✏️', NotebookEdit: '✏️', Write: '📝', Bash: '⌨️', PowerShell: '⌨️', Grep: '🔍', Glob: '🔍',
@@ -16,7 +15,8 @@ const TOOL_ICONS: Record<string, string> = {
 
 /** icons of the "what I am doing" bubbles (Speech.tool) */
 const IDLE_ICONS: Record<string, string> = {
-  read: '📖', drink: '🥤', coffee: '☕', fish: '🐟', wash: '🧼', water: '🪴', sofa: '🛋️', pet: '🐱', window: '🪟', walk: '🚶', watch: '👀', wait: '⏳', home: '👋', wave: '👋', cook: '🍳', eat: '🍜', chat: '💬', talk: '💬',
+  parcel: '📦', smoke: '🚬', sleep: '💤', box: '🥊', lift: '🏋️',
+  read: '📖', drink: '🥤', coffee: '☕', fish: '🐟', wash: '🧼', water: '🪴', sofa: '🛋️', pet: '🐱', window: '🪟', walk: '🚶', watch: '👀', phone: '📱', wait: '⏳', home: '👋', wave: '👋', cook: '🍳', eat: '🍜', chat: '💬', talk: '💬',
 };
 
 /** a bubble stays until something new is said; after this long it shrinks to save space */
@@ -27,7 +27,7 @@ function iconFor(s: Speech): string {
     case 'idle': return IDLE_ICONS[s.tool ?? ''] ?? '💭';
     case 'thinking': return '💭';
     case 'text': return '💬';
-    case 'task': return '📥';
+    case 'task': return s.tool === 'call' ? '☎️' : s.tool === 'email' ? '✉️' : '📥';
     case 'done': return s.tool === 'failed' ? '😵' : '🎉';
     case 'error': return '⚠️';
     default:
@@ -38,7 +38,7 @@ function iconFor(s: Speech): string {
 
 /** fill colour of every bubble kind (the tail lives in another layer and needs it too) */
 const BUBBLE_BG: Record<string, string> = {
-  thinking: '#f4f0ff', text: '#ffffff', tool: '#262a44', task: '#fff5c2', done: '#e3fbea', error: '#ffffff',
+  thinking: '#f4f0ff', text: '#ffffff', tool: '#262a44', task: '#fff5c2', done: '#e3fbea', error: '#ffffff', ask: '#fff7dc',
 };
 
 interface Item {
@@ -49,13 +49,15 @@ interface Item {
   tick: (show: boolean, now: number, live: boolean) => void;
   /** size of the bubble box, kept up to date by a ResizeObserver (reading offsetWidth every frame forces a layout) */
   size: { w: number; h: number };
+  /** a question for the user is pending: drawn above every other bubble */
+  top?: boolean;
 }
 /** "idle" bubbles that are said out loud rather than thought */
 const SPOKEN = new Set(['talk', 'wave', 'home', 'eat']);
 /** how long the last bubble of somebody with nothing to do stays up */
 const QUIET_MS = 4500;
 const items = new Map<string, Item>();
-const v3 = new THREE.Vector3();
+const proj: Projected = { x: 0, y: 0, z: 0, dist: 0 };
 
 interface Placed {
   key: string;
@@ -77,8 +79,7 @@ function setStyle(el: HTMLElement, prop: 'visibility' | 'transform' | 'zIndex', 
  * are drawn on top when two overlap).
  */
 function layoutLoop() {
-  const cam = view.camera;
-  if (!cam) return;
+  if (!view.project) return;
   const now = performance.now();
   const list: Placed[] = [];
   const hidden: string[] = [];
@@ -89,12 +90,11 @@ function layoutLoop() {
     let sy = 0;
     let dist = 0;
     if (show && a) {
-      v3.set(a.x, a.y, a.z);
-      dist = cam.position.distanceTo(v3);
-      v3.project(cam);
-      show = v3.z < 1 && Math.abs(v3.x) < 1.2 && Math.abs(v3.y) < 1.25;
-      sx = (v3.x * 0.5 + 0.5) * view.width;
-      sy = (-v3.y * 0.5 + 0.5) * view.height;
+      view.project(a.x, a.y, a.z, proj);
+      dist = proj.dist;
+      show = proj.z < 1 && Math.abs(proj.x) < 1.2 && Math.abs(proj.y) < 1.25;
+      sx = (proj.x * 0.5 + 0.5) * view.width;
+      sy = (-proj.y * 0.5 + 0.5) * view.height;
     }
     it.tick(show, now, !!a?.live);
     if (!show) {
@@ -116,7 +116,7 @@ function layoutLoop() {
     const it = items.get(p.key)!;
     setStyle(it.root, 'visibility', 'visible');
     setStyle(it.root, 'transform', `translate3d(${(p.sx - p.w / 2).toFixed(1)}px, ${(p.sy - p.h - GAP).toFixed(1)}px, 0)`);
-    setStyle(it.root, 'zIndex', String(9000 - i));
+    setStyle(it.root, 'zIndex', String(9000 - i + (it.top ? 5000 : 0)));
     const tail = it.tail();
     if (tail) {
       // the tail starts at the bottom centre of the bubble
@@ -129,15 +129,23 @@ function layoutLoop() {
 // The layout runs right after the 3D scene has drawn a frame: the camera it projects with is then exactly the
 // one on screen, and a calm (idle) scene costs no extra work.
 let started = 0;
-let stopEffect: (() => void) | null = null;
 function startLoop() {
   if (started++ > 0) return;
-  stopEffect = addAfterEffect(() => layoutLoop());
+  afterRender.add(layoutLoop);
 }
 function stopLoop() {
   if (--started > 0) return;
-  stopEffect?.();
-  stopEffect = null;
+  afterRender.delete(layoutLoop);
+}
+
+/** The director's crown. Drawn, not an emoji: an emoji sits at a different height in every emoji font, a drawing is centred exactly. */
+function Crown() {
+  return (
+    <svg className="crown" viewBox="0 0 24 24" aria-label="director" role="img">
+      <path d="M3 19 2 8l5.5 4.5L12 5l4.5 7.5L22 8l-1 11z" fill="#ffb020" stroke="#c77a00" strokeWidth="1.3" strokeLinejoin="round" />
+      <circle cx="12" cy="14.2" r="1.7" fill="#fff3c4" />
+    </svg>
+  );
 }
 
 /** One speech bubble (or name tag) following a character on screen. */
@@ -152,22 +160,32 @@ const BubbleItem = memo(function BubbleItem({ personKey, tails }: { personKey: s
   const shownAt = useRef(0);
   const settledRef = useRef(false);
 
-  const name = useStore((s) => s.people[personKey]?.name ?? '');
-  const task = useStore((s) => {
-    const p = s.people[personKey];
-    return (p?.taskKey ? s.tasks[p.taskKey]?.label : '') ?? '';
-  });
-  const role = useStore((s) => s.people[personKey]?.role ?? 'staff');
-  const failed = useStore((s) => {
-    const p = s.people[personKey];
-    return (p?.taskKey ? s.tasks[p.taskKey]?.failed : false) ?? false;
-  });
-  const selected = useStore((s) => s.selectedKey === personKey);
-  const themeIndex = useStore((s) => {
-    const p = s.people[personKey];
-    return p ? s.rooms[p.sessionId]?.themeIndex ?? 0 : 0;
-  });
+  const { name, task, role, failed, selected, themeIndex, askRec } = useStore(
+    useShallow((s) => {
+      const p = s.people[personKey];
+      const t = p?.taskKey ? s.tasks[p.taskKey] : undefined;
+      return {
+        name: p?.name ?? '',
+        task: (p?.taskKey ? t?.label : '') ?? '',
+        role: p?.role ?? 'staff',
+        failed: (p?.taskKey ? t?.failed : false) ?? false,
+        selected: s.selectedKey === personKey,
+        themeIndex: p ? s.rooms[p.sessionId]?.themeIndex ?? 0 : 0,
+        askRec: p?.role === 'director' ? s.asks[p.sessionId] : undefined,
+      };
+    }),
+  );
   const accent = role === 'director' ? '#ffb020' : themeFor(themeIndex).accent;
+  // the agent waits for the user's answer: one persistent, highlighted bubble over the director until it is answered (the class is set once, the layout loop only positions it)
+  const asking = !!askRec;
+  useEffect(() => {
+    const it = items.get(personKey);
+    if (it) it.top = asking;
+    return () => {
+      const it2 = items.get(personKey);
+      if (it2) it2.top = false;
+    };
+  }, [personKey, asking]);
 
   useEffect(() => {
     const root = rootRef.current!;
@@ -221,9 +239,20 @@ const BubbleItem = memo(function BubbleItem({ personKey, tails }: { personKey: s
       shownAt.current = now;
       // a soft sound for every new bubble (chat lines babble, tool calls stay silent)
       const roomId = useStore.getState().people[personKey]?.sessionId;
-      if (next.tool === 'talk') sfx('talk', roomId);
+      const sim = sims.get(personKey);
+      if (next.tool === 'call' || next.tool === 'email') {
+        // the user's message arrives as a call on the desk phone (rings, is picked up) or as an email (new-mail chime) with the first chunk; the director is busy with it until the last chunk (and the answer) is shown
+        const fresh = !sim || (sim.msgUntil ?? 0) * 1000 < now || sim.msgVia !== next.tool;
+        sfx(fresh ? (next.tool === 'call' ? 'ring' : 'mail') : 'blip', roomId);
+        if (sim) {
+          sim.msgVia = next.tool;
+          sim.msgUntil = (hideAt.current + 700) / 1000;
+        }
+      } else if (next.tool === 'talk') sfx('talk', roomId);
       else if (next.kind === 'done') sfx('ding', roomId);
       else if (next.kind !== 'tool' && next.tool !== 'wave') sfx('pop', roomId);
+      // the answer to the call / email: the handset stays at the ear (the director stays at the laptop) until it has been read
+      if (next.tool === 'ack' && sim && (sim.msgUntil ?? 0) * 1000 > now) sim.msgUntil = hideAt.current / 1000;
       curRef.current = next;
       settledRef.current = false;
       setSettled(false);
@@ -252,14 +281,15 @@ const BubbleItem = memo(function BubbleItem({ personKey, tails }: { personKey: s
   }, [personKey]);
 
   // what a character plans to do on a break is a thought, drawn like thinking
-  const look = cur ? (cur.kind === 'idle' && !SPOKEN.has(cur.tool ?? '') ? 'thinking' : cur.kind === 'idle' ? 'text' : cur.kind) : '';
+  const look = asking ? 'ask' : cur ? (cur.kind === 'idle' && !SPOKEN.has(cur.tool ?? '') ? 'thinking' : cur.kind === 'idle' ? 'text' : cur.kind) : '';
   const isFail = failed && look === 'done';
-  const tone = { ['--bg' as string]: isFail ? '#ffe6e6' : BUBBLE_BG[look] ?? '#ffffff', ['--accent' as string]: look === 'done' ? (isFail ? '#ff6b6b' : '#35c27d') : accent };
+  const via = cur?.tool === 'call' || cur?.tool === 'email' ? cur.tool : null;
+  const tone = asking ? { ['--bg' as string]: BUBBLE_BG.ask, ['--accent' as string]: '#f59e0b' } : { ['--bg' as string]: isFail ? '#ffe6e6' : via === 'call' ? '#d8f3ff' : via === 'email' ? '#fff8e6' : BUBBLE_BG[look] ?? '#ffffff', ['--accent' as string]: look === 'done' ? (isFail ? '#ff6b6b' : '#35c27d') : via === 'call' ? '#2f9de4' : via === 'email' ? '#e0a020' : accent };
   return (
     <div ref={rootRef} className="bubble-pos" style={{ visibility: 'hidden', ['--accent' as string]: accent }}>
-      {tails && cur
+      {tails && (cur || asking)
         ? createPortal(
-            <div key={cur.id} ref={tailRef} className="bubble-tail-pos" style={{ visibility: 'hidden', ...tone }}>
+            <div key={asking ? `ask${askRec!.since}` : cur!.id} ref={tailRef} className="bubble-tail-pos" style={{ visibility: 'hidden', ...tone }}>
               {look === 'thinking' ? (
                 <>
                   <i className="bubble-puff p1" />
@@ -273,11 +303,22 @@ const BubbleItem = memo(function BubbleItem({ personKey, tails }: { personKey: s
           )
         : null}
       <div className="bubble-anchor">
-        {cur ? (
-          <div key={cur.id} className={`bubble bubble-${look}${cur.hold && cur.kind === 'text' ? ' bubble-talk' : ''}${isFail ? ' bubble-failed' : ''}${settled && !cur.hold ? ' bubble-settled' : ''}`}>
+        {asking ? (
+          <div key={`ask${askRec!.since}`} className="bubble bubble-ask" title={askRec!.full ?? askRec!.text}>
             <div className="bubble-head">
               <span className="bubble-dot" />
-              <span className="bubble-name">{role === 'director' ? '👑 ' : ''}{name}{task && cur.kind !== 'idle' ? <em> · {task}</em> : null}</span>
+              <span className="bubble-name">❓ {name} needs your input</span>
+            </div>
+            <div className="bubble-body">
+              <span className="bubble-icon">❓</span>
+              <span>{askRec!.text}</span>
+            </div>
+          </div>
+        ) : cur ? (
+          <div key={cur.id} className={`bubble bubble-${look}${via ? ` bubble-${via === 'call' ? 'phone' : 'email'}` : ''}${cur.hold && cur.kind === 'text' ? ' bubble-talk' : ''}${isFail ? ' bubble-failed' : ''}${settled && !cur.hold ? ' bubble-settled' : ''}`}>
+            <div className="bubble-head">
+              <span className="bubble-dot" />
+              <span className="bubble-name">{via ? (via === 'call' ? '☎️ You (phone)' : '✉️ Email from You') : <>{role === 'director' ? <Crown /> : null}<span className="nm">{name}</span>{task && cur.kind !== 'idle' ? <em className="nm"> · {task}</em> : null}</>}</span>
             </div>
             <div className={`bubble-body${cur.kind === 'tool' ? ' mono' : ''}`}>
               <span className="bubble-icon">{iconFor(cur)}</span>
@@ -286,7 +327,7 @@ const BubbleItem = memo(function BubbleItem({ personKey, tails }: { personKey: s
           </div>
         ) : (
           <button className={`nametag${selected ? ' selected' : ''}`} onClick={() => useStore.getState().select(personKey)}>
-            {role === 'director' ? '👑 ' : ''}{name}
+            {role === 'director' ? <Crown /> : null}<span className="nm">{name}</span>
           </button>
         )}
       </div>

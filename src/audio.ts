@@ -3,7 +3,8 @@
  * that is on screen. The browser only allows sound after the first click / key press.
  */
 export type Sfx =
-  | 'door' | 'pop' | 'talk' | 'ding' | 'chime' | 'key' | 'paper' | 'water' | 'sip' | 'page' | 'sizzle' | 'bite' | 'meow' | 'blip' | 'pour' | 'clink';
+  | 'door' | 'pop' | 'talk' | 'ding' | 'chime' | 'key' | 'paper' | 'water' | 'sip' | 'page' | 'sizzle' | 'bite' | 'meow' | 'blip' | 'pour' | 'clink'
+  | 'doorbell' | 'inhale' | 'exhale' | 'thud' | 'huff' | 'clank' | 'pickup' | 'swipe' | 'ring' | 'mail' | 'ask';
 
 const MUTE_KEY = 'claude-office:muted';
 /** overall level – effects are synthesised soft, this brings them up to a clearly audible volume */
@@ -67,7 +68,7 @@ if (typeof window !== 'undefined') {
   window.addEventListener('keydown', unlock);
 }
 
-const MIN_GAP: Partial<Record<Sfx, number>> = { key: 70, pop: 160, talk: 240, blip: 200, water: 500, sizzle: 1500 };
+const MIN_GAP: Partial<Record<Sfx, number>> = { key: 70, pop: 160, talk: 240, blip: 200, water: 500, sizzle: 1500, doorbell: 4000, inhale: 2500, exhale: 2500, thud: 130, huff: 900, clank: 250, pickup: 3000, swipe: 2500, ring: 3000, mail: 2500, ask: 3000 };
 
 function tone(c: AudioContext, at: number, freq: number, dur: number, gain: number, type: OscillatorType = 'sine', to?: number, attack = 0.008) {
   const o = c.createOscillator();
@@ -107,7 +108,7 @@ function noise(c: AudioContext, at: number, dur: number, gain: number, filter: B
 }
 
 /** Plays an effect. With a room id it is only heard while that room is the one on screen. */
-export function sfx(name: Sfx, roomId?: string) {
+export function sfx(name: Sfx, roomId?: string, pitch = 1) {
   if (muted || typeof document === 'undefined' || document.hidden) return;
   if (roomId && roomId !== activeRoom) return;
   const c = ctx;
@@ -169,12 +170,59 @@ export function sfx(name: Sfx, roomId?: string) {
       tone(c, t, 2100, 0.12, 0.03);
       tone(c, t + 0.03, 3100, 0.1, 0.02);
       break;
+    case 'thud':
+      noise(c, t, 0.09, 0.1, 'lowpass', 700, 180);
+      tone(c, t, 130 + r * 30, 0.14, 0.12, 'sine', 55, 0.004);
+      break;
+    case 'huff':
+      noise(c, t, 0.34, 0.045, 'bandpass', 1300, 650, 0.6);
+      break;
+    case 'clank':
+      tone(c, t, 1250 + r * 150, 0.1, 0.045, 'triangle');
+      tone(c, t + 0.025, 1900, 0.08, 0.03, 'triangle');
+      noise(c, t, 0.04, 0.04, 'lowpass', 1800);
+      break;
+    case 'pickup':
+      // a phone picked up: two soft rising beeps
+      tone(c, t, 720, 0.09, 0.03, 'sine', 900);
+      tone(c, t + 0.13, 960, 0.12, 0.03, 'sine', 1120);
+      break;
+    case 'ring':
+      // a desk phone: two short ring bursts (a fast warble each), then the handset is picked up
+      for (let k = 0; k < 2; k++) for (let i = 0; i < 6; i++) tone(c, t + k * 0.6 + i * 0.05, i % 2 ? 1250 : 1000, 0.045, 0.03, 'square');
+      tone(c, t + 1.3, 720, 0.09, 0.03, 'sine', 900);
+      tone(c, t + 1.43, 960, 0.12, 0.03, 'sine', 1120);
+      break;
+    case 'mail':
+      // new mail: a soft two-note chime
+      tone(c, t, 988, 0.22, 0.05);
+      tone(c, t + 0.12, 1480, 0.4, 0.04);
+      break;
+    case 'ask':
+      // the agent needs an answer: a two-note rising chime
+      tone(c, t, 660, 0.2, 0.06);
+      tone(c, t + 0.14, 990, 0.45, 0.06);
+      break;
+    case 'swipe':
+      noise(c, t, 0.09, 0.03, 'bandpass', 2600, 4200, 0.8);
+      tone(c, t + 0.05, 1400, 0.04, 0.012);
+      break;
     case 'blip':
       tone(c, t, 500 + r * 200, 0.05, 0.03, 'sine', 950);
       break;
+    case 'doorbell':
+      tone(c, t, 784, 0.5, 0.06);
+      tone(c, t + 0.28, 622, 0.7, 0.06);
+      break;
+    case 'inhale':
+      noise(c, t, 0.7, 0.03, 'bandpass', 900, 1700, 0.6);
+      break;
+    case 'exhale':
+      noise(c, t, 1.4, 0.025, 'bandpass', 1500, 700, 0.5);
+      break;
     case 'meow':
-      tone(c, t, 620, 0.32, 0.045, 'sawtooth', 460, 0.05);
-      tone(c, t + 0.02, 940, 0.28, 0.02, 'sine', 700, 0.05);
+      tone(c, t, 620 * pitch, 0.32 * (1.15 - pitch * 0.15) + r * 0.08, 0.045, 'sawtooth', 460 * pitch, 0.05);
+      tone(c, t + 0.02, 940 * pitch, 0.28, 0.02, 'sine', 700 * pitch, 0.05);
       break;
   }
 }

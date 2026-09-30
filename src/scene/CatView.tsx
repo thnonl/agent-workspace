@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
+import { disposeOwned } from './bake';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import type { RoomLayout } from '../world/layout';
@@ -136,6 +137,9 @@ export function CatView({ catKey, roomId, layout, seed }: Props) {
   const smoothed = useRef<CatPose>(neutralCatPose());
   /** time collected since the last update (a cat in a room that is off screen only steps every OFFSCREEN_STEP) */
   const pending = useRef(0);
+
+  // R3F does not dispose <primitive>: free the body/head geometry and bone texture this cat owns
+  useEffect(() => () => disposeOwned(rig.root), [rig]);
 
   useEffect(() => {
     cats.set(catKey, brain.sim);

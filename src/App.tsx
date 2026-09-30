@@ -12,6 +12,23 @@ function useLiveConnection() {
   useEffect(() => connectLive(), []);
 }
 
+/** A question is waiting for the user and the tab is in the background: the tab title starts with "❓ ". */
+function useAskTitle() {
+  const pending = useStore((s) => Object.keys(s.asks).length > 0);
+  useEffect(() => {
+    const plain = () => document.title.replace(/^❓ /, '');
+    const apply = () => {
+      document.title = pending && document.hidden ? `❓ ${plain()}` : plain();
+    };
+    apply();
+    document.addEventListener('visibilitychange', apply);
+    return () => {
+      document.removeEventListener('visibilitychange', apply);
+      document.title = plain();
+    };
+  }, [pending]);
+}
+
 function useDemo() {
   const demoOn = useStore((s) => s.demoOn);
   useEffect(() => {
@@ -124,6 +141,7 @@ function useHotkeys() {
 
 export default function App() {
   useLiveConnection();
+  useAskTitle();
   useDemo();
   useHotkeys();
   useClock();
@@ -141,7 +159,7 @@ export default function App() {
       style={{ ['--sky1' as string]: sky1, ['--sky2' as string]: sky2, ['--night' as string]: e.night.toFixed(3), ['--warm' as string]: e.warm.toFixed(3) }}
     >
       <div className="sky">
-        <div className="stars">
+        <div className={`stars${e.night < 0.1 ? ' stars-idle' : ''}`}>
           {stars.map((st, i) => (
             <i key={i} style={{ left: `${st.x}%`, top: `${st.y}%`, width: st.s, height: st.s, animationDelay: `${st.d}s` }} />
           ))}

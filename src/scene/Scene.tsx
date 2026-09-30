@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
-import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { Canvas, addAfterEffect, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { useStore } from '../store';
 import { getLayout } from '../world/layout';
 import { anchors, cats, sims, view } from '../sim/registry';
-import { frame } from '../sim/frame';
-import { env, envForHour, lightParams, stepEnv } from '../env';
+import { afterRender, frame } from '../sim/frame';
+import { env, envForHour, stepEnv } from '../env';
+import { lightParams } from './lighting';
 import { updateGlow } from './glow';
 import { RoomView, roomOrigin } from './RoomView';
 
@@ -14,11 +15,15 @@ const AZIMUTH = 0.72;
 const POLAR = 0.8;
 /** frame rate while nothing moves (a calm office is not worth a laptop fan) */
 const IDLE_FPS = 20;
+/** frame rate while characters move but the camera does not (the app usually sits on a second screen) */
+const BUSY_FPS = 30;
 /** the render resolution is lowered when the busy scene cannot hold this frame rate */
 const LOW_FPS = 40;
 const HIGH_FPS = 57;
-const MIN_DPR = 1.25;
+const MIN_DPR = 1;
 
+/** centre of the active room in world space */
+const center = new THREE.Vector3();
 const tmpA = new THREE.Vector3();
 const tmpB = new THREE.Vector3();
 
@@ -50,7 +55,7 @@ function computeActive(st: StoreState, out: THREE.Vector3): number {
   return getLayout(room.seed, room.themeIndex).fitDistance;
 }
 
-/** Center of the active room in world space (used outside the frame loop; inside it read `frame.center`). */
+/** Center of the active room in world space (used outside the frame loop; inside it read `center`). */
 function activeCenter(): { center: THREE.Vector3; fit: number } | null {
   const center = new THREE.Vector3();
   const fit = computeActive(useStore.getState(), center);
@@ -71,7 +76,7 @@ function FrameSync() {
   useFrame((state, dt) => {
     frame.n++;
     const st = useStore.getState();
-    const fit = computeActive(st, frame.center);
+    const fit = computeActive(st, center);
     frame.hasActive = fit > 0;
     if (fit > 0) frame.fit = fit;
 
@@ -115,7 +120,8 @@ function FrameSync() {
       r.dpr = state.viewport.dpr;
       r.max = state.viewport.initialDpr || state.viewport.dpr;
     }
-    if (frame.busy && dt < 0.1) {
+    // (only camera drags run uncapped, so only they tell what the GPU can really do)
+    if (frame.cameraBusy && dt < 0.1) {
       r.acc += dt;
       r.frames++;
       if (r.acc >= 2.5) {
@@ -134,7 +140,7 @@ function FrameSync() {
           }
         } else r.good = 0;
       }
-    } else if (!frame.busy) {
+    } else if (!frame.cameraBusy) {
       r.acc = 0;
       r.frames = 0;
     }
@@ -143,8 +149,9 @@ function FrameSync() {
 }
 
 /**
- * The canvas renders on demand. While something moves this asks for a frame on every display refresh;
- * otherwise only IDLE_FPS times per second. (Camera drags, resizes and React updates invalidate on their own.)
+ * The canvas renders on demand. While the camera moves this asks for a frame on every display refresh; while
+ * only characters move, BUSY_FPS times per second; otherwise IDLE_FPS. (Camera drags, resizes and React updates
+ * invalidate on their own.)
  */
 function IdleGovernor() {
   const invalidate = useThree((s) => s.invalidate);
@@ -153,7 +160,9 @@ function IdleGovernor() {
     let last = 0;
     const loop = (t: number) => {
       raf = requestAnimationFrame(loop);
-      if (frame.busy || t - last >= 1000 / IDLE_FPS) {
+      // (a few ms of slack: a 33.3 ms interval would otherwise skip to every third refresh at 60 Hz)
+      const every = frame.cameraBusy ? 0 : 1000 / (frame.busy ? BUSY_FPS : IDLE_FPS) - 4;
+      if (t - last >= every) {
         last = t;
         invalidate();
       }
@@ -189,14 +198,14 @@ function CameraRig() {
     }
     if (fit.current.snap) {
       fit.current.snap = false;
-      c.target.copy(frame.center);
-      camera.position.copy(frame.center).add(spherical(fit.current.dist, tmpA));
+      c.target.copy(center);
+      camera.position.copy(center).add(spherical(fit.current.dist, tmpA));
       c.update();
       frame.cameraBusy = true;
       return;
     }
     const k = 1 - Math.exp(-3.6 * dt);
-    const delta = tmpA.copy(frame.center).sub(c.target).multiplyScalar(k);
+    const delta = tmpA.copy(center).sub(c.target).multiplyScalar(k);
     c.target.add(delta);
     camera.position.add(delta);
     let moving = delta.lengthSq() > 1e-6;
@@ -233,6 +242,27 @@ function CameraRig() {
 
 /** Publishes camera + viewport so the HTML overlay can project speech bubbles. */
 function ViewSync() {
+  const tmp = useRef(new THREE.Vector3());
+  useEffect(() => {
+    view.project = (x, y, z, out) => {
+      const cam = view.camera;
+      if (!cam) return;
+      const v = tmp.current.set(x, y, z);
+      out.dist = cam.position.distanceTo(v);
+      v.project(cam);
+      out.x = v.x;
+      out.y = v.y;
+      out.z = v.z;
+    };
+    // the bubble layout runs right after a frame was drawn
+    const stop = addAfterEffect(() => {
+      for (const f of afterRender) f();
+    });
+    return () => {
+      stop();
+      view.project = null;
+    };
+  }, []);
   useFrame((state) => {
     view.camera = state.camera;
     view.width = state.size.width;
@@ -282,7 +312,7 @@ function RoomLights() {
     if (rf.order !== roomOrder || frame.n - rf.at >= 10) {
       rf.order = roomOrder;
       rf.at = frame.n;
-      const cam = frame.hasActive ? frame.center : state.camera.position;
+      const cam = frame.hasActive ? center : state.camera.position;
       ranked.current = roomOrder
         .filter((id) => rooms[id])
         .map((id) => {
@@ -333,8 +363,8 @@ function Lights() {
     if (!l || !frame.hasActive) return;
     const p = lightParams();
     const k = 1 - Math.exp(-4 * dt);
-    l.target.position.lerp(frame.center, k);
-    l.position.lerp(tmpA.copy(frame.center).add(p.dirOffset), k);
+    l.target.position.lerp(center, k);
+    l.position.lerp(tmpA.copy(center).add(p.dirOffset), k);
     l.target.updateMatrixWorld();
     l.color.copy(p.dirColor);
     l.intensity = p.dirIntensity;
@@ -367,7 +397,7 @@ export function Scene() {
     <Canvas
       frameloop="demand"
       flat
-      dpr={[1.5, 2]}
+      dpr={[1, 1.5]}
       camera={{ fov: 30, near: 1, far: 400, position: [16, 17, 18] }}
       gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
       onPointerMissed={() => useStore.getState().select(null)}

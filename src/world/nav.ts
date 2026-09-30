@@ -21,6 +21,14 @@ export class NavGrid {
   readonly cols: number;
   readonly rows: number;
   private blocked: Uint8Array;
+  /** connected-component label per cell (0 = blocked), rebuilt lazily after the grid changed */
+  private comp: Int32Array | null = null;
+  // A* scratch buffers, reused between searches (a cell only counts when stamped with the current generation)
+  private gScore: Float32Array | null = null;
+  private parentOf: Int32Array | null = null;
+  private seenGen: Uint32Array | null = null;
+  private closedGen: Uint32Array | null = null;
+  private gen = 0;
 
   constructor(readonly width: number, readonly depth: number) {
     this.cols = Math.ceil(width / CELL);
@@ -52,6 +60,7 @@ export class NavGrid {
 
   /** Block every cell whose centre lies inside the rectangle grown by `pad`. */
   blockRect(r: Rect, pad = 0) {
+    this.comp = null;
     const x0 = r.x - r.w / 2 - pad;
     const x1 = r.x + r.w / 2 + pad;
     const z0 = r.z - r.d / 2 - pad;
@@ -70,6 +79,7 @@ export class NavGrid {
    * `oz` shifts the rectangle along its own z axis.
    */
   blockOriented(x: number, z: number, w: number, d: number, rot: number, pad = 0, oz = 0) {
+    this.comp = null;
     const c = Math.cos(rot);
     const s = Math.sin(rot);
     const cx = x + oz * s;
@@ -130,16 +140,69 @@ export class NavGrid {
     return true;
   }
 
+  /** Label every walkable cell with its connected component (same 8-neighbour / no-corner-cutting rule as the A*). */
+  private components(): Int32Array {
+    if (this.comp) return this.comp;
+    const { cols, rows, blocked } = this;
+    const comp = new Int32Array(cols * rows);
+    const stack = new Int32Array(cols * rows);
+    let label = 0;
+    for (let start = 0; start < comp.length; start++) {
+      if (blocked[start] || comp[start]) continue;
+      label++;
+      let sp = 0;
+      stack[sp++] = start;
+      comp[start] = label;
+      while (sp) {
+        const cur = stack[--sp];
+        const cx = cur % cols;
+        const cz = (cur - cx) / cols;
+        for (let dz = -1; dz <= 1; dz++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (!dx && !dz) continue;
+            const nx = cx + dx;
+            const nz = cz + dz;
+            if (nx < 0 || nz < 0 || nx >= cols || nz >= rows) continue;
+            const ni = nz * cols + nx;
+            if (blocked[ni] || comp[ni]) continue;
+            if (dx && dz && (blocked[cz * cols + nx] || blocked[nz * cols + cx])) continue;
+            comp[ni] = label;
+            stack[sp++] = ni;
+          }
+        }
+      }
+    }
+    return (this.comp = comp);
+  }
+
+  /** O(1) (after the first call): is there a path between the two points? Same answer as `findPath(a, b) !== null`. */
+  reachable(from: V2, to: V2): boolean {
+    const s = this.nearestFree(this.ix(from.x), this.iz(from.z));
+    const g = this.nearestFree(this.ix(to.x), this.iz(to.z));
+    if (!s || !g) return false;
+    const comp = this.components();
+    return comp[s[1] * this.cols + s[0]] === comp[g[1] * this.cols + g[0]];
+  }
+
   /** Returns waypoints (excluding `from`, ending exactly at `to`) or null when unreachable. */
   findPath(from: V2, to: V2): V2[] | null {
     const s = this.nearestFree(this.ix(from.x), this.iz(from.z));
     const g = this.nearestFree(this.ix(to.x), this.iz(to.z));
     if (!s || !g) return null;
     const { cols } = this;
+    if (!this.reachable(from, to)) return null;
     const N = this.cols * this.rows;
-    const gScore = new Float32Array(N).fill(Infinity);
-    const parent = new Int32Array(N).fill(-1);
-    const closed = new Uint8Array(N);
+    if (!this.gScore) {
+      this.gScore = new Float32Array(N);
+      this.parentOf = new Int32Array(N);
+      this.seenGen = new Uint32Array(N);
+      this.closedGen = new Uint32Array(N);
+    }
+    const gScore = this.gScore;
+    const parent = this.parentOf!;
+    const seenGen = this.seenGen!;
+    const closedGen = this.closedGen!;
+    const gen = ++this.gen;
     const heap: [number, number][] = []; // [f, idx]
     const push = (f: number, idx: number) => {
       heap.push([f, idx]);
@@ -178,12 +241,14 @@ export class NavGrid {
       return Math.max(dx, dz) + 0.414 * Math.min(dx, dz);
     };
     gScore[start] = 0;
+    parent[start] = -1;
+    seenGen[start] = gen;
     push(h(start), start);
     let found = false;
     while (heap.length) {
       const cur = pop();
-      if (closed[cur]) continue;
-      closed[cur] = 1;
+      if (closedGen[cur] === gen) continue;
+      closedGen[cur] = gen;
       if (cur === goal) {
         found = true;
         break;
@@ -197,10 +262,11 @@ export class NavGrid {
           const nz = cz + dz;
           if (!this.inside(nx, nz)) continue;
           const ni = nz * cols + nx;
-          if (this.blocked[ni] || closed[ni]) continue;
+          if (this.blocked[ni] || closedGen[ni] === gen) continue;
           if (dx && dz && (this.blocked[cz * cols + nx] || this.blocked[nz * cols + cx])) continue; // no corner cutting
           const ng = gScore[cur] + (dx && dz ? 1.414 : 1);
-          if (ng < gScore[ni]) {
+          if (seenGen[ni] !== gen || ng < gScore[ni]) {
+            seenGen[ni] = gen;
             gScore[ni] = ng;
             parent[ni] = cur;
             push(ng + h(ni), ni);

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { ActivityEntry, MonitorEvent, PersonRec, RoomRec, RunSummary, Speech, TaskLogEntry, TaskRec } from './types';
+import type { ActivityEntry, AskRec, MonitorEvent, PersonRec, RoomRec, RunSummary, Speech, TaskLogEntry, TaskRec } from './types';
 import { hashString, Rng } from './util/rng';
 import { chunkText } from './util/text';
 import { THEMES } from './world/palettes';
@@ -7,7 +7,8 @@ import { HOUR_PRESETS } from './env';
 import { loadNames, pickName, saveNames } from './names';
 import { getLayout } from './world/layout';
 import { isMuted, setMuted as setAudioMuted, sfx } from './audio';
-import { bufferTaskSpeech, clearTalk, dropRoomRuntime, dropRuntime, dropTaskSpeech, enqueueSpeech, runtimeFor, takeTaskSpeech, talkPending } from './sim/registry';
+import { pickAck } from './sim/phrases';
+import { bufferTaskSpeech, clearTalk, debugFlags, dropRoomRuntime, dropRuntime, dropTaskSpeech, enqueueSpeech, hasQueuedTool, runtimeFor, takeTaskSpeech, talkPending } from './sim/registry';
 
 export type Connection = 'connecting' | 'live' | 'offline';
 export type TimeMode = 'auto' | 'day' | 'dusk' | 'night';
@@ -38,6 +39,8 @@ interface State {
   summaries: Record<string, RunSummary>;
   /** rooms whose session has finished all its work and were not released yet (blue blinking dot on their button) */
   unseen: Record<string, boolean>;
+  /** rooms whose main agent waits for the user's answer (pulsing bubble over the director, amber badge on the card) */
+  asks: Record<string, AskRec>;
   /** rooms whose summary nobody has closed yet: the paper opens when they are visited */
   unread: Record<string, boolean>;
   /** rooms the user released: hidden from the list until the session is continued (session id → when) */
@@ -50,6 +53,8 @@ interface State {
   selectedKey: string | null;
   showHelp: boolean;
   showNames: boolean;
+  /** the list of sessions on the right is shown (toggled by the live pill in the top bar) */
+  showSwitcher: boolean;
   /** sound effects are off */
   muted: boolean;
   /** the user's list of names for the director and the staff */
@@ -63,6 +68,8 @@ interface State {
 
   setConnection: (c: Connection, sources?: Sources) => void;
   applyEvent: (ev: MonitorEvent, demo?: boolean) => void;
+  /** applies a list of live events in order with one store notification */
+  applyEvents: (list: MonitorEvent[]) => void;
   beginSync: () => void;
   endSync: () => void;
   /** housekeeping clock: closes bursts, hands out tasks, sends everybody home when the work is over */
@@ -91,6 +98,7 @@ interface State {
   setHelp: (on: boolean) => void;
   setMuted: (on: boolean) => void;
   setShowNames: (on: boolean) => void;
+  setShowSwitcher: (on: boolean) => void;
   applyNames: (list: string[]) => void;
   resetView: () => void;
   setAutoDemo: (on: boolean) => void;
@@ -119,7 +127,16 @@ const CALL_QUEUE_MAX = 40;
 /** a new task hires a new person until this many staff are around, afterwards the staff take turns (more are hired only when every one of them is busy) */
 const MIN_TEAM = 3;
 /** a room seats the director and at most this many staff (the layout has exactly this many desks) */
-export const MAX_STAFF = 7;
+export const MAX_STAFF = 6;
+
+const SWITCHER_KEY = 'agent-workspace.showSwitcher';
+function loadShowSwitcher(): boolean {
+  try {
+    return localStorage.getItem(SWITCHER_KEY) !== '0';
+  } catch {
+    return true;
+  }
+}
 /** once the team is complete another person is hired at most this often (the newcomer needs time to walk in) */
 const HIRE_GAP_MS = 6000;
 /** the director reads the summary aloud: this many lines per bubble, this long on screen, lines wrapped at this width, at most this many bubbles */
@@ -304,6 +321,20 @@ function logActivity(get: Get, set: SetFn, roomId: string, e: Omit<ActivityEntry
   set({ activity: { ...s.activity, [roomId]: [entry, ...(s.activity[roomId] ?? [])].slice(0, ACTIVITY_CAP) } });
 }
 
+/** rooms whose pending ask the server repeated during the current sync (an ask that is not repeated was answered while the page was away) */
+const syncAsks = new Set<string>();
+
+/** The question was answered (or the turn ended): the bubble, the badge and the director's wave go away. */
+function clearAsk(get: Get, set: SetFn, roomId: string) {
+  const s = get();
+  if (!s.asks[roomId]) return;
+  const asks = { ...s.asks };
+  delete asks[roomId];
+  set({ asks });
+  const rt = runtimeFor(roomId);
+  rt.askAt = 0;
+}
+
 const nameOfPerson = (get: Get, key: string | null | undefined) => (key ? get().people[key]?.name ?? '' : '');
 
 function patchPeople(get: Get, set: SetFn, patches: Record<string, Partial<PersonRec>>) {
@@ -330,13 +361,25 @@ function removeTask(get: Get, set: SetFn, key: string) {
 }
 
 /** Queue something for a character to say (and remember it in the log of that character). */
-function deliver(get: Get, set: SetFn, personKey: string, sp: SpeechIn) {
+function deliver(get: Get, set: SetFn, personKey: string, sp: SpeechIn, bubbleTool = sp.tool) {
   const chunks = chunkText(sp.text, sp.kind === 'thinking' ? 110 : 130, sp.kind === 'thinking' ? 1 : 2);
-  for (const c of chunks) enqueueSpeech(personKey, { kind: sp.kind, text: c, tool: sp.tool });
+  for (const c of chunks) enqueueSpeech(personKey, { kind: sp.kind, text: c, tool: bubbleTool });
   const s = get();
   const entry: Speech = { id: logId++, kind: sp.kind, text: sp.text, tool: sp.tool, at: Date.now() };
   const prev = s.logs[personKey] ?? [];
   set({ logs: { ...s.logs, [personKey]: [...prev.slice(-39), entry] } });
+}
+
+/** when the director last answered a user message (Date.now()) */
+const lastAck = new Map<string, number>();
+const ACK_GAP_MS = 10000;
+
+/** A short "got it" after the user's message (skipped while one is still waiting or was said a moment ago). */
+function acknowledge(directorKey: string, via: 'call' | 'email') {
+  const now = Date.now();
+  if (now - (lastAck.get(directorKey) ?? 0) < ACK_GAP_MS || hasQueuedTool(directorKey, 'ack')) return;
+  lastAck.set(directorKey, now);
+  enqueueSpeech(directorKey, { kind: 'text', text: pickAck(via), tool: 'ack' });
 }
 
 // ------------------------------------------------------------------ people
@@ -674,6 +717,8 @@ function handleEvent(get: Get, set: SetFn, ev: MonitorEvent, demo: boolean) {
       delete activity[room.id];
       const unseen = { ...s.unseen };
       delete unseen[room.id];
+      const asks = { ...s.asks };
+      delete asks[room.id];
       const unread = { ...s.unread };
       delete unread[room.id];
       const roomOrder = s.roomOrder.filter((id) => id !== room.id);
@@ -685,7 +730,7 @@ function handleEvent(get: Get, set: SetFn, ev: MonitorEvent, demo: boolean) {
         activeRoomId = roomOrder[Math.min(at, roomOrder.length - 1)] ?? null;
       }
       set({
-        rooms, roomOrder, people, tasks, logs, finished, summaries, unseen, unread, activity, activeRoomId,
+        rooms, roomOrder, people, tasks, logs, finished, summaries, unseen, asks, unread, activity, activeRoomId,
         releaseAsk: s.releaseAsk?.roomId === room.id ? null : s.releaseAsk,
         summaryOpen: s.summaryOpen === room.id ? null : s.summaryOpen,
         selectedKey: s.selectedKey && people[s.selectedKey] ? s.selectedKey : null,
@@ -753,7 +798,10 @@ function handleEvent(get: Get, set: SetFn, ev: MonitorEvent, demo: boolean) {
       }
       rt.idleSince = 0;
       const director = ensureDirector(get, set, roomId);
-      deliver(get, set, director.key, sp);
+      // the user's message reaches the director by a call on the desk phone or by an email on the laptop, chosen at random (the log keeps the plain prompt); the director answers it
+      const via = ev.kind === 'task' ? debugFlags.channel ?? (Math.random() < 0.5 ? 'call' : 'email') : undefined;
+      deliver(get, set, director.key, sp, via ?? sp.tool);
+      if (via) acknowledge(director.key, via);
       logActivity(get, set, roomId, {
         kind: ev.kind === 'task' ? 'prompt' : ev.kind === 'idle' ? 'text' : ev.kind,
         who: ev.kind === 'task' ? 'You' : director.name,
@@ -762,6 +810,23 @@ function handleEvent(get: Get, set: SetFn, ev: MonitorEvent, demo: boolean) {
       });
       return;
     }
+    case 'agent_ask': {
+      const roomId = ev.sessionId;
+      if (!s.rooms[roomId]) return;
+      if (s.syncing) syncAsks.add(roomId);
+      if (s.asks[roomId]?.text === ev.text) return; // repeated by a snapshot
+      const rt = runtimeFor(roomId);
+      rt.idleSince = 0;
+      const director = ensureDirector(get, set, roomId);
+      rt.askAt = performance.now() / 1000;
+      set({ asks: { ...get().asks, [roomId]: { text: ev.text, full: ev.full, since: Date.now() } } });
+      logActivity(get, set, roomId, { kind: 'ask', who: director.name, text: ev.full ?? ev.text });
+      if (!s.syncing) sfx('ask'); // heard in every room: the user is needed
+      return;
+    }
+    case 'agent_ask_end':
+      clearAsk(get, set, ev.sessionId);
+      return;
     case 'agent_done': {
       const roomId = ev.sessionId;
       s.syncing?.agents.add(agentKey(roomId, ev.agentId));
@@ -772,6 +837,7 @@ function handleEvent(get: Get, set: SetFn, ev: MonitorEvent, demo: boolean) {
           set({ rooms: { ...get().rooms, [roomId]: { ...room, mainActive: false } } });
           logActivity(get, set, roomId, { kind: 'system', who: 'Main agent', text: 'Finished its turn' });
         }
+        clearAsk(get, set, roomId);
         return;
       }
       const key = agentKey(roomId, ev.agentId);
@@ -803,6 +869,7 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
   listTab: 'activity',
   summaries: {},
   unseen: {},
+  asks: {},
   unread: {},
   released: loadReleased(),
   releaseAsk: null,
@@ -812,6 +879,7 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
   selectedKey: null,
   showHelp: false,
   showNames: false,
+  showSwitcher: loadShowSwitcher(),
   names: loadNames(),
   resetTick: 0,
   autoDemo: false,
@@ -837,6 +905,10 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
       if (t.demo || t.source !== 'sub' || t.done || syncing.agents.has(t.key) || !get().tasks[t.key]) continue;
       get().applyEvent({ type: 'agent_done', sessionId: t.sessionId, agentId: t.agentId, summary: '' });
     }
+    for (const id of Object.keys(get().asks)) {
+      if (!get().rooms[id]?.demo && !syncAsks.has(id)) get().applyEvent({ type: 'agent_ask_end', sessionId: id });
+    }
+    syncAsks.clear();
     set({ syncing: null });
   }),
 
@@ -846,6 +918,19 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
       if (ev.type === 'session') touchRoom(ev.sessionId, ev.updatedAt);
       else if (ev.type !== 'hello' && ev.type !== 'ready' && ev.type !== 'session_end') touchRoom(ev.sessionId);
       refreshVisible(get, set);
+    }),
+
+  applyEvents: (list) =>
+    batch(() => {
+      const s = get();
+      for (const ev of list) {
+        if (ev.type === 'hello') {
+          s.beginSync();
+          s.setConnection('live', ev.sources ?? { claude: ev.claudeDir });
+        }
+        s.applyEvent(ev, false);
+        if (ev.type === 'ready') s.endSync();
+      }
     }),
 
   tick: () =>
@@ -974,6 +1059,14 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
     set({ muted: on });
   },
   setShowNames: (on) => set({ showNames: on }),
+  setShowSwitcher: (on) => {
+    try {
+      localStorage.setItem(SWITCHER_KEY, on ? '1' : '0');
+    } catch {
+      /* private mode: the choice just is not remembered */
+    }
+    set({ showSwitcher: on });
+  },
 
   /** Save the list and give everybody who is already in an office a name from it (director first). */
   applyNames: (list) => {

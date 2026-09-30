@@ -1,5 +1,3 @@
-import * as THREE from 'three';
-
 /**
  * Per-frame facts computed once by `FrameSync` (scene/Scene.tsx) before any other `useFrame` runs,
  * so every component reads the same answer instead of recomputing it (or allocating for it).
@@ -8,9 +6,8 @@ import * as THREE from 'three';
 export const frame = {
   /** frame counter; caches keyed on it (see registry.ts) are valid for exactly one frame */
   n: 1,
-  /** the room the camera looks at, and where (world space) */
+  /** a room is active (its centre lives in scene/Scene.tsx) */
   hasActive: false,
-  center: new THREE.Vector3(),
   fit: 20,
   /** rooms that intersect the camera frustum – everything else is simulated at a reduced rate and not animated */
   visibleRooms: new Set<string>(),
@@ -26,3 +23,6 @@ export const frame = {
 
 /** Rooms that are off screen advance their simulation at most this often (seconds). */
 export const OFFSCREEN_STEP = 1 / 15;
+
+/** Run after the 3D scene has drawn a frame (Scene calls them; keeps three out of the UI chunks). */
+export const afterRender = new Set<() => void>();

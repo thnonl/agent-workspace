@@ -1,5 +1,3 @@
-import * as THREE from 'three';
-
 /** Time-of-day model. `hour` is the local system time (0-24, fractional). */
 export interface EnvState {
   hour: number;
@@ -42,61 +40,25 @@ export function stepEnv(target: EnvState, dt: number) {
 
 export const HOUR_PRESETS = { day: 12.5, dusk: 18.6, night: 23 } as const;
 
-// ---------------------------------------------------------------- lighting
-const c = {
-  sun: new THREE.Color('#fff3e2'),
-  warm: new THREE.Color('#ffae70'),
-  moon: new THREE.Color('#8fa5ff'),
-  lamp: new THREE.Color('#ffddb0'),
-  skyDay: new THREE.Color('#ffffff'),
-  skyNight: new THREE.Color('#6472c4'),
-  groundDay: new THREE.Color('#ffd9c4'),
-  groundNight: new THREE.Color('#2b2450'),
-};
-
-export interface LightParams {
-  dirColor: THREE.Color;
-  dirIntensity: number;
-  dirOffset: THREE.Vector3;
-  hemiSky: THREE.Color;
-  hemiGround: THREE.Color;
-  hemiIntensity: number;
-}
-
-const params: LightParams = {
-  dirColor: new THREE.Color(),
-  dirIntensity: 1,
-  dirOffset: new THREE.Vector3(),
-  hemiSky: new THREE.Color(),
-  hemiGround: new THREE.Color(),
-  hemiIntensity: 1,
-};
-
-export function lightParams(): LightParams {
-  const a = clamp01((env.hour - 6) / 12) * Math.PI;
-  const sun = new THREE.Vector3(6 + Math.cos(a) * 7, 7 + Math.sin(a) * 11, 9);
-  const moon = new THREE.Vector3(-4, 15, 8);
-  params.dirOffset.copy(sun).lerp(moon, env.night);
-  // at night the shadow-casting light stands in for the room lamps: warm, and strong enough that people and furniture still cast clear shadows
-  params.dirColor.copy(c.sun).lerp(c.warm, env.warm * env.day).lerp(c.moon, env.night).lerp(c.lamp, env.lamps);
-  params.dirIntensity = 0.42 + 1.5 * env.day + 0.25 * env.warm + 1.05 * env.lamps * env.night;
-  params.hemiSky.copy(c.skyNight).lerp(c.skyDay, env.day);
-  params.hemiGround.copy(c.groundNight).lerp(c.groundDay, env.day);
-  params.hemiIntensity = 0.44 + 0.62 * env.day;
-  return params;
-}
-
 // --------------------------------------------------------------------- sky
-const night1 = new THREE.Color('#141a4d');
-const night2 = new THREE.Color('#4a3a86');
-const warm1 = new THREE.Color('#ff9d8a');
-const warm2 = new THREE.Color('#ffc98f');
+// Colours are mixed in linear light, like THREE.Color does, but without pulling three into the entry chunk.
+type RGB = [number, number, number];
+const toLinear = (v: number) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+const toSrgb = (v: number) => (v <= 0.0031308 ? v * 12.92 : 1.055 * v ** (1 / 2.4) - 0.055);
+const rgb = (hex: string): RGB => [1, 3, 5].map((i) => toLinear(parseInt(hex.slice(i, i + 2), 16) / 255)) as RGB;
+const mix = (a: RGB, b: RGB, t: number): RGB => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+const toHex = (c: RGB) => `#${c.map((v) => Math.round(clamp01(toSrgb(v)) * 255).toString(16).padStart(2, '0')).join('')}`;
+
+const night1 = rgb('#141a4d');
+const night2 = rgb('#4a3a86');
+const warm1 = rgb('#ff9d8a');
+const warm2 = rgb('#ffc98f');
 
 /** CSS gradient colours for the backdrop, from the room theme's daytime sky. */
 export function skyColors(theme: [string, string], e: EnvState = env): [string, string] {
-  const top = new THREE.Color(theme[0]).lerp(night1, e.night * 0.92).lerp(warm1, e.warm * 0.55);
-  const bottom = new THREE.Color(theme[1]).lerp(night2, e.night * 0.9).lerp(warm2, e.warm * 0.6);
-  return [`#${top.getHexString()}`, `#${bottom.getHexString()}`];
+  const top = mix(mix(rgb(theme[0]), night1, e.night * 0.92), warm1, e.warm * 0.55);
+  const bottom = mix(mix(rgb(theme[1]), night2, e.night * 0.9), warm2, e.warm * 0.6);
+  return [toHex(top), toHex(bottom)];
 }
 
 /** Position of the sun (0-1 across the sky) or moon at the given hour; null when below the horizon. */

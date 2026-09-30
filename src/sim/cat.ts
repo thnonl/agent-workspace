@@ -1,6 +1,8 @@
 import type { CatWindow, RoomLayout, Spot } from '../world/layout';
 import type { V2 } from '../world/nav';
 import { Rng } from '../util/rng';
+import { sfx } from '../audio';
+import { frame } from './frame';
 import { debugFlags, spotOwners, type CatSim, type SimState } from './registry';
 
 /** Joint angles of one leg: upper (shoulder / hip), lower (elbow / knee), paw. Positive swings backwards. */
@@ -53,6 +55,17 @@ export function neutralCatPose(): CatPose {
   };
 }
 
+/** restore a pose to `neutralCatPose()` in place (no allocation) */
+export function resetCatPose(p: CatPose): CatPose {
+  p.y = 0; p.pitch = 0; p.roll = 0; p.arch = 0; p.curl = 0; p.curlDir = 1; p.headX = 0; p.headY = 0; p.headZ = 0;
+  for (let i = 0; i < 4; i++) {
+    const l = p.legs[i];
+    l.u = 0; l.l = 0; l.p = 0;
+  }
+  p.tailLift = 0; p.tailCurl = 0; p.tailWrap = 0; p.tailSway = 0.25; p.walk = 0; p.gait = 0; p.gaitAmp = 1; p.eyes = 1; p.earsBack = 0; p.purr = 0;
+  return p;
+}
+
 export interface CatCtx {
   layout: RoomLayout;
   /** seconds (performance.now()/1000) */
@@ -95,6 +108,8 @@ const WINDUP = 0.24;
 export class CatBrain {
   readonly sim: CatSim;
   readonly pose = neutralCatPose();
+  /** scratch pose rebuilt every update */
+  private readonly scratch = neutralCatPose();
   private phase: Phase = 'away';
   private t = 0;
   private timer = 0;
@@ -116,9 +131,14 @@ export class CatBrain {
   private curlDir = 1;
   /** landing squash, counts down from 1 */
   private land = 0;
+  /** clock time of the next spontaneous meow, and this cat's voice pitch */
+  private nextMeowAt = 0;
+  private readonly voice: number;
 
   constructor(key: string, roomId: string, seed: number, layout: RoomLayout) {
     this.rng = new Rng(seed);
+    this.voice = this.rng.range(0.85, 1.2);
+    this.nextMeowAt = this.rng.range(20, 90);
     this.clock = this.rng.range(0, 10);
     this.curlDir = this.rng.chance(0.5) ? 1 : -1;
     this.sim = { key, roomId, x: 0, y: 0, z: 0, yaw: 0, phase: 'away', onStage: false, still: false, petUntil: 0, spot: -1 };
@@ -327,10 +347,15 @@ export class CatBrain {
     this.t += dt;
     this.land = Math.max(0, this.land - dt * 3.2);
     const s = this.sim;
-    const p = neutralCatPose();
+    const p = resetCatPose(this.scratch);
     const petted = s.petUntil > ctx.now;
     if (s.onStage && this.phase !== 'away') this.awake += dt;
     let moving = false;
+
+    if (this.clock >= this.nextMeowAt) {
+      this.nextMeowAt = this.clock + this.rng.range(35, 120);
+      if (s.onStage && this.phase !== 'sleep' && this.phase !== 'away' && frame.visibleRooms.has(s.roomId)) sfx('meow', s.roomId, this.voice * this.rng.range(0.94, 1.08));
+    }
 
     switch (this.phase) {
       case 'away': {
@@ -345,6 +370,7 @@ export class CatBrain {
           s.onStage = true;
           this.awake = 0;
           this.stay = this.rng.range(70, 240);
+          if (this.rng.chance(0.25)) this.nextMeowAt = this.clock + this.rng.range(2, 6);
           this.v = 0;
           this.startPath([this.win.sill], 0.9);
           this.setPhase('arrive');

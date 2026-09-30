@@ -12,7 +12,18 @@ export type MonitorEvent =
   | { type: 'session_end'; sessionId: string; reason?: 'idle' | 'gone' }
   | { type: 'agent_start'; sessionId: string; agentId: string; role: AgentRole; label: string; agentType?: string }
   | { type: 'agent_say'; sessionId: string; agentId: string; kind: SpeechKind; text: string; tool?: string; full?: string }
-  | { type: 'agent_done'; sessionId: string; agentId: string; summary?: string; failed?: boolean };
+  | { type: 'agent_done'; sessionId: string; agentId: string; summary?: string; failed?: boolean }
+  /** the main agent asks the user something and waits (AskUserQuestion / plan approval / OpenCode question): pending until agent_ask_end */
+  | { type: 'agent_ask'; sessionId: string; text: string; full?: string }
+  | { type: 'agent_ask_end'; sessionId: string };
+
+/** a question of the agent that is waiting for the user */
+export interface AskRec {
+  text: string;
+  full?: string;
+  /** Date.now() */
+  since: number;
+}
 
 export interface Speech {
   id: number;
@@ -105,7 +116,7 @@ export interface ActivityEntry {
   id: number;
   at: number;
   roomId: string;
-  kind: 'prompt' | 'thinking' | 'text' | 'tool' | 'task' | 'done' | 'report' | 'system' | 'error';
+  kind: 'prompt' | 'thinking' | 'text' | 'tool' | 'task' | 'done' | 'report' | 'system' | 'error' | 'ask';
   /** who did / said it (a name, "You" or "Main agent") */
   who: string;
   /** what it is about – e.g. the sub-agent's task */

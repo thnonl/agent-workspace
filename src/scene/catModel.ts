@@ -190,6 +190,7 @@ export function buildCat(look: CatLook): CatRig {
     sheenColor: new THREE.Color('#fff4e6'),
   });
   const skinned = new THREE.SkinnedMesh(buildBodyGeometry(buf), fur);
+  skinned.geometry.userData.owned = true;
   skinned.castShadow = true;
   skinned.receiveShadow = false;
   skinned.frustumCulled = false;
@@ -202,6 +203,7 @@ export function buildCat(look: CatLook): CatRig {
   face.scale.setScalar(1.16);
   head.add(face);
   const headMesh = new THREE.Mesh(buildHeadGeometry(look), fur);
+  headMesh.geometry.userData.owned = true;
   headMesh.castShadow = true;
   face.add(headMesh);
 

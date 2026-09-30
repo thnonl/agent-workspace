@@ -15,30 +15,47 @@ export function pick<T>(pool: readonly T[]): T {
 }
 
 // ------------------------------------------------------------------ at the door
-const HELLO_MORNING = ['Good morning!', 'Morning, everyone!', 'Good morning, all!', 'Rise and shine!', 'Morning! Coffee first, then work.'];
-const HELLO_AFTERNOON = ['Good afternoon!', 'Afternoon, everyone!', 'Good afternoon, all!', 'Hope the day is going well!', 'Afternoon! What did I miss?'];
-const HELLO_EVENING = ['Good evening!', 'Evening, everyone!', 'Burning the midnight oil again?', 'Good evening, all! Quiet in here.', 'Evening! Time for some focus.'];
-const HELLO_ANY = ['Hi everyone!', 'Hello, team!', 'Hey there!', 'I’m here!', 'Hi! Did anybody feed the cat?', 'Hello! Let’s do this.', 'Hey! Smells like fresh coffee.', 'Hi all – what’s the plan?'];
-const HELLO_BOSS = ['Hello, boss!', 'Hi boss, I’m in!', 'Good to see you, boss.', 'Reporting for duty!', 'Ready when you are, boss.'];
-const HELLO_DIRECTOR = ['Hello, everyone! Let’s get started.', 'Welcome, team! Here we go.', 'Let’s make it a good one, team.', 'Doors open – who’s ready?', 'Settle in, everyone. We have work to do.', 'Hi team! Lots to do today.'];
+// The director is always the first one in and the last one out: they open up an empty office, staff walk in to a
+// boss who is already at the desk (and perhaps some colleagues), and staff say goodbye to a boss who stays behind.
+const OPEN_MORNING = ['Good morning, office! Lights on.', 'Morning! Coffee on, laptop open.', 'First one in again. Let’s open up.', 'Good morning! Let me set things up before the team arrives.'];
+const OPEN_AFTERNOON = ['Good afternoon! Let’s open the office.', 'Afternoon! Lights on, laptop open.', 'Opening up. Quiet in here – for now.', 'Good afternoon, office! Let’s see what today brings.'];
+const OPEN_EVENING = ['Good evening, office! Late start today.', 'Evening! Just me and the lamps – let’s begin.', 'Opening up for the night shift.', 'Good evening! Quiet in here. Perfect for focus.'];
+const OPEN_ANY = ['Doors open. Who will be first to join me?', 'Lights on, everything is ready. Let’s start.', 'Let me get settled, the team will be here soon.', 'Hello, empty office! Let’s make it a good day.'];
+/** the director arrives and somebody is already inside (the page was opened mid-run) */
+const HELLO_DIRECTOR = ['Hello, everyone! Let’s get started.', 'Welcome, team! Here we go.', 'Let’s make it a good one, team.', 'Settle in, everyone. We have work to do.', 'Hi team! Lots to do today.'];
 
-export function greetingLine(director: boolean, hour: number): string {
-  const part = hour < 12 ? HELLO_MORNING : hour < 18 ? HELLO_AFTERNOON : HELLO_EVENING;
-  if (director) return pick(Math.random() < 0.5 ? part : HELLO_DIRECTOR);
+const BOSS_MORNING = ['Good morning, boss!', 'Morning, boss! Ready when you are.', 'Morning, boss. Coffee first?', 'Good morning, boss – what’s on the list?'];
+const BOSS_AFTERNOON = ['Good afternoon, boss!', 'Afternoon, boss! What did I miss?', 'Hi boss, sorry I’m a bit late.', 'Good afternoon, boss – where do we stand?'];
+const BOSS_EVENING = ['Good evening, boss!', 'Evening, boss. Burning the midnight oil again?', 'Evening, boss! Time for some focus.', 'Good evening, boss – still at it?'];
+const HELLO_BOSS = ['Hello, boss!', 'Hi boss, I’m in!', 'Good to see you, boss.', 'Reporting for duty, boss!', 'Ready when you are, boss.'];
+/** staff arrives and other staff already sit at their desks */
+const HELLO_BOSS_TEAM = ['Hi boss, hi team!', 'Hey boss, hey team – what did I miss?', 'Hello boss, hello team!', 'Reporting in, boss. Hi, everyone!'];
+
+export function greetingLine(director: boolean, hour: number, colleagues = 0): string {
+  const part = hour < 12 ? 0 : hour < 18 ? 1 : 2;
+  if (director) {
+    if (colleagues > 0) return pick(HELLO_DIRECTOR);
+    return pick(Math.random() < 0.7 ? [OPEN_MORNING, OPEN_AFTERNOON, OPEN_EVENING][part] : OPEN_ANY);
+  }
   const r = Math.random();
-  return pick(r < 0.34 ? part : r < 0.68 ? HELLO_ANY : HELLO_BOSS);
+  if (colleagues > 0 && r < 0.4) return pick(HELLO_BOSS_TEAM);
+  return pick(r < 0.7 ? [BOSS_MORNING, BOSS_AFTERNOON, BOSS_EVENING][part] : HELLO_BOSS);
 }
 
 // ------------------------------------------------------------- going home
 const BYE_DIRECTOR = [
-  'Locking up the office. Good night!', 'That’s all for today. See you!', 'Good work, team. Lights out!', 'Turning off the lights. See you tomorrow!',
-  'All done here. Off I go!', 'Thanks, everyone. Time to call it a day.', 'Office closed. Take care!', 'Great work today. Good night!',
+  'Everyone has gone home. Locking up. Good night!', 'Last one out – lights off. See you tomorrow!', 'All quiet now. Turning off the lights. Good night!',
+  'That’s a wrap. Office closed. Take care!', 'Lights out, doors locked. Good night, office!', 'All done here. Off I go!',
+  'Quiet office, good work today. Locking up!', 'The team is gone, so I’m next. Good night!',
 ];
-const BYE_STAFF = [
-  'Time to go home. Bye!', 'Done for today. See you!', 'Packing up – see you soon!', 'That’s a wrap for me. Bye!',
-  'Off I go. Have a good one!', 'Home time! Bye, everyone.', 'See you next time!', 'Laptop closed, brain closed. Bye!', 'Good work, all. Bye!',
+const BYE_BOSS = [
+  'Heading home, boss. See you tomorrow!', 'I’m off, boss. Good night!', 'Done for today, boss. Bye!', 'Laptop closed, brain closed. Bye, boss!',
+  'See you next time, boss!', 'Good night, boss – don’t stay too late!', 'Packing up, boss. Bye!', 'That’s a wrap for me, boss. Have a good one!',
 ];
-export const goodbyeLine = (director: boolean) => pick(director ? BYE_DIRECTOR : BYE_STAFF);
+/** staff leaves and other staff are still at their desks */
+const BYE_BOSS_TEAM = ['Bye boss, bye team!', 'Heading out, boss. See you, everyone!', 'Night, boss. Night, everyone!', 'Good work, all. Bye, boss!', 'Off I go. Bye, boss and team!'];
+export const goodbyeLine = (director: boolean, colleagues = 0) =>
+  pick(director ? BYE_DIRECTOR : colleagues > 0 && Math.random() < 0.45 ? BYE_BOSS_TEAM : BYE_BOSS);
 
 // ------------------------------------------------------- thoughts before a break
 const WANDER = [
@@ -99,13 +116,34 @@ const COOK = [
   'Let me make a quick snack', 'My stomach is rumbling – to the stove!', 'I’ll cook a little something', 'A hot meal will fix everything',
   'Let me whip up some noodles', 'Cooking break! The best kind', 'The stove is free – time to cook', 'I’ll make a bowl of something warm',
 ];
+const BOX = [
+  'Time to punch some stress away', 'Let me take it out on the dummy', 'Round one! Ding ding!', 'A few jabs will clear my head',
+  'That punching dummy is calling my name', 'Boxing break! Hit me, dummy', 'I need to hit something (nicely)', 'Float like a butterfly, sting like a bee',
+  'Let me throw a few combos', 'Bugs fear the right hook',
+];
+const LIFT = [
+  'Time for a few curls', 'Let me pump some iron (tiny iron)', 'Gotta keep these arms in shape', 'Bicep day! Every day is bicep day',
+  'A little lifting between tasks', 'Let me grab the dumbbells', 'Feel the burn… just a little', 'Strong arms, strong code',
+  'Ten reps, then back to work', 'Gains break!',
+];
 const CHAT = [
   (n: string) => `Let me have a chat with ${n}`, (n: string) => `I’ll go and talk to ${n}`, (n: string) => `${n} looks free – time for a chat`,
   (n: string) => `Maybe ${n} has news`, (n: string) => `Let me see what ${n} thinks`, (n: string) => `I’ll drop by ${n}’s desk`,
   (n: string) => `A friendly word with ${n} won’t hurt`, (n: string) => `${n} could use some company`,
 ];
 
+const PARCEL = ['Delivery! 📦', 'Is that my package?', 'Somebody rang the bell!', 'A parcel for us!', 'Ooh, a delivery at the door', 'Let me grab that box'];
+const SMOKE = ['Just a quick smoke break', 'Fresh air and a cigarette', 'One cigarette, then back to work', 'Stepping out for a puff'];
+const SLEEP = ['So sleepy… a little nap', 'Just resting my eyes', 'Power nap time', 'Five minutes of sleep…', 'Zzz… wake me when there is work'];
+
+const PHONE = [
+  'Scrolling my phone 📱', 'Just a quick scroll through my phone 📱', 'Let me check my phone 📱', 'Scrolling my phone 📱 – five minutes',
+  'Anything new on my phone? 📱', 'A little doomscroll never hurt 📱', 'Checking what my friends posted 📱', 'Phone break! 📱',
+  'Let me catch up on my feed 📱',
+];
+
 export const thoughts = {
+  phone: () => pick(PHONE),
   wander: () => pick(WANDER),
   sofa: () => pick(SOFA),
   watch: (name: string) => pick(WATCH)(name),
@@ -118,8 +156,29 @@ export const thoughts = {
   wash: () => pick(WASH),
   plants: () => pick(PLANTS),
   cook: () => pick(COOK),
+  box: () => pick(BOX),
+  lift: () => pick(LIFT),
   chat: (name: string) => pick(CHAT)(name),
+  parcel: () => pick(PARCEL),
+  smoke: () => pick(SMOKE),
+  sleep: () => pick(SLEEP),
 };
+
+// ------------------------------------------ the director answers a message from the user
+const ACK = [
+  'Got it — I’ll get the team on it.', 'Understood, starting now.', 'On it, boss!', 'Copy that. Let me split this up.', 'Sure thing, working on it.',
+  'Okay, leave it to us.', 'Roger that! We’re on it.', 'Message received. Let’s go!', 'Alright, I’ll take care of it.', 'Noted! Give us a moment.',
+  'Will do — starting right away.', 'Good, I know what to do.', 'Consider it done. Well, almost.', 'Got it, the team is on the way.',
+  'Understood. Sit back, we’ve got this.', 'Sounds good. Let me get started.', 'Right, I’ll brief the team.', 'Perfect, that’s clear. On it!',
+  'Thanks! Let me look into it.', 'Okay, I’m on it. Stay tuned!',
+];
+/** spoken into the phone */
+const ACK_CALL = [
+  'Yes, I’ve got it. I’ll get the team on it.', 'Understood — I’ll call you back if anything comes up.', 'Okay, noted. We’re starting now.',
+  'Yes, yes, I hear you. Leave it with me.', 'Got it, thanks for calling. We’re on it!', 'Alright, I’ll brief the team right away.',
+  'Sure, no problem. Talk soon!',
+];
+export const pickAck = (via: 'call' | 'email' = 'email') => pick(via === 'call' ? ACK_CALL : ACK);
 
 // ---------------------------------------------------------- cooking and eating
 const SERVE = [

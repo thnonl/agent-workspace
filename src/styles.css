@@ -62,6 +62,9 @@ button { font: inherit; color: inherit; }
   display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; font-size: 12.5px; font-weight: 800;
   background: var(--glass); border-radius: 999px; border: 2px solid #fff; box-shadow: 0 6px 18px rgba(120, 90, 160, 0.14); backdrop-filter: blur(10px);
 }
+button.pill { font-family: inherit; color: inherit; cursor: pointer; transition: background 0.18s, opacity 0.18s; }
+button.pill:hover { background: #fff; }
+.pill-collapsed { opacity: 0.72; }
 .pill em { font-style: normal; font-weight: 700; color: var(--ink-soft); max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pill-dot { width: 9px; height: 9px; border-radius: 50%; background: #b7b0c9; }
 .pill-live .pill-dot { background: #3ddc97; box-shadow: 0 0 0 0 rgba(61, 220, 151, 0.6); animation: ping 1.8s infinite; }
@@ -109,11 +112,13 @@ button { font: inherit; color: inherit; }
 .tasklist-body { max-height: min(46vh, 380px); overflow-y: auto; display: flex; flex-direction: column; gap: 5px; padding: 8px; border-radius: 0 0 14px 14px; background: rgba(255, 255, 255, 0.9); }
 .trow { display: flex; gap: 8px; padding: 6px 8px; border-radius: 11px; background: rgba(255, 255, 255, 0.8); box-shadow: inset 0 0 0 1.5px rgba(120, 90, 160, 0.1); }
 .arow { display: grid; grid-template-columns: 52px 18px 1fr; gap: 6px; padding: 5px 8px; border-radius: 10px; background: rgba(255, 255, 255, 0.8); box-shadow: inset 0 0 0 1.5px rgba(120, 90, 160, 0.09); }
-.arow time { font: 700 10px 'JetBrains Mono', ui-monospace, monospace; color: var(--ink-soft); padding-top: 2px; }
-.arow-icon { font-size: 13px; line-height: 1.3; }
+/* the time, the icon and the first line of the text (name · context) share one 16px line box, so they sit on the same centre line */
+.arow time { font: 700 10px/16px 'JetBrains Mono', ui-monospace, monospace; color: var(--ink-soft); }
+.arow > div { line-height: 16px; }
+.arow-icon { display: flex; align-items: center; justify-content: center; height: 16px; font-size: 13px; line-height: 1; }
 .arow b { font-size: 11.5px; font-weight: 900; }
 .arow em { font-style: normal; font-size: 10.5px; font-weight: 700; color: var(--ink-soft); }
-.arow p { margin: 1px 0 0; font-size: 11.5px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.arow p { margin: 2px 0 0; font-size: 11.5px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 .arow p.mono { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10.5px; }
 .arow-prompt { background: #fff5c2; }
 .arow-system { background: rgba(120, 90, 160, 0.08); }
@@ -161,7 +166,7 @@ button { font: inherit; color: inherit; }
 .room-card-text { flex: 1 1 auto; min-width: 0; overflow: hidden; }
 .room-card-text b { display: block; font-size: 13px; font-weight: 900; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .room-card-text small { display: block; font-size: 11px; font-weight: 700; color: var(--ink-soft); }
-.room-card-text small.room-card-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-size: 10.5px; font-style: italic; color: color-mix(in srgb, var(--ink-soft) 85%, var(--accent)); }
+.room-card-text small.room-card-name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; white-space: normal; overflow-wrap: anywhere; max-width: 100%; overflow: hidden; font-size: 10.5px; font-style: italic; line-height: 1.3; color: color-mix(in srgb, var(--ink-soft) 85%, var(--accent)); }
 .room-card-status { position: absolute; right: 12px; top: 50%; width: 9px; height: 9px; margin-top: -4.5px; border-radius: 50%; background: #cfc8de; }
 .room-card-status.on { background: #3ddc97; animation: ping 1.8s infinite; }
 /* the session is done and nobody has read its summary yet */
@@ -170,6 +175,15 @@ button { font: inherit; color: inherit; }
   0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 0 0 rgba(47, 128, 255, 0.6); }
   50% { opacity: 0.2; transform: scale(0.78); box-shadow: 0 0 0 6px rgba(47, 128, 255, 0); }
 }
+
+/* a question of the agent is waiting for the user's answer */
+.room-card-ask { position: absolute; left: 0; top: 0; width: 18px; height: 18px; display: grid; place-items: center; font-size: 10px; font-style: normal; line-height: 1; border-radius: 50%; background: #ffb020; border: 2px solid #fff; animation: askBadge 1.2s ease-in-out infinite; }
+@keyframes askBadge {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.7); }
+  50% { transform: scale(1.12); box-shadow: 0 0 0 7px rgba(245, 158, 11, 0); }
+}
+.room-header-stats span.room-header-ask { background: #fff0c2; color: #8a5200; box-shadow: inset 0 0 0 1.5px #f5b73b; animation: askBadge 1.2s ease-in-out infinite; }
+.arow-ask { background: #fff0c2; }
 
 /* --- agent panel ------------------------------------------------------ */
 .panel {
@@ -182,7 +196,7 @@ button { font: inherit; color: inherit; }
 .panel-close { position: absolute; top: 10px; right: 10px; width: 28px; height: 28px; border-radius: 50%; border: 0; cursor: pointer; background: rgba(120, 90, 160, 0.1); font-size: 18px; line-height: 1; font-weight: 900; }
 .panel-close:hover { background: rgba(120, 90, 160, 0.2); }
 .panel-title { display: flex; gap: 10px; align-items: center; padding-right: 26px; }
-.panel-avatar { width: 42px; height: 42px; flex: none; border-radius: 50%; display: grid; place-items: center; font-size: 22px; background: color-mix(in srgb, var(--accent) 30%, #fff); box-shadow: inset 0 0 0 2.5px var(--accent); }
+.panel-avatar { line-height: 1; width: 42px; height: 42px; flex: none; border-radius: 50%; display: grid; place-items: center; font-size: 22px; background: color-mix(in srgb, var(--accent) 30%, #fff); box-shadow: inset 0 0 0 2.5px var(--accent); }
 .panel-title b { display: block; font-size: 15px; font-weight: 900; line-height: 1.2; }
 .panel-title small { font-size: 11.5px; font-weight: 700; color: var(--ink-soft); }
 .panel-status { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -276,16 +290,23 @@ kbd { font-family: 'JetBrains Mono', monospace; font-size: 11px; padding: 2px 6p
 .bubble {
   --bg: #ffffff;
   position: relative; width: max-content; min-width: 92px; max-width: 236px; padding: 6px 11px 8px; border-radius: 16px;
-  background: var(--bg); color: var(--ink); font: 700 12.5px/1.36 'Nunito', sans-serif;
+  background: var(--bg); color: var(--ink); font: 600 11.5px/1.36 'Nunito', sans-serif;
   box-shadow: 0 8px 18px rgba(70, 50, 110, 0.24), 0 0 0 2.5px var(--accent);
   transform-origin: 50% 100%; animation: pop 0.32s cubic-bezier(0.3, 1.7, 0.5, 1) both;
 }
-.bubble-head { display: flex; align-items: center; gap: 5px; margin-bottom: 2px; font-size: 10px; font-weight: 900; color: var(--accent); letter-spacing: 0.2px; filter: saturate(1.4) brightness(0.82); }
+.bubble-head { display: flex; align-items: center; gap: 5px; margin-bottom: 2px; font-size: 12px; font-weight: 800; color: var(--accent); letter-spacing: 0.2px; filter: saturate(1.4) brightness(0.82); }
 .bubble-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none; }
-.bubble-name { max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* the crown next to a director's name */
+/* (the crown and the name are flex items: their boxes are centred on each other instead of hoping that the baselines of two fonts agree) */
+.crown { flex: none; display: block; width: 1.15em; height: 1.15em; transform: translateY(-1px); /* centred on the whole letter shapes (ascenders, accents) rather than the x-height */ }
+.nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* the name is shown in full; when the line is too long it is the task title that is cut */
+.bubble-name { display: flex; align-items: center; gap: 0.3em; line-height: 1.3; min-width: 0; max-width: 100%; overflow: hidden; white-space: nowrap; }
+.bubble-name > span.nm { flex: none; max-width: 100%; } /* (never shrunk: even a tenth of a pixel less than its text would put an ellipsis in it) */
+.bubble-name > em.nm { flex: 0 1 auto; }
 .bubble-body { display: flex; gap: 6px; align-items: flex-start; overflow-wrap: anywhere; }
-.bubble-icon { flex: none; font-size: 13px; line-height: 1.25; }
-.bubble-body.mono { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; font-weight: 700; }
+.bubble-icon { flex: none; font-size: 12px; line-height: 1.3; }
+.bubble-body.mono { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10.5px; font-weight: 500; }
 /* tails and thought puffs live in their own layer below all bubbles; their origin is the bottom centre of the bubble */
 .bubble-tails, .bubble-bodies { position: absolute; inset: 0; pointer-events: none; }
 .bubble-tails { z-index: 1; }
@@ -303,21 +324,44 @@ kbd { font-family: 'JetBrains Mono', monospace; font-size: 11px; padding: 2px 6p
 .bubble-tool { --bg: #262a44; color: #eef0ff; border-radius: 12px; }
 .bubble-tool .bubble-head { filter: brightness(1.5); }
 .bubble-task { --bg: #fff5c2; transform: rotate(-1.5deg); border-radius: 8px; }
+/* the user's message arrives as a phone message: a rounded chat bubble in messenger blue */
+.bubble-phone { --bg: #d8f3ff; --accent: #2f9de4; transform: none; border-radius: 16px 16px 16px 5px; }
+/* ...or as an email on the laptop: a sheet of paper with a coloured strip along the top */
+.bubble-email { --bg: #fff8e6; --accent: #e0a020; transform: none; border-radius: 6px; padding-top: 9px; background: linear-gradient(var(--accent), var(--accent)) top / 100% 4px no-repeat, var(--bg); }
 /* the director reading the summary aloud: two lines at a time, wider than the usual bubble */
 .bubble-talk { max-width: 330px; }
 .bubble-talk .bubble-body > span:last-child { white-space: pre-line; }
 .bubble-done { --bg: #e3fbea; --accent: #35c27d; }
 /* a bubble that has been up for a while shrinks: it keeps saying what the character is doing without covering the room */
-.bubble-settled { max-width: 176px; min-width: 0; padding: 4px 9px 6px; font-size: 11.5px; animation: none; }
-.bubble-settled .bubble-head { margin-bottom: 1px; font-size: 9.5px; }
+.bubble-settled { max-width: 176px; min-width: 0; padding: 4px 9px 6px; font-size: 10.5px; animation: none; }
+.bubble-settled .bubble-head { margin-bottom: 1px; font-size: 11px; }
 .bubble-settled .bubble-body > span:last-child { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.bubble-settled .bubble-body.mono { font-size: 10.5px; }
+.bubble-settled .bubble-body.mono { font-size: 10px; }
 .bubble-done.bubble-failed { --bg: #ffe6e6; --accent: #ff6b6b; }
+/* the agent waits for the user: amber chat bubble, a pulsing glow ring and a small hop every few seconds (transform / opacity only) */
+.bubble-ask { --bg: #fff7dc; --accent: #f59e0b; max-width: 268px; pointer-events: auto; border-radius: 16px 16px 16px 5px; box-shadow: 0 10px 22px rgba(160, 100, 10, 0.3), 0 0 0 3px var(--accent); animation: pop 0.32s cubic-bezier(0.3, 1.7, 0.5, 1) both, askHop 4.2s ease-in-out 1s infinite; }
+.bubble-ask::before { content: ''; position: absolute; inset: -3px; border-radius: inherit; border: 3px solid var(--accent); pointer-events: none; will-change: transform, opacity; animation: askRing 1.7s ease-out infinite; }
+.bubble-ask .bubble-name { max-width: 230px; }
+.bubble-ask .bubble-body > span:last-child { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+@keyframes askRing { 0% { opacity: 0.85; transform: scale(1); } 100% { opacity: 0; transform: scale(1.22, 1.35); } }
+@keyframes askHop {
+  0%, 62%, 100% { transform: translateY(0) rotate(0); }
+  68% { transform: translateY(-7px) rotate(-1.5deg); }
+  74% { transform: translateY(0) rotate(1.5deg); }
+  80% { transform: translateY(-3px) rotate(-1deg); }
+  86% { transform: translateY(0) rotate(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bubble-ask { animation: none; }
+  .bubble-ask::before { animation: none; opacity: 0.55; }
+  .room-card-ask, .room-header-ask { animation: none; }
+}
 @keyframes pop { from { opacity: 0; transform: scale(0.4) translateY(10px); } }
 
 .nametag {
-  pointer-events: auto; cursor: pointer; border: 0; padding: 2px 9px; border-radius: 99px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  background: rgba(255, 255, 255, 0.9); color: var(--ink); font: 800 10.5px 'Nunito', sans-serif;
+  pointer-events: auto; cursor: pointer; border: 0; padding: 2px 10px; border-radius: 99px; max-width: 170px; overflow: hidden; white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 0.3em;
+  background: rgba(255, 255, 255, 0.9); color: var(--ink); font: 800 12px/16px 'Nunito', sans-serif; /* (a whole-pixel line box keeps the letters on the same rows at 100% zoom: measured to be centred in the pill) */
   box-shadow: 0 3px 8px rgba(70, 50, 110, 0.2), inset 0 0 0 2px var(--accent); animation: fadeIn 0.3s both;
 }
 .nametag:hover, .nametag.selected { background: #fff; transform: scale(1.06); }
@@ -335,6 +379,7 @@ kbd { font-family: 'JetBrains Mono', monospace; font-size: 11px; padding: 2px 6p
 .app { transition: --sky1 1.2s ease, --sky2 1.2s ease, --night 1.2s ease, --warm 1.2s ease; }
 .stars { position: absolute; inset: 0; opacity: clamp(0, calc(var(--night) * 1.35 - 0.25), 1); }
 .stars i { position: absolute; display: block; border-radius: 50%; background: #fff; box-shadow: 0 0 6px 1px rgba(255, 255, 255, 0.7); animation: twinkle 3.4s ease-in-out infinite; }
+.stars-idle i { animation-play-state: paused; }
 @keyframes twinkle { 50% { opacity: 0.25; transform: scale(0.7); } }
 .orb { position: absolute; display: block; width: 74px; height: 74px; margin: -37px 0 0 -37px; border-radius: 50%; transition: left 1s linear, top 1s linear, opacity 1s; }
 .orb-sun { background: radial-gradient(circle at 40% 40%, #fffbe0, #ffe27a 55%, #ffb84d); box-shadow: 0 0 60px 26px rgba(255, 224, 130, 0.5); }
@@ -353,7 +398,7 @@ kbd { font-family: 'JetBrains Mono', monospace; font-size: 11px; padding: 2px 6p
 .app.is-night .room-header,
 .app.is-night .switcher-list,
 .app.is-night .panel { border-color: rgba(255, 255, 255, 0.16); }
-.app.is-night .btn:hover { background: rgba(70, 62, 130, 0.95); }
+.app.is-night .btn:hover, .app.is-night button.pill:hover { background: rgba(70, 62, 130, 0.95); }
 .app.is-night .room-card { background: rgba(255, 255, 255, 0.08); }
 .app.is-night .room-card:hover, .app.is-night .room-card.active { background: rgba(255, 255, 255, 0.18); }
 .app.is-night .room-header-stats span, .app.is-night .log, .app.is-night .chip, .app.is-night .stat-btn { background: rgba(255, 255, 255, 0.1); box-shadow: none; }
@@ -376,4 +421,4 @@ kbd { font-family: 'JetBrains Mono', monospace; font-size: 11px; padding: 2px 6p
 .names-row { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; }
 .names-actions { display: flex; gap: 8px; }
 .modal-card .muted { margin: 0; line-height: 1.5; }
-.bubble-name em { font-style: normal; font-weight: 700; opacity: 0.75; }
+.bubble-name em { font-style: normal; font-weight: 600; opacity: 0.75; }

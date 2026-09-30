@@ -3,11 +3,13 @@ import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import type { DoorSpec, FloorDecal, RoomLayout, WallDecor, WindowSpec } from '../world/layout';
 import type { RoomTheme } from '../world/palettes';
-import { simsInRoom } from '../sim/registry';
+import { runtimeFor, simsInRoom } from '../sim/registry';
+import { buildParcelBox } from './heldItems';
 import { frame } from '../sim/frame';
 import { GLOW, glowMat } from './glow';
 import { G, M, MB, shade } from './kit';
 import { Ms, RB } from './furniture';
+import { useBaked } from './bake';
 import { calendarTexture, textTexture } from './textures';
 import { Rng } from '../util/rng';
 
@@ -140,9 +142,9 @@ export function WindowView({ spec, theme, localX, wallHeight }: { spec: WindowSp
       {/* curtains */}
       {spec.curtain ? (
         <>
-          <Ms geo={G.cyl(0.02, 0.02, w + 0.9, 8)} mat={M(theme.trim, { metal: 0.2 })} pos={[0, sill + h + 0.32, 0.1]} rot={[0, 0, Math.PI / 2]} />
+          <Ms geo={G.cyl(0.02, 0.02, w + 0.9, 8)} mat={M(theme.trim, { metal: 0.2 })} pos={[0, sill + h + 0.32, 0.32]} rot={[0, 0, Math.PI / 2]} />
           {[-1, 1].map((s) => (
-            <group key={s} position={[s * (w / 2 + 0.05), 0, 0.13]}>
+            <group key={s} position={[s * (w / 2 + 0.05), 0, 0.32]}>
               {[0, 1, 2].map((i) => (
                 <RB key={i} size={[0.17, Math.min(wallHeight - 0.6, h + 0.75), 0.07]} pos={[-s * i * 0.16 + s * 0.02, sill + h / 2 + 0.05 - i * 0.02, i % 2 ? 0.02 : 0]} color={shade(theme.curtain, i % 2 ? -0.04 : 0.02)} r={0.03} rough={0.9} />
               ))}
@@ -157,11 +159,16 @@ export function WindowView({ spec, theme, localX, wallHeight }: { spec: WindowSp
 
 export function DoorView({ door, theme, roomId, localX }: { door: DoorSpec; theme: RoomTheme; roomId: string; localX: number }) {
   const leaf = useRef<THREE.Group>(null);
+  useBaked(leaf);
   const t = WALL_T;
   const w = door.width;
   const h = door.height;
+  // the delivery on the porch: built once, shown while `rt.parcel` says it waits there
+  const parcel = useMemo(() => buildParcelBox(), []);
+  const parcelSlot = useRef<THREE.Group>(null);
   useFrame((_, dt) => {
     if (!leaf.current || !frame.visibleRooms.has(roomId)) return;
+    if (parcelSlot.current) parcelSlot.current.visible = runtimeFor(roomId).parcel === 'waiting';
     let near = false;
     for (const s of simsInRoom(roomId)) {
       if (!s.onStage) continue;
@@ -190,6 +197,9 @@ export function DoorView({ door, theme, roomId, localX }: { door: DoorSpec; them
       <RB size={[w + 0.2, 0.03, 0.8]} pos={[0, 0.015, 0.6]} color={theme.accent3} r={0.012} rough={0.95} receive />
       <RB size={[w - 0.1, 0.034, 0.62]} pos={[0, 0.017, 0.6]} color={theme.trim} r={0.012} rough={0.95} receive />
       <group position={[0, 0, -t]}>
+        <group ref={parcelSlot} userData={{ dynamic: true }} visible={false} position={[0, 0.135, -1.22]} rotation={[0, 0.25, 0]}>
+          <primitive object={parcel} />
+        </group>
         <RB size={[w + 2.4, 0.5, 3.4]} pos={[0, -0.25, -1.7]} color={theme.base} r={0.12} receive />
         <RB size={[w + 2.0, 0.03, 3.0]} pos={[0, 0.0, -1.7]} color={shade(theme.floor, 0.03)} r={0.01} receive rough={0.95} />
         <RB size={[w + 0.2, 0.03, 0.8]} pos={[0, 0.03, -0.55]} color={theme.accent2} r={0.012} rough={0.95} receive />
@@ -243,11 +253,17 @@ function pennantGeometry() {
   return flagGeo;
 }
 
-function Clock({ w }: { w: number }) {
+function Clock({ w, roomId }: { w: number; roomId?: string }) {
   const hour = useRef<THREE.Mesh>(null);
   const min = useRef<THREE.Mesh>(null);
+  const last = useRef(0);
   useFrame(() => {
-    const d = new Date();
+    if (roomId !== undefined && !frame.visibleRooms.has(roomId)) return;
+    const now = Date.now();
+    // the hands only need a refresh once a second (also runs on the first frame after the room reappears)
+    if (now - last.current < 1000 && now >= last.current) return;
+    last.current = now;
+    const d = new Date(now);
     const m = d.getMinutes() + d.getSeconds() / 60;
     if (min.current) min.current.rotation.z = -(m / 60) * Math.PI * 2;
     if (hour.current) hour.current.rotation.z = -(((d.getHours() % 12) + m / 60) / 12) * Math.PI * 2;
@@ -270,7 +286,7 @@ function Clock({ w }: { w: number }) {
   );
 }
 
-export function WallDecorView({ d, localX, theme }: { d: WallDecor; localX: number; theme: RoomTheme }) {
+export function WallDecorView({ d, localX, theme, roomId }: { d: WallDecor; localX: number; theme: RoomTheme; roomId?: string }) {
   const inner = (() => {
     switch (d.kind) {
       case 'poster':
@@ -303,7 +319,7 @@ export function WallDecorView({ d, localX, theme }: { d: WallDecor; localX: numb
           </group>
         );
       case 'clock':
-        return <Clock w={d.w} />;
+        return <Clock w={d.w} roomId={roomId} />;
       case 'whiteboard':
         return (
           <group>
@@ -341,7 +357,7 @@ export function WallDecorView({ d, localX, theme }: { d: WallDecor; localX: numb
       case 'sconce':
         return <Sconce />;
       case 'tv':
-        return <WallTV d={d} />;
+        return <WallTV d={d} roomId={roomId} />;
       case 'cork':
         return <CorkBoard d={d} theme={theme} />;
       case 'kanban':
@@ -370,11 +386,12 @@ function Sconce() {
   );
 }
 
-function WallTV({ d }: { d: WallDecor }) {
+function WallTV({ d, roomId }: { d: WallDecor; roomId?: string }) {
   const bars = useRef<(THREE.Mesh | null)[]>([]);
   const dot = useRef<THREE.Mesh>(null);
   const cols = [d.color, d.color2, '#5ed3b0', '#ffd166', d.color, d.color2];
   useFrame((s) => {
+    if (roomId !== undefined && !frame.visibleRooms.has(roomId)) return;
     const t = s.clock.elapsedTime;
     bars.current.forEach((m, i) => {
       if (!m) return;

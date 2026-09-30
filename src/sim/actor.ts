@@ -2,8 +2,10 @@ import type { PersonRec, SpeechKind, TaskRec } from '../types';
 import { rot2, type RoomLayout, type Station, type StationKind } from '../world/layout';
 import type { V2 } from '../world/nav';
 import { sfx, type Sfx } from '../audio';
+import { env } from '../env';
 import { CHAT_SCRIPTS, eatLine, goodbyeLine, greetingLine, reportLine, serveLine, thoughts } from './phrases';
-import { debugFlags, dismissIdle, enqueueSpeech, greet, sims, spotOwners, type CatSim, type Phase, type RoomRuntime, type SimState } from './registry';
+import { kickDummy, takeDumbbells } from './gym';
+import { debugFlags, dismissIdle, enqueueSpeech, greet, parcelDone, roomRuntime, tickParcel, sims, simsInRoom, spotOwners, type CatSim, type Phase, type RoomRuntime, type SimState } from './registry';
 
 export interface Pose {
   bob: number;
@@ -25,6 +27,8 @@ export interface Pose {
   kneeRx: number;
   happy: number;
   lookUp: number;
+  /** 0..1: eyes shut */
+  sleep: number;
   mouth: 'smile' | 'o' | 'sad';
 }
 
@@ -32,7 +36,7 @@ export function neutralPose(): Pose {
   return {
     bob: 0, lean: 0, roll: 0, twist: 0, headX: 0, headY: 0, headZ: 0,
     armLx: 0, armLz: 0.1, armRx: 0, armRz: 0.1, foreLx: -0.15, foreRx: -0.15,
-    thighLx: 0, thighRx: 0, kneeLx: 0, kneeRx: 0, happy: 0, lookUp: 0, mouth: 'smile',
+    thighLx: 0, thighRx: 0, kneeLx: 0, kneeRx: 0, happy: 0, lookUp: 0, sleep: 0, mouth: 'smile',
   };
 }
 
@@ -64,7 +68,7 @@ export interface ActorCtx {
   nameOf: (simKey: string) => string;
 }
 
-type ActivityKind = 'wander' | 'sofa' | 'watch' | 'window' | 'pet' | 'stay' | 'chat' | StationKind;
+type ActivityKind = 'wander' | 'sofa' | 'watch' | 'window' | 'pet' | 'stay' | 'chat' | 'parcel' | 'sleep' | StationKind;
 
 const pickOne = <T,>(list: readonly T[]): T => list[Math.floor(Math.random() * list.length)];
 
@@ -74,11 +78,43 @@ const BOOKS = [
   'Structure and Interpretation of Computer Programs', 'The Little Prince', 'The Hitchhiker’s Guide to the Galaxy', 'Where the Wild Things Are',
   'Sherlock Holmes', 'The Cat Who Walked by Herself', 'Alice in Wonderland', 'Kitchen', 'The Alchemist',
 ];
+const ZZZ = ['Z', 'Z z', 'Z z z'] as const;
+/** distance from the door line to where somebody stands on the porch to pick up the box (DoorView puts the box 0.5 further out) */
+export const PORCH_STAND = 1.0;
+/** bending down for the parcel on the porch: arms reach out, then it is lifted to the chest */
+const PARCEL_KEYS: Key[] = [
+  { t: 0 }, { t: 0.4 },
+  { t: 1.3, rx: -0.9, rz: -0.3, fr: -0.35, lx: -0.9, lz: -0.3, fl: -0.35, lean: 0.55, hx: 0.3 },
+  { t: 1.9, rx: -0.9, rz: -0.3, fr: -0.35, lx: -0.9, lz: -0.3, fl: -0.35, lean: 0.55, hx: 0.3 },
+  { t: 2.7, rx: -1.15, rz: -0.45, fr: -0.7, lx: -1.15, lz: -0.45, fl: -0.7, lean: 0.08 },
+];
+/** one drag of a cigarette: seconds, and the arm keys (right hand up to the mouth and back down) */
+const SMOKE_CYCLE = 9.5;
+const SMOKE_KEYS: Key[] = [
+  { t: 0, rx: 0.15, rz: 0.12, fr: -0.6 }, { t: 1.0, rx: 0.15, rz: 0.12, fr: -0.6 },
+  { t: 2.4, rx: -0.85, rz: -0.55, fr: -2.05 }, { t: 4.4, rx: -0.85, rz: -0.55, fr: -2.05 },
+  { t: 5.6, rx: 0.15, rz: 0.12, fr: -0.6 }, { t: SMOKE_CYCLE, rx: 0.15, rz: 0.12, fr: -0.6 },
+];
+/** at most this many people of a room are away from their desk on a break at the same time */
+const MAX_WALKERS = 2;
+/** minimum gap (seconds) between the start of one walk and the start of the next one in the same room: after a priority walk (in, out, report) / after an idle one */
+const WALK_GAP_PRIORITY = 1;
+const WALK_GAP_IDLE = 3;
+/** a walk that has been held back this long (seconds) starts anyway, so nobody can wait for ever */
+const WALK_WAIT_MAX = 8;
+/** chance that somebody on the sofa scrolls a phone instead of just resting */
+const SOFA_PHONE_CHANCE = 0.45;
+/** seconds between two smile bumps / swipe sounds while scrolling the phone */
+const PHONE_BUMP_S = 13;
+const PHONE_SWIPE_S = 11;
 /** seconds per line of a chat */
 const CHAT_LINE_S = 3.6;
 
 /** how long the greeting at the door stays up before the task is shown */
 const GREET_MS = 5000;
+/** the door lets the next person in this long (seconds) after the previous one, so a room fills up one by one */
+const ENTRY_GAP_MIN = 3;
+const ENTRY_GAP_SPAN = 7;
 
 /**
  * What a character thinks the moment it decides on a break – shown at once, while it is still at its
@@ -87,9 +123,11 @@ const GREET_MS = 5000;
 function thoughtOf(a: Activity, name: string): [string, string] | null {
   switch (a.kind) {
     case 'wander': return [thoughts.wander(), 'walk'];
-    case 'sofa': return [thoughts.sofa(), 'sofa'];
+    case 'sofa': return a.sleep ? [thoughts.sleep(), 'sleep'] : a.phone ? [thoughts.phone(), 'phone'] : [thoughts.sofa(), 'sofa'];
     case 'watch': return [thoughts.watch(name), 'watch'];
-    case 'window': return [thoughts.window(), 'window'];
+    case 'window': return a.smoke ? [thoughts.smoke(), 'smoke'] : [thoughts.window(), 'window'];
+    case 'parcel': return [thoughts.parcel(), 'parcel'];
+    case 'sleep': return [thoughts.sleep(), 'sleep'];
     case 'pet': return [thoughts.pet(), 'pet'];
     case 'drink': return a.station?.prop === 'coffee' ? [thoughts.coffee(), 'coffee'] : [thoughts.water(), 'drink'];
     case 'read': return [thoughts.read(a.detail ?? pickOne(BOOKS)), 'read'];
@@ -97,13 +135,15 @@ function thoughtOf(a: Activity, name: string): [string, string] | null {
     case 'wash': return [thoughts.wash(), 'wash'];
     case 'water': return [thoughts.plants(), 'water'];
     case 'cook': return [thoughts.cook(), 'cook'];
+    case 'box': return [thoughts.box(), 'box'];
+    case 'lift': return [thoughts.lift(), 'lift'];
     case 'chat': return [thoughts.chat(name), 'chat'];
     default: return null;
   }
 }
 
 /** what a character holds in the right hand */
-export type HeldKind = 'none' | 'cup' | 'book' | 'can' | 'bowl';
+export type HeldKind = 'none' | 'cup' | 'book' | 'can' | 'bowl' | 'dumbbell' | 'parcel' | 'cig' | 'phone' | 'handsetEar';
 
 /** arm/body key pose of a station activity (missing values fall back to the relaxed pose) */
 interface Key {
@@ -118,6 +158,16 @@ interface Key {
   hx?: number;
 }
 const RELAXED = { rx: 0, rz: 0.1, fr: -0.15, lx: 0, lz: 0.1, fl: -0.15, lean: 0, hx: 0 };
+
+// key poses of the boxing / lifting breaks (module constants: nothing is built inside the frame loop)
+const K_NONE: Key = { t: 0 };
+const K_GUARD: Key = { t: 0, rx: -0.95, rz: -0.15, fr: -2.0, lx: -0.95, lz: -0.15, fl: -2.0, lean: 0.08, hx: 0.05 };
+const K_CHEER: Key = { t: 0, rx: -2.6, rz: 0.45, fr: -0.5, lx: -2.6, lz: 0.45, fl: -0.5, lean: -0.05, hx: -0.15 };
+const K_BOW: Key = { t: 0, rx: 0.55, rz: 0.1, fr: -0.1, lx: 0.55, lz: 0.1, fl: -0.1, lean: 0.75, hx: 0.2 };
+const K_ARMS_DOWN: Key = { t: 0, rx: 0.05, rz: 0.12, fr: -0.3, lx: 0.05, lz: 0.12, fl: -0.3 };
+/** seconds per punch / per dumbbell curl */
+const PUNCH_S = 0.5;
+const CURL_S = 2.2;
 
 /** What somebody does while there is nothing to work on: the director waiting for the team, staff waiting for the next task. */
 interface Activity {
@@ -136,6 +186,13 @@ interface Activity {
   detail?: string;
   /** petting a cat that sleeps on the desk – the director stays in the chair */
   atDesk?: boolean;
+  /** window: smoke a cigarette while looking out; sofa: sleep there (eyes shut, drooping head) */
+  smoke?: boolean;
+  sleep?: boolean;
+  /** sofa: scroll a phone while sitting there */
+  phone?: boolean;
+  /** the target is on the porch: the way there leads through the door (see routeOut) */
+  outdoor?: boolean;
   /** chat: the colleague at the desk and what is said */
   partnerKey?: string;
   script?: readonly string[];
@@ -143,6 +200,32 @@ interface Activity {
 
 /** height of the hip above the floor for an appearance scale of 1 (model hip * rig scale) */
 const HIP = 0.47 * 0.85;
+
+/** top of the staff desks (the director's desk is 2 cm higher) */
+export const DESK_Y = 0.74;
+/** the desk chairs, and the people in them, are lifted by this much: the shoulders then sit above the desk so the hands can rest on it */
+export const SEAT_LIFT = 0.07;
+/** distance from the seat to the centre of the laptop on the desk (the layout puts it deeper into the desk than short arms reach) */
+export const laptopDist = (director: boolean) => (director ? 0.5 : 0.47);
+
+/**
+ * Arm angles that put the hand just above the laptop keys (2-link IK from the rig's own segment lengths, so it holds for every body scale).
+ * Returns the shoulder angle and the forearm angle (rotation.x of the joints).
+ */
+function deskReach(scale: number, director: boolean, lift: number): { arm: number; fore: number } {
+  const L1 = 0.22;
+  const L2 = 0.215;
+  const ws = 0.85 * scale;
+  const shoulderY = lift + ws * 0.969;
+  const handY = DESK_Y + (director ? 0.02 : 0) + 0.042 + 0.078 * ws + 0.046;
+  const ty = (handY - shoulderY) / ws;
+  const fw = Math.min(laptopDist(director) - 0.095, 0.93 * (L1 + L2) * ws) / ws;
+  const d = Math.min(Math.hypot(fw, ty), 0.97 * (L1 + L2));
+  const g = Math.acos(Math.max(-1, Math.min(1, (d * d - L1 * L1 - L2 * L2) / (2 * L1 * L2))));
+  const phi = Math.atan2(fw, -ty);
+  const a = phi - Math.atan2(L2 * Math.sin(g), L1 + L2 * Math.cos(g));
+  return { arm: -a, fore: -g };
+}
 const WALK_SPEED = 2.15;
 const MIN_WORK = 3.2;
 /** a tool call keeps the person at the laptop at least this long */
@@ -178,6 +261,11 @@ export class Actor {
   private path: V2[] = [];
   private pi = 0;
   private walkPhase = 0;
+  /** the walk is held back: no free walking slot in the room yet (the walk pose stays off) */
+  private gated = false;
+  private gatedFor = 0;
+  /** walking back to the desk after a report (a priority walk, unlike the way home from a break) */
+  private reportReturn = false;
   private t = 0;
   private workTime = 0;
   private drain = 0;
@@ -200,6 +288,12 @@ export class Actor {
   private strolling = false;
   private resume = false;
   private deskPetT = -1;
+  /** napping in the desk chair (seconds so far, -1 = awake) */
+  private sleepT = -1;
+  /** last "Z z z" bubble step that was shown */
+  private zzzStep = -1;
+  /** 0..1: strength of the smoke puffs at the mouth (drawn by the character component) */
+  smoke = 0;
   /** what the right hand holds (drawn by the character component) */
   held: HeldKind = 'none';
   /** 0..1: the watering can is tilted and pouring */
@@ -228,10 +322,13 @@ export class Actor {
   private reporting = false;
   /** height of this character's hip (sitting on a sofa) */
   private readonly hip: number;
+  /** arm angles that put the hands on the laptop keys (see deskReach) */
+  private readonly reach: { arm: number; fore: number };
 
   constructor(key: string, roomId: string, isDirector: boolean, layout: RoomLayout, desk: number, scale: number) {
     this.isDirector = isDirector;
     this.hip = HIP * scale;
+    this.reach = deskReach(scale, isDirector, SEAT_LIFT);
     this.sim = { key, roomId, x: layout.door.outside.x, z: layout.door.outside.z, yaw: 0, phase: 'waiting', sitT: 0, y: 0, onStage: false, desk, busy: false, slot: -1, walking: false, chatBy: null, quiet: false };
   }
 
@@ -260,8 +357,15 @@ export class Actor {
     this.sim.phase = p;
     this.t = 0;
     this.prevT = -1;
+    this.sim.walkWait = 0;
+    this.gated = false;
+    this.gatedFor = 0;
+    if (p !== 'returning') this.reportReturn = false;
+    // back at the desk, reporting or gone: no longer on a break of its own
+    if (p === 'working' || p === 'waiting' || p === 'leaving' || p === 'packing' || p === 'toBoss') this.sim.onBreak = false;
     if (p === 'activity') {
       this.chatLine = -1;
+      this.zzzStep = -1;
       this.bites = 0;
       this.ate = false;
       this.served = false;
@@ -284,11 +388,59 @@ export class Actor {
     return [door.threshold, door.inside, ...inner];
   }
 
-  private routeOut(ctx: ActorCtx): V2[] {
+  /** out of the door and over the porch to `end` (default: out of sight) */
+  private routeOut(ctx: ActorCtx, end?: V2): V2[] {
     const { door, nav } = ctx.layout;
     const s = this.sim;
     const inner = nav.findPath({ x: s.x, z: s.z }, door.inside) ?? [door.inside];
-    return [...inner, door.threshold, door.outside];
+    return [...inner, door.threshold, end ?? door.outside];
+  }
+
+  /** standing on the porch (the nav grid only knows the room: paths from here must lead through the door first) */
+  private onPorch(ctx: ActorCtx): boolean {
+    const { threshold, dir } = ctx.layout.door;
+    return (this.sim.x - threshold.x) * dir.x + (this.sim.z - threshold.z) * dir.z < -0.05;
+  }
+
+  /** walks that go before the idle ones: people coming in, going home, bringing a report to the director */
+  private priorityWalk(): boolean {
+    const p = this.sim.phase;
+    return p === 'entering' || p === 'leaving' || p === 'toBoss' || (p === 'returning' && this.reportReturn);
+  }
+
+  /**
+   * Is there a walking slot for `s` right now? At most MAX_WALKERS people of a room walk at once, and while somebody
+   * with a priority walk is waiting for a slot, idle walks do not start. Marks `s` as waiting when the answer is no.
+   */
+  private walkSlotOpen(ctx: ActorCtx, s: SimState, priority: boolean): boolean {
+    let walkers = 0;
+    let priorityWaits = false;
+    for (const o of simsInRoom(s.roomId)) {
+      if (o === s || !o.onStage) continue;
+      if (o.walking) walkers++;
+      else if (o.walkWait === 2) priorityWaits = true;
+    }
+    // (the person who started the last walk is not held back by the gap they started themselves)
+    const spaced = ctx.rt.walkBy === s.key || ctx.now >= ctx.rt.walkFreeAt;
+    const open = spaced && walkers < MAX_WALKERS && (priority || !priorityWaits);
+    s.walkWait = open ? 0 : priority ? 2 : 1;
+    return open;
+  }
+
+  /** Claims the next walking slot (and starts the gap for everybody else) when one is open; a walk held back for WALK_WAIT_MAX starts anyway. */
+  private takeWalkSlot(ctx: ActorCtx, dt: number, priority = this.priorityWalk()): boolean {
+    const s = this.sim;
+    let open = this.walkSlotOpen(ctx, s, priority);
+    if (!open) {
+      this.gatedFor += dt;
+      open = this.gatedFor > WALK_WAIT_MAX;
+    }
+    if (!open) return false;
+    this.gatedFor = 0;
+    s.walkWait = 0;
+    ctx.rt.walkFreeAt = ctx.now + (priority ? WALK_GAP_PRIORITY : WALK_GAP_IDLE);
+    ctx.rt.walkBy = s.key;
+    return true;
   }
 
   /** Move along the current path. Returns true once the end is reached. */
@@ -298,6 +450,9 @@ export class Actor {
       s.walking = false;
       return true;
     }
+    // the room has only MAX_WALKERS walking slots and starts walks at a minimum gap: a new walk waits standing until it may go
+    this.gated = !s.walking && !this.takeWalkSlot(ctx, dt);
+    if (this.gated) return false;
     const target = this.path[this.pi];
     const dx = target.x - s.x;
     const dz = target.z - s.z;
@@ -370,6 +525,11 @@ export class Actor {
     const pose = this.targetPose();
     this.typing = 0;
     s.busy = false;
+    // deliveries: one timer per room, compared with the clock (whoever is on stage advances it)
+    if (s.onStage && tickParcel(rt, ctx.now)) sfx('doorbell', s.roomId);
+    // a nap only lasts in the chair; a finished break leaves nothing of the smoke behind
+    if (s.phase !== 'working') this.wake();
+    if (s.phase !== 'activity') this.smoke = 0;
 
     switch (s.phase) {
       case 'waiting': {
@@ -382,10 +542,13 @@ export class Actor {
         this.lid = 0;
         this.bagT = 0;
         this.folderP = 0;
+        s.walkWait = 0;
         if (!person.present) break;
         if (!this.isDirector && s.desk < 0) break;
         if (ctx.now < rt.doorFreeAt) break;
-        rt.doorFreeAt = ctx.now + (this.isDirector ? 0.6 : 1.5);
+        // (the way in is a priority walk: it waits for a free slot, and idle walks give way to it meanwhile)
+        if (!this.takeWalkSlot(ctx, dt, true)) break;
+        rt.doorFreeAt = ctx.now + ENTRY_GAP_MIN + Math.random() * ENTRY_GAP_SPAN;
         this.startPath(this.routeIn(ctx, this.approachOf(ctx)));
         this.waveDone.clear();
         this.resume = false;
@@ -398,7 +561,7 @@ export class Actor {
         this.deskPetT = -1;
         this.nextIdleAt = debugFlags.activity ? 1.5 : 12 + Math.random() * 8;
         // at the door: a greeting first, the job they came for follows five seconds later
-        greet(s.key, greetingLine(this.isDirector, new Date().getHours()), 'wave', GREET_MS);
+        greet(s.key, greetingLine(this.isDirector, new Date().getHours(), this.colleaguesHere(ctx)), 'wave', GREET_MS);
         sfx('door', s.roomId);
         s.onStage = true;
         s.yaw = Math.atan2(layout.door.dir.x, layout.door.dir.z);
@@ -453,9 +616,10 @@ export class Actor {
           pose.armRz = 0.7;
           pose.headX = 0.25;
         } else if (t < 1.75) {
-          pose.armLx = pose.armRx = -1.15;
+          // carrying the laptop down onto the desk: the hands come down to the typing spot
+          pose.armLx = pose.armRx = this.reach.arm - 0.3 * (1 - seg(t, 1.0, 1.75));
           pose.armLz = pose.armRz = -0.2;
-          pose.foreLx = pose.foreRx = -0.35;
+          pose.foreLx = pose.foreRx = this.reach.fore;
           pose.headX = 0.15;
         } else {
           this.typePose(pose, 16, 0.6);
@@ -479,7 +643,7 @@ export class Actor {
         if (!person.present) {
           // the office is closing: pack the laptop and go home
           this.workPose(pose, ctx);
-          this.announce(ctx, [goodbyeLine(this.isDirector), 'home']);
+          this.announce(ctx, [goodbyeLine(this.isDirector, this.colleaguesHere(ctx)), 'home']);
           this.setPhase('packing');
         } else if (this.isDirector) {
           this.workPose(pose, ctx);
@@ -529,9 +693,9 @@ export class Actor {
         this.seatedPose(pose, 1);
         if (t < 0.5) this.typePose(pose, 10, 0.5);
         else if (t < 1.1) {
-          pose.armLx = pose.armRx = -1.15;
+          pose.armLx = pose.armRx = this.reach.arm - 0.3 * seg(t, 0.5, 1.1);
           pose.armLz = pose.armRz = -0.2;
-          pose.foreLx = pose.foreRx = -0.35;
+          pose.foreLx = pose.foreRx = this.reach.fore;
         } else {
           pose.lean = 0.28;
           pose.armRx = 0.1;
@@ -559,7 +723,7 @@ export class Actor {
         pose.lean = 0.12 * Math.sin(u * Math.PI);
         if (this.t >= 0.9 && this.strolling && this.act) {
           s.sitT = 0;
-          this.startPath(layout.nav.findPath({ x: s.x, z: s.z }, this.act.target) ?? [this.act.target]);
+          this.startPath(this.act.outdoor ? this.routeOut(ctx, this.act.target) : layout.nav.findPath({ x: s.x, z: s.z }, this.act.target) ?? [this.act.target]);
           this.setPhase('stroll');
         } else if (this.t >= 0.9 && this.reporting) {
           s.sitT = 0;
@@ -575,7 +739,7 @@ export class Actor {
       }
 
       case 'stroll': {
-        if (this.awayWork(dt, ctx, pose)) break;
+        if (!this.act?.outdoor && this.awayWork(dt, ctx, pose)) break;
         this.walkPose(pose, 1);
         s.y = 0;
         if (this.shouldReturn(ctx)) this.goHome(ctx);
@@ -673,6 +837,7 @@ export class Actor {
             const back = this.resumeAct;
             this.resumeAct = null;
             this.act = back;
+            s.onBreak = back.kind !== 'parcel';
             this.startPath(layout.nav.findPath({ x: s.x, z: s.z }, back.target) ?? [back.target]);
             this.setPhase('stroll');
             break;
@@ -682,6 +847,7 @@ export class Actor {
           const app = this.approachOf(ctx);
           this.startPath(layout.nav.findPath({ x: s.x, z: s.z }, app) ?? [app]);
           this.setPhase('returning');
+          this.reportReturn = true;
         }
         break;
       }
@@ -700,6 +866,22 @@ export class Actor {
       }
     }
 
+    // the director deals with the user's message while it is on screen: a call on the desk phone (in the chair, or wherever a break has brought him) or an email read at the laptop
+    const msgOn = this.isDirector && (s.msgUntil ?? 0) > ctx.now && !s.walking;
+    if (msgOn && s.msgVia !== 'email' && (s.phase === 'working' || s.phase === 'activity')) this.callPose(pose);
+    else {
+      if (this.held === 'handsetEar') {
+        this.held = 'none';
+        this.heldTilt = 0;
+      }
+      s.handsetUp = false;
+      if (msgOn && s.msgVia === 'email' && s.phase === 'working') this.mailPose(pose);
+    }
+    // a question of the agent is waiting for the user: the director looks up and waves for attention (wakes him, over a break's hand pose)
+    if (this.isDirector && ctx.rt.askAt > 0 && !s.walking) {
+      if (this.sleepT >= 0) this.wake();
+      if (!msgOn && (s.phase === 'working' || s.phase === 'activity')) this.askPose(pose, (ctx.now - ctx.rt.askAt) % 4);
+    }
     this.blink(dt);
     this.copyPose(pose);
   }
@@ -714,8 +896,16 @@ export class Actor {
     }
     if (!this.isResting(ctx)) {
       if (this.deskPetT >= 0) dismissIdle(this.sim.key);
+      this.wake();
       this.restT = 0;
       this.deskPetT = -1;
+      return;
+    }
+    if (this.sleepT >= 0) {
+      // napping in the chair: "Z z z" now and then, up again when the time is over
+      this.sleepT += dt;
+      this.zzz(ctx, this.sleepT);
+      if (this.sleepT > (this.act?.dur ?? 30)) this.wake();
       return;
     }
     if (this.deskPetT >= 0) {
@@ -749,10 +939,44 @@ export class Actor {
     this.announce(ctx, thoughtOf(a, a.detail ?? ''));
     if (a.atDesk) {
       this.deskPetT = 0;
+    } else if (a.kind === 'sleep') {
+      this.sleepT = 0;
+      this.zzzStep = -1;
+      this.sim.asleep = true;
     } else {
       this.strolling = true;
+      // claim a break slot at once, so nobody else decides on one in the same frame (a parcel run is no break)
+      this.sim.onBreak = a.kind !== 'parcel';
       this.setPhase('standing');
     }
+  }
+
+  /** up from a nap in the chair: eyes open (the pose resets every frame), the dozing bubble goes away */
+  private wake() {
+    if (this.sleepT < 0) return;
+    this.sleepT = -1;
+    this.sim.asleep = false;
+    this.zzzStep = -1;
+    this.act = null;
+    this.restT = 0;
+    this.nextIdleAt = 20 + Math.random() * 14;
+    dismissIdle(this.sim.key);
+  }
+
+  /** a floating "Z z z" that grows a letter every 4 seconds (the speech bubble changes at most that often) */
+  private zzz(ctx: ActorCtx, t: number) {
+    if (t < 3) return;
+    const step = Math.floor((t - 3) / 4);
+    if (step === this.zzzStep) return;
+    this.zzzStep = step;
+    this.announce(ctx, [ZZZ[step % 3], 'sleep']);
+  }
+
+  /** how many other staff (not the director, not me) are in the office right now: who a greeting or goodbye is meant for */
+  private colleaguesHere(ctx: ActorCtx): number {
+    let n = 0;
+    for (const o of ctx.others) if (o !== this.sim && o.onStage && o.desk >= 0) n++;
+    return n;
   }
 
   /** the director rests while nobody needs him; the staff rest while they have no task */
@@ -788,6 +1012,7 @@ export class Actor {
     s.walking = false;
     this.workTime += dt;
     this.held = 'none';
+    this.smoke = 0;
     this.pour = 0;
     this.tapFlow = 0;
     this.steam = 0;
@@ -839,6 +1064,13 @@ export class Actor {
       if (spotOwners.get(k) === this.sim.key) spotOwners.delete(k);
     }
     if (this.act?.stationKey && spotOwners.get(this.act.stationKey) === this.sim.key) spotOwners.delete(this.act.stationKey);
+    // an interrupted delivery run: the box goes back on the porch for the next one to fetch
+    const prt = roomRuntime.get(this.sim.roomId);
+    if (prt && prt.parcelBy === this.sim.key) {
+      prt.parcelBy = null;
+      if (prt.parcel === 'carried') prt.parcel = 'waiting';
+    }
+    this.smoke = 0;
     this.held = 'none';
     this.pour = 0;
     this.heldTilt = 0;
@@ -862,7 +1094,8 @@ export class Actor {
     s.y = 0;
     s.sitT = 0;
     const app = this.approachOf(ctx);
-    this.startPath(ctx.layout.nav.findPath({ x: s.x, z: s.z }, app) ?? [app]);
+    // from the porch the way back leads through the door (the nav grid stops at the wall)
+    this.startPath(this.onPorch(ctx) ? this.routeIn(ctx, app) : ctx.layout.nav.findPath({ x: s.x, z: s.z }, app) ?? [app]);
     this.act = null;
     this.setPhase('returning');
   }
@@ -872,7 +1105,7 @@ export class Actor {
     for (let i = 0; i < 40; i++) {
       const p = { x: (Math.random() - 0.5) * (W - 2.4), z: (Math.random() - 0.5) * (D - 2.4) };
       const d = Math.hypot(p.x - ref.x, p.z - ref.z);
-      if (d > 2 && d < 9 && !nav.isBlocked(p.x, p.z) && nav.findPath(ref, p)) return p;
+      if (d > 2 && d < 9 && !nav.isBlocked(p.x, p.z) && nav.reachable(ref, p)) return p;
     }
     return null;
   }
@@ -880,6 +1113,8 @@ export class Actor {
   private pickActivity(ctx: ActorCtx): Activity | null {
     const { layout, cats, workers } = ctx;
     const s = this.sim;
+    // no break starts while the room's walking slots are taken (the retry comes 3-6 s later)
+    if (!debugFlags.activity && !this.walkSlotOpen(ctx, s, false)) return null;
     const from = { x: s.x, z: s.z };
     const free = (p: V2) => !layout.nav.isBlocked(p.x, p.z);
     const pick = <T,>(arr: readonly T[]) => arr[Math.floor(Math.random() * arr.length)];
@@ -888,14 +1123,19 @@ export class Actor {
     const petCats = cats.filter((c) => c.onStage && c.still && c.petUntil < ctx.now && (this.isDirector || layout.spots[c.spot]?.kind !== 'desk'));
     const watchable = workers.filter((w) => w.desk >= 0 && w.busy && w.key !== s.key);
     const staff = !this.isDirector;
-    const chatters = ctx.idlers.filter((w) => w.key !== s.key && !w.chatBy && w.onStage && w.phase === 'working' && !w.busy && w.desk >= 0);
+    const chatters = ctx.idlers.filter((w) => w.key !== s.key && !w.chatBy && !w.asleep && w.onStage && w.phase === 'working' && !w.busy && w.desk >= 0);
+    const parcelFree = ctx.rt.parcel === 'waiting' && (!ctx.rt.parcelBy || !sims.get(ctx.rt.parcelBy)?.onStage);
     const stationsOf = (k: StationKind) => layout.stations.map((st, i) => ({ st, i })).filter(({ st, i }) => st.kind === k && !spotOwners.has(`${s.roomId}@${i}`));
     const options: [ActivityKind, number][] = [
       ['wander', staff ? 1.5 : 3], ['sofa', seats.length ? (staff ? 4 : 3) : 0], ['watch', watchable.length ? (staff ? 1.5 : 4) : 0],
       ['window', layout.catWindows.length ? (staff ? 1.5 : 2.5) : 0], ['pet', petCats.length ? (staff ? 4.5 : 5) : 0], ['stay', staff ? 5 : 0],
       ['drink', stationsOf('drink').length ? 4 : 0], ['read', stationsOf('read').length ? 3.5 : 0], ['fish', stationsOf('fish').length ? 3.5 : 0],
       ['wash', stationsOf('wash').length ? 2.5 : 0], ['water', stationsOf('water').length ? 3.5 : 0],
-      ['cook', stationsOf('cook').length ? 3.5 : 0], ['chat', chatters.length ? (staff ? 4 : 2.5) : 0],
+      ['cook', stationsOf('cook').length ? 3.5 : 0],
+      ['box', stationsOf('box').length ? 2.5 : 0], ['lift', stationsOf('lift').length ? 2.5 : 0],
+      ['chat', chatters.length ? (staff ? 4 : 2.5) : 0],
+      // a box on the porch: the first to roll it goes (nobody else is on the way); a nap is likelier at night
+      ['parcel', parcelFree ? 25 : 0], ['sleep', staff || !ctx.rt.visitors.some((v) => v !== null) ? 2 * (1 + env.night) : 0],
     ];
     let roll = Math.random() * options.reduce((a, [, w]) => a + w, 0);
     let kind: ActivityKind = 'wander';
@@ -920,17 +1160,19 @@ export class Actor {
       case 'fish':
       case 'wash':
       case 'water':
+      case 'box':
+      case 'lift':
       case 'cook': {
         const { st, i } = pick(stationsOf(kind));
         const stationKey = `${s.roomId}@${i}`;
         spotOwners.set(stationKey, s.key);
-        const dur = kind === 'drink' ? 15 : kind === 'read' ? 26 + Math.random() * 10 : kind === 'fish' ? 22 + Math.random() * 10 : kind === 'wash' ? 14 : kind === 'cook' ? 34 + Math.random() * 6 : 20 + Math.random() * 6;
+        const dur = kind === 'drink' ? 15 : kind === 'read' ? 26 + Math.random() * 10 : kind === 'fish' ? 22 + Math.random() * 10 : kind === 'wash' ? 14 : kind === 'cook' ? 34 + Math.random() * 6 : kind === 'box' ? 18 + Math.random() * 10 : kind === 'lift' ? 20 + Math.random() * 10 : 20 + Math.random() * 6;
         return { kind, target: st.stand, yaw: st.yaw, dur, station: st, stationKey, detail: kind === 'read' ? pickOne(BOOKS) : undefined };
       }
       case 'sofa': {
         const { sp, i } = pick(seats);
         spotOwners.set(`${s.roomId}#${i}`, s.key);
-        return { kind, target: sp.approach, yaw: sp.yaw, dur: 24 + Math.random() * 24, spot: i };
+        return { kind, target: sp.approach, yaw: sp.yaw, dur: 24 + Math.random() * 24, spot: i, phone: Math.random() < SOFA_PHONE_CHANCE };
       }
       case 'watch': {
         const w = pick(watchable);
@@ -959,7 +1201,25 @@ export class Actor {
       }
       case 'window': {
         const cw = pick(layout.catWindows);
-        return { kind, target: cw.land, yaw: cw.yaw + Math.PI, dur: 15 + Math.random() * 13 };
+        // about a third of them smoke while they look out (two drags instead of a long look)
+        const smoke = Math.random() < 0.35;
+        return { kind, target: cw.land, yaw: cw.yaw + Math.PI, dur: smoke ? 20 + Math.random() * 6 : 15 + Math.random() * 13, smoke };
+      }
+      case 'parcel': {
+        // a spot on the porch in front of the box, looking at it
+        const { threshold, dir } = layout.door;
+        ctx.rt.parcelBy = s.key;
+        return { kind, target: { x: threshold.x - dir.x * PORCH_STAND, z: threshold.z - dir.z * PORCH_STAND }, yaw: Math.atan2(-dir.x, -dir.z), dur: 0, outdoor: true };
+      }
+      case 'sleep': {
+        const dur = 25 + Math.random() * 20;
+        if (seats.length && Math.random() < 0.5) {
+          // on a free sofa / armchair: the sofa flow does the walking, sitting down and getting up
+          const { sp, i } = pick(seats);
+          spotOwners.set(`${s.roomId}#${i}`, s.key);
+          return { kind: 'sofa', target: sp.approach, yaw: sp.yaw, dur, spot: i, sleep: true };
+        }
+        return { kind, target: from, yaw: 0, dur };
       }
       case 'pet': {
         const c = pick(petCats);
@@ -1001,7 +1261,7 @@ export class Actor {
       return;
     }
     // (getting up from / sitting down on the sofa is finished first)
-    if ((a.kind !== 'sofa' || this.actStage === 1) && this.awayWork(dt, ctx, pose)) return;
+    if (a.kind !== 'parcel' && (a.kind !== 'sofa' || this.actStage === 1) && this.awayWork(dt, ctx, pose)) return;
     const t = this.t;
     const back = this.shouldReturn(ctx);
     switch (a.kind) {
@@ -1035,7 +1295,14 @@ export class Actor {
           s.sitT = 1;
           this.faceYaw(spot.yaw, dt);
           this.seatedPose(pose, 1);
-          this.sofaPose(pose);
+          if (a.sleep) {
+            this.sleepPose(pose, true);
+            this.zzz(ctx, t);
+          } else if (a.phone) {
+            this.held = 'phone';
+            this.phonePose(pose, t);
+            for (let at = 3; at < a.dur - 2; at += PHONE_SWIPE_S) this.cue('swipe', at);
+          } else this.sofaPose(pose);
           if (back || t >= a.dur) {
             this.actStage = 2;
             this.t = 0;
@@ -1046,6 +1313,7 @@ export class Actor {
           s.z = lerp(spot.z, spot.approach.z, u);
           s.y = lerp(yOn, 0, u);
           s.sitT = 1 - u;
+          this.held = 'none';
           this.seatedPose(pose, s.sitT);
           if (t >= 0.9) this.goHome(ctx);
         }
@@ -1060,8 +1328,17 @@ export class Actor {
       }
       case 'window': {
         this.faceYaw(a.yaw, dt, 5);
-        this.lookOutPose(pose);
+        if (a.smoke) {
+          this.held = 'cig';
+          this.smokePose(pose);
+          for (let at = 2.4; at < a.dur - 3; at += SMOKE_CYCLE) this.cue('inhale', at);
+          for (let at = 5.0; at < a.dur - 2; at += SMOKE_CYCLE) this.cue('exhale', at);
+        } else this.lookOutPose(pose);
         if (back || t > a.dur) this.goHome(ctx);
+        break;
+      }
+      case 'parcel': {
+        this.parcelRun(dt, ctx, pose, a, back);
         break;
       }
       case 'pet': {
@@ -1080,6 +1357,8 @@ export class Actor {
       case 'fish':
       case 'wash':
       case 'water':
+      case 'box':
+      case 'lift':
       case 'cook': {
         this.faceYaw(a.yaw, dt, 7);
         this.idlePose(pose);
@@ -1107,6 +1386,73 @@ export class Actor {
     this.prevT = t;
   }
 
+  /** on the sofa: head down over the phone, the thumb flicks the screen now and then, a smile at something funny */
+  private phonePose(p: Pose, t: number) {
+    const c = this.clock;
+    this.seatedPose(p, 1);
+    p.lean = 0.1;
+    p.headX = 0.42 + Math.sin(c * 0.7) * 0.03;
+    p.headY = Math.sin(c * 0.4) * 0.05;
+    p.armRx = -1.05;
+    p.armRz = -0.32;
+    p.foreRx = -1.35;
+    p.armLx = -0.95;
+    p.armLz = -0.3;
+    p.foreLx = -1.3;
+    // thumb scroll: short flicks of the forearm, three to a bunch, then a pause
+    const flick = Math.max(0, Math.sin(c * 7.5)) * (Math.sin(c * 0.9) > 0.1 ? 1 : 0);
+    p.foreRx -= flick * 0.05;
+    p.armRx -= flick * 0.02;
+    const m = (t + 5) % PHONE_BUMP_S;
+    const bump = seg(m, 0, 0.4) * (1 - seg(m, 1.4, 2.0));
+    p.happy = 0.15 + 0.85 * bump;
+    p.bob = Math.sin(c * 1.15) * 0.004;
+  }
+
+  /** the handset of the desk phone at the right ear: small nods, the free hand gestures a little (over any other arm pose) */
+  private callPose(p: Pose) {
+    const c = this.clock;
+    this.held = 'handsetEar';
+    this.sim.handsetUp = true;
+    this.heldTilt = 0;
+    this.typing = 0;
+    p.armRx = -0.75 + Math.sin(c * 1.1) * 0.03;
+    p.armRz = -0.1;
+    p.foreRx = -2.35;
+    p.armLx = this.reach.arm + Math.sin(c * 1.7) * 0.03; // the free hand rests on the desk beside the laptop
+    p.armLz = 0.3;
+    p.foreLx = this.reach.fore + 0.1 + Math.sin(c * 2.1 + 1) * 0.03;
+    p.headX = 0.03 + Math.sin(c * 2.4) * 0.05;
+    p.headY = Math.sin(c * 0.5) * 0.06;
+    p.headZ = 0.14;
+    p.lean = -0.02;
+    p.happy = 0.35;
+    p.mouth = 'smile';
+  }
+
+  /** waiting for an answer: the head up, the right arm raised in a slow wave for about 2 s of every 4 (arms and head only, so it fits sitting and standing) */
+  private askPose(p: Pose, t: number) {
+    const up = seg(t, 0, 0.35) * (1 - seg(t, 1.7, 2.1));
+    if (up <= 0) return;
+    const c = this.clock;
+    this.typing = 0;
+    p.armRx += (-2.6 - p.armRx) * up;
+    p.armRz += (0.35 + Math.sin(c * 9) * 0.3 - p.armRz) * up;
+    p.foreRx += (-0.3 - p.foreRx) * up;
+    p.headX += (-0.12 - p.headX) * up;
+    p.happy = Math.max(p.happy, 0.8 * up);
+  }
+
+  /** an email at the laptop: a little lean towards the screen, the head down and tilted, a slow nod now and then (over the seated typing pose, no item in the hand) */
+  private mailPose(p: Pose) {
+    const c = this.clock;
+    p.lean = Math.max(p.lean, 0.1);
+    p.headX = 0.26 + Math.sin(c * 1.9) * 0.05 * Math.max(0, Math.sin(c * 0.45));
+    p.headZ = 0.08;
+    p.headY = Math.sin(c * 0.6) * 0.05;
+    p.happy = Math.max(p.happy, 0.2);
+  }
+
   /** talking with a colleague: gestures while speaking, a little nod while listening */
   private chatPose(p: Pose, speaking: boolean) {
     const c = this.clock;
@@ -1129,21 +1475,21 @@ export class Actor {
 
   /** piecewise smooth interpolation between key poses */
   private keyed(pose: Pose, keys: Key[], t: number) {
-    const full = keys.map((k) => ({ ...RELAXED, ...k }));
+    // no per-call allocation: missing channels fall back to RELAXED while reading
+    const n = keys.length;
     let i = 0;
-    while (i < full.length - 2 && t > full[i + 1].t) i++;
-    const a = full[i];
-    const b = full[Math.min(i + 1, full.length - 1)];
+    while (i < n - 2 && t > keys[i + 1].t) i++;
+    const a = keys[i];
+    const b = keys[Math.min(i + 1, n - 1)];
     const u = b.t > a.t ? seg(t, a.t, b.t) : 1;
-    const v = (k: keyof typeof RELAXED) => lerp(a[k], b[k], u);
-    pose.armRx = v('rx');
-    pose.armRz = v('rz');
-    pose.foreRx = v('fr');
-    pose.armLx = v('lx');
-    pose.armLz = v('lz');
-    pose.foreLx = v('fl');
-    pose.lean = v('lean');
-    pose.headX = v('hx');
+    pose.armRx = lerp(a.rx ?? RELAXED.rx, b.rx ?? RELAXED.rx, u);
+    pose.armRz = lerp(a.rz ?? RELAXED.rz, b.rz ?? RELAXED.rz, u);
+    pose.foreRx = lerp(a.fr ?? RELAXED.fr, b.fr ?? RELAXED.fr, u);
+    pose.armLx = lerp(a.lx ?? RELAXED.lx, b.lx ?? RELAXED.lx, u);
+    pose.armLz = lerp(a.lz ?? RELAXED.lz, b.lz ?? RELAXED.lz, u);
+    pose.foreLx = lerp(a.fl ?? RELAXED.fl, b.fl ?? RELAXED.fl, u);
+    pose.lean = lerp(a.lean ?? RELAXED.lean, b.lean ?? RELAXED.lean, u);
+    pose.headX = lerp(a.hx ?? RELAXED.hx, b.hx ?? RELAXED.hx, u);
   }
 
   /** the little scenes: getting a drink, reading, watching the fish, washing up, watering a plant */
@@ -1303,8 +1649,144 @@ export class Actor {
         }
         break;
       }
+      case 'box':
+        this.boxPose(a, pose);
+        break;
+      case 'lift':
+        this.liftPose(a, pose);
+        break;
       default:
     }
+  }
+
+  /** key-pose blend with an explicit weight (same channels as `keyed`) */
+  private mixKey(pose: Pose, a: Key, b: Key, u: number) {
+    pose.armRx = lerp(a.rx ?? RELAXED.rx, b.rx ?? RELAXED.rx, u);
+    pose.armRz = lerp(a.rz ?? RELAXED.rz, b.rz ?? RELAXED.rz, u);
+    pose.foreRx = lerp(a.fr ?? RELAXED.fr, b.fr ?? RELAXED.fr, u);
+    pose.armLx = lerp(a.lx ?? RELAXED.lx, b.lx ?? RELAXED.lx, u);
+    pose.armLz = lerp(a.lz ?? RELAXED.lz, b.lz ?? RELAXED.lz, u);
+    pose.foreLx = lerp(a.fl ?? RELAXED.fl, b.fl ?? RELAXED.fl, u);
+    pose.lean = lerp(a.lean ?? RELAXED.lean, b.lean ?? RELAXED.lean, u);
+    pose.headX = lerp(a.hx ?? RELAXED.hx, b.hx ?? RELAXED.hx, u);
+  }
+
+  /** boxing a punching dummy: guard, alternating jabs and crosses (torso twist, footwork), a breather now and then, a little victory dance */
+  private boxPose(a: Activity, pose: Pose) {
+    const t = this.t;
+    const d = a.dur;
+    const c = this.clock;
+    const fightEnd = d - 3.2;
+    const room = this.sim.roomId;
+    if (t < 0.9) this.mixKey(pose, K_NONE, K_GUARD, seg(t, 0, 0.9));
+    else if (t < fightEnd) this.mixKey(pose, K_GUARD, K_GUARD, 0);
+    else if (t < d - 1.6) this.mixKey(pose, K_GUARD, K_CHEER, seg(t, fightEnd, fightEnd + 0.4));
+    else this.mixKey(pose, K_CHEER, K_NONE, seg(t, d - 1.6, d - 0.6));
+    // fighting stance: knees bent, light bouncing on the feet
+    const stance = seg(t, 0, 0.9) * (1 - seg(t, fightEnd, fightEnd + 0.4));
+    const fw = Math.sin(c * 6.5) * stance;
+    pose.thighLx = -0.2 * stance + fw * 0.08;
+    pose.thighRx = -0.2 * stance - fw * 0.08;
+    pose.kneeLx = 0.3 * stance + Math.max(0, fw) * 0.1;
+    pose.kneeRx = 0.3 * stance + Math.max(0, -fw) * 0.1;
+    pose.bob = -0.05 * stance + Math.abs(fw) * 0.025;
+    if (t >= 0.9 && t < fightEnd - 0.2) {
+      pose.headY = Math.sin(c * 3.1) * 0.06;
+      const ft = (t - 0.9) / PUNCH_S;
+      const n = Math.floor(ft);
+      // every seventh beat is a breather
+      if (n % 7 !== 6) {
+        const u = ft - n;
+        const right = n % 2 === 0;
+        const e = seg(u, 0, 0.28) * (1 - seg(u, 0.36, 0.75));
+        if (right) {
+          pose.armRx = lerp(K_GUARD.rx!, -1.5, e);
+          pose.armRz = lerp(K_GUARD.rz!, -0.03, e);
+          pose.foreRx = lerp(K_GUARD.fr!, -0.12, e);
+        } else {
+          pose.armLx = lerp(K_GUARD.lx!, -1.5, e);
+          pose.armLz = lerp(K_GUARD.lz!, -0.03, e);
+          pose.foreLx = lerp(K_GUARD.fl!, -0.12, e);
+        }
+        pose.twist = (right ? -0.38 : 0.38) * e;
+        pose.lean += 0.07 * e;
+        if (e > 0.5) pose.mouth = 'o';
+        if (u > 0.28 && n >= this.bites) {
+          this.bites = n + 1;
+          kickDummy(room, 1.5 + Math.random() * 0.8);
+          sfx('thud', room);
+        }
+      }
+    } else if (t >= fightEnd) {
+      // victory: fists up, hopping and shaking
+      const h = t - fightEnd;
+      const cheer = 1 - seg(t, d - 1.6, d - 0.6);
+      pose.bob += Math.abs(Math.sin(h * 7)) * 0.07 * cheer;
+      pose.twist = Math.sin(c * 12) * 0.1 * cheer;
+      pose.armRx += Math.sin(c * 11) * 0.25 * cheer;
+      pose.armLx += Math.cos(c * 11) * 0.25 * cheer;
+      pose.happy = cheer;
+      this.cue('huff', fightEnd);
+    }
+  }
+
+  /** lifting small dumbbells: bend to the mat, pick up a pair, alternating then both-arm curls, rest, put them back */
+  private liftPose(a: Activity, pose: Pose) {
+    const t = this.t;
+    const d = a.dur;
+    const c = this.clock;
+    const room = this.sim.roomId;
+    const curlEnd = d - 6.0;
+    const putAt = d - 2.6;
+    let bow = 0;
+    if (t < 2.7) {
+      this.mixKey(pose, K_NONE, K_BOW, seg(t, 0, 0.9));
+      if (t > 1.6) this.mixKey(pose, K_BOW, K_ARMS_DOWN, seg(t, 1.6, 2.7));
+      bow = seg(t, 0, 0.9) * (1 - seg(t, 1.6, 2.7));
+    } else if (t < d - 4.0) {
+      this.mixKey(pose, K_ARMS_DOWN, K_ARMS_DOWN, 0);
+    } else if (t < d - 2.2) {
+      this.mixKey(pose, K_ARMS_DOWN, K_BOW, seg(t, d - 4.0, d - 3.0));
+      bow = seg(t, d - 4.0, d - 3.0);
+    } else {
+      this.mixKey(pose, K_BOW, K_NONE, seg(t, d - 2.2, d - 1.0));
+      bow = 1 - seg(t, d - 2.2, d - 1.0);
+    }
+    pose.bob = -0.1 * bow;
+    pose.thighLx = pose.thighRx = -0.35 * bow;
+    pose.kneeLx = pose.kneeRx = 0.6 * bow;
+    if (t >= 1.2 && t < putAt) takeDumbbells(room);
+    if (t > 1.3 && t < putAt) this.held = 'dumbbell';
+    this.cue('clank', 1.2);
+    this.cue('clank', putAt);
+    if (t >= 3.0 && t < curlEnd) {
+      const ct = t - 3.0;
+      const w = (ct / CURL_S) * Math.PI * 2;
+      const ramp = seg(t, 3.0, 3.6) * (1 - seg(t, curlEnd - 0.6, curlEnd));
+      // the first reps alternate, then both arms curl together
+      const sync = seg(ct, 5.5, 6.5);
+      const cr = (0.5 + 0.5 * Math.sin(w)) * ramp;
+      const cl = (0.5 + 0.5 * Math.sin(w + Math.PI * (1 - sync))) * ramp;
+      pose.foreRx = lerp(-0.3, -2.2, cr);
+      pose.foreLx = lerp(-0.3, -2.2, cl);
+      pose.armRx = 0.05 - 0.18 * cr;
+      pose.armLx = 0.05 - 0.18 * cl;
+      pose.lean = -0.03 * (cr + cl) + Math.sin(c * 2.4) * 0.01;
+      pose.headX = -0.05 * Math.max(cr, cl);
+      if (Math.max(cr, cl) > 0.85) pose.mouth = 'o';
+      const n = Math.floor(ct / CURL_S);
+      if (ct / CURL_S - n > 0.3 && n >= this.bites) {
+        this.bites = n + 1;
+        if (n % 2 === 1) sfx('huff', room);
+      }
+    } else if (t >= curlEnd && t < d - 4.0) {
+      // catching a breath
+      pose.lean = Math.sin(c * 2.6) * 0.03;
+      pose.headX = -0.1;
+      pose.mouth = 'o';
+      this.cue('huff', curlEnd + 0.4);
+    }
+    if (t > d - 1.0) pose.happy = 1;
   }
 
   private sofaPose(p: Pose) {
@@ -1330,6 +1812,110 @@ export class Actor {
     p.headZ = 0.1 + Math.sin(c * 0.8) * 0.04;
     p.headY = Math.sin(c * 0.4) * 0.12;
     p.lean = 0.06;
+  }
+
+  /**
+   * The delivery run (stage 0: bend down for the box on the porch, 1: carry it in to the desk, 2: shake it, have a
+   * look inside and put it away). Anything that cuts the run short sends the person home; the box goes back on the porch.
+   */
+  private parcelRun(dt: number, ctx: ActorCtx, pose: Pose, a: Activity, back: boolean) {
+    const s = this.sim;
+    const rt = ctx.rt;
+    const t = this.t;
+    const c = this.clock;
+    if (back || rt.parcelBy !== s.key || ctx.task) {
+      // (a box that is already inside is put away rather than carried out again)
+      if (this.actStage === 2) parcelDone(rt, ctx.now);
+      this.goHome(ctx);
+      return;
+    }
+    if (this.actStage === 0) {
+      this.faceYaw(a.yaw, dt, 8);
+      this.idlePose(pose);
+      this.keyed(pose, PARCEL_KEYS, t);
+      const crouch = seg(t, 0.4, 1.3) * (1 - seg(t, 1.9, 2.6));
+      pose.thighLx = pose.thighRx = -0.35 * crouch;
+      pose.kneeLx = pose.kneeRx = 0.6 * crouch;
+      pose.bob = -0.04 * crouch;
+      this.cue('paper', 1.6);
+      if (t >= 1.6 && this.held !== 'parcel') {
+        // the box is in the arms: it is gone from the porch
+        this.held = 'parcel';
+        rt.parcel = 'carried';
+      }
+      if (t >= 2.7) {
+        this.actStage = 1;
+        this.startPath(this.routeIn(ctx, this.approachOf(ctx)));
+        this.setPhase('activity');
+      }
+    } else if (this.actStage === 1) {
+      this.walkPose(pose, 0.85);
+      this.holdBoxPose(pose);
+      if (this.walk(dt, ctx, 0.9)) {
+        this.actStage = 2;
+        s.walking = false;
+        this.setPhase('activity');
+      }
+    } else {
+      const seat = this.seatOf(ctx);
+      this.faceYaw(Math.atan2(seat.x - s.x, seat.z - s.z), dt, 6);
+      this.idlePose(pose);
+      this.holdBoxPose(pose);
+      const shake = t < 1.2 ? Math.sin(c * 18) : 0;
+      const peek = seg(t, 1.2, 1.7) * (1 - seg(t, 2.6, 3.0));
+      pose.armRx += shake * 0.07 - 0.15 * peek;
+      pose.lean = 0.25 * peek;
+      pose.headX = 0.35 * peek;
+      pose.happy = peek;
+      if (peek > 0.5) pose.mouth = 'o';
+      this.heldTilt = shake * 0.12 - 0.5 * peek;
+      this.cue('paper', 1.4);
+      if (t >= 3.3) {
+        // put away: the room waits 2-5 minutes for the next delivery
+        this.held = 'none';
+        this.heldTilt = 0;
+        parcelDone(rt, ctx.now);
+        this.goHome(ctx);
+      }
+    }
+  }
+
+  /** both arms in front of the chest around a box */
+  private holdBoxPose(p: Pose) {
+    p.armLx = p.armRx = -1.15;
+    p.armLz = p.armRz = -0.45;
+    p.foreLx = p.foreRx = -0.7;
+    p.lean = 0.04;
+  }
+
+  /** asleep: eyes shut, slow breathing; in the chair the head tips back and to the side, on the sofa it droops and the arms hang slack */
+  private sleepPose(p: Pose, sofa: boolean) {
+    const c = this.clock;
+    const breath = Math.sin(c * 1.15);
+    p.sleep = 1;
+    p.lean = (sofa ? -0.2 : -0.16) + breath * 0.015;
+    p.headX = sofa ? 0.3 + breath * 0.02 : -0.3 + breath * 0.03;
+    p.headZ = sofa ? 0.5 : 0.28;
+    p.headY = 0;
+    p.armLx = p.armRx = sofa ? -0.3 : -0.6;
+    p.armLz = p.armRz = sofa ? 0.3 : -0.4;
+    p.foreLx = p.foreRx = sofa ? -0.5 : -1.5;
+    p.bob = breath * 0.006;
+  }
+
+  /** looking out of the window with a cigarette: hand at the hip, up to the mouth, a long drag, down again, and the smoke drifts out */
+  private smokePose(p: Pose) {
+    const c = this.clock;
+    const u = this.t % SMOKE_CYCLE;
+    this.lookOutPose(p);
+    this.keyed(p, SMOKE_KEYS, u);
+    p.headX = -0.05 + (u > 2.4 && u < 4.4 ? -0.12 : 0);
+    p.armLx = 0.28;
+    p.armLz = 0.1;
+    p.foreLx = -0.25;
+    p.headY = Math.sin(c * 0.5) * 0.18;
+    p.lean = Math.sin(c * 0.9) * 0.02 - 0.02;
+    this.smoke = seg(u, 5.0, 5.7) * (1 - seg(u, 7.4, 8.6));
   }
 
   private lookOutPose(p: Pose) {
@@ -1372,6 +1958,7 @@ export class Actor {
   }
 
   private walkPose(p: Pose, amp: number) {
+    if (this.gated) return; // held back, standing
     const w = this.walkPhase;
     const sn = Math.sin(w);
     p.thighLx = -sn * 0.8 * amp;
@@ -1443,10 +2030,10 @@ export class Actor {
   private typePose(p: Pose, freq: number, amp: number) {
     const c = this.clock;
     this.typing = amp;
-    p.armLx = p.armRx = -1.2;
+    p.armLx = p.armRx = this.reach.arm;
     p.armLz = p.armRz = -0.12;
-    p.foreLx = -0.42 + Math.sin(c * freq) * 0.09 * amp;
-    p.foreRx = -0.42 + Math.sin(c * freq + 2.1) * 0.09 * amp;
+    p.foreLx = this.reach.fore + Math.sin(c * freq) * 0.06 * amp;
+    p.foreRx = this.reach.fore + Math.sin(c * freq + 2.1) * 0.06 * amp;
     p.armLx += Math.sin(c * freq * 0.5 + 1) * 0.03 * amp;
     p.armRx += Math.sin(c * freq * 0.5) * 0.03 * amp;
     p.headX = 0.14 + Math.sin(c * 1.3) * 0.03;
@@ -1457,15 +2044,24 @@ export class Actor {
     const c = this.clock;
     const age = ctx.lastSayAge;
     const resting = this.isResting(ctx);
+    if (this.sleepT >= 0) {
+      // a task, a visitor at the director's desk or a closing office wakes the sleeper at once
+      if (!resting || ctx.rt.visitors.some((v) => v !== null) || !ctx.person.present) this.wake();
+      else {
+        this.sleepPose(p, false);
+        this.typing = 0;
+        return;
+      }
+    }
     if (this.deskPetT >= 0) {
       // stroking the cat that naps on the desk, without getting up
       p.lean = 0.16;
       p.armRx = -1.0 + Math.sin(c * 4) * 0.08;
       p.armRz = -0.15 + Math.sin(c * 4) * 0.2;
       p.foreRx = -0.55;
-      p.armLx = -1.2;
+      p.armLx = this.reach.arm;
       p.armLz = -0.12;
-      p.foreLx = -0.42;
+      p.foreLx = this.reach.fore;
       p.headX = 0.3;
       p.headY = 0.55;
       p.happy = 0.7;
@@ -1477,10 +2073,10 @@ export class Actor {
       // just received a report: happy nod + thumbs up
       p.happy = 1;
       p.headX = 0.12 + Math.sin(recv * 10) * 0.14;
-      p.armLx = p.armRx = -1.2;
+      p.armLx = p.armRx = this.reach.arm;
       p.armLz = p.armRz = -0.12;
-      p.foreLx = -0.42;
-      p.foreRx = -0.42;
+      p.foreLx = this.reach.fore;
+      p.foreRx = this.reach.fore;
       p.armRx = -1.9 + Math.sin(recv * 9) * 0.1;
       p.foreRx = -1.1;
       p.lean = 0.02;
@@ -1490,9 +2086,9 @@ export class Actor {
     if (resting) {
       // nothing to do right now: leans back and watches the room
       p.lean = -0.1;
-      p.armLx = p.armRx = -0.55;
+      p.armLx = p.armRx = -0.15;
       p.armLz = p.armRz = 0.35;
-      p.foreLx = p.foreRx = -0.8;
+      p.foreLx = p.foreRx = -0.4;
       p.headX = -0.05;
       p.headY = Math.sin(c * 0.6) * 0.35;
       this.typing = this.isDirector ? 0.15 : 0;
@@ -1503,9 +2099,9 @@ export class Actor {
       p.armRx = -0.85;
       p.armRz = -0.55;
       p.foreRx = -2.05;
-      p.armLx = -1.2;
+      p.armLx = this.reach.arm;
       p.armLz = -0.12;
-      p.foreLx = -0.42;
+      p.foreLx = this.reach.fore;
       p.headZ = 0.14;
       p.headX = -0.08;
       p.headY = Math.sin(c * 1.1) * 0.12;

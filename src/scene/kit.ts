@@ -24,8 +24,11 @@ export const G = {
   torus: (r: number, tube: number, arc = Math.PI * 2, rs = 8, ts = 24) =>
     cached(`t${r}|${tube}|${arc}|${rs}|${ts}`, () => new THREE.TorusGeometry(r, tube, rs, ts, arc)),
   box: (w: number, h: number, d: number) => cached(`b${w}|${h}|${d}`, () => new THREE.BoxGeometry(w, h, d)),
-  rbox: (w: number, h: number, d: number, r = 0.04, seg = 4) =>
-    cached(`r${w}|${h}|${d}|${r}|${seg}`, () => new RoundedBoxGeometry(w, h, d, seg, Math.min(r, w / 2 - 0.001, h / 2 - 0.001, d / 2 - 0.001))),
+  // seg 2 = 300 triangles, seg 4 = 972; below r 0.02 the bevel is invisible, so a plain box (12 triangles) does the job
+  rbox: (w: number, h: number, d: number, r = 0.04, seg = 2) =>
+    cached(`r${w}|${h}|${d}|${r}|${seg}`, () =>
+      r < 0.02 ? new THREE.BoxGeometry(w, h, d) : new RoundedBoxGeometry(w, h, d, seg, Math.min(r, w / 2 - 0.001, h / 2 - 0.001, d / 2 - 0.001)),
+    ),
   plane: (w: number, h: number) => cached(`l${w}|${h}`, () => new THREE.PlaneGeometry(w, h)),
   ico: (r: number, detail = 0) => cached(`i${r}|${detail}`, () => new THREE.IcosahedronGeometry(r, detail)),
   circle: (r: number, seg = 32) => cached(`o${r}|${seg}`, () => new THREE.CircleGeometry(r, seg)),

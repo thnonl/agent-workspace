@@ -32,6 +32,8 @@ export interface Rig {
   tail: THREE.Group | null;
   ears: THREE.Group[];
   handHold: THREE.Group;
+  /** same spot on the left hand (dumbbells) */
+  handHoldL: THREE.Group;
   bag: THREE.Group;
   folder: THREE.Group;
 }
@@ -157,10 +159,12 @@ export function buildCharacter(a: Appearance): Rig {
     torso.add(shoulder);
     return { shoulder, fore, hand };
   };
-  const { shoulder: armL, fore: foreL } = arm(-1);
+  const { shoulder: armL, fore: foreL, hand: handL } = arm(-1);
   const { shoulder: armR, fore: foreR, hand: handR } = arm(1);
   const handHold = group(0, -0.02, 0.07);
   handR.add(handHold);
+  const handHoldL = group(0, -0.02, 0.07);
+  handL.add(handHoldL);
 
   // ------------------------------------------------------------------ head
   const head = group(0, 0.94, 0);
@@ -413,11 +417,11 @@ export function buildCharacter(a: Appearance): Rig {
 
   // Merge the static parts of every joint: ~90 primitives become ~35 meshes per character.
   const joints: THREE.Object3D[] = [pelvis, torso, head, armL, armR, foreL, foreR, thighL, thighR, kneeL, kneeR, eyes, eyeL, eyeR, ...(tail ? [tail] : []), ...ears];
-  const skip = new Set<THREE.Object3D>([...joints, browL, browR, mouthSmile, mouthO, handHold]);
+  const skip = new Set<THREE.Object3D>([...joints, browL, browR, mouthSmile, mouthO, handHold, handHoldL]);
   root.updateMatrixWorld(true);
   for (const j of joints) bakeGroup(j, skip);
   bakeGroup(bag);
   bakeGroup(folder);
 
-  return { root, pelvis, torso, head, armL, armR, foreL, foreR, thighL, thighR, kneeL, kneeR, eyeL, eyeR, eyes, browL, browR, mouthSmile, mouthO, tail, ears, handHold, bag, folder };
+  return { root, pelvis, torso, head, armL, armR, foreL, foreR, thighL, thighR, kneeL, kneeR, eyeL, eyeR, eyes, browL, browR, mouthSmile, mouthO, tail, ears, handHold, handHoldL, bag, folder };
 }

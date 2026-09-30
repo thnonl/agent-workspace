@@ -4,9 +4,12 @@ import { useFrame } from '@react-three/fiber';
 import type { Prop } from '../world/layout';
 import type { RoomTheme } from '../world/palettes';
 import { Rng } from '../util/rng';
+import { frame } from '../sim/frame';
 import { G, M, MB, shade } from './kit';
 import { GLOW, glowMat } from './glow';
 import { RB, Ms, DeskItem } from './furniture';
+import { useBaked } from './bake';
+import { PunchDummy, Dumbbells } from './gymProps';
 import { FileCabinet, Copier, MeetingSet, WhiteboardStand, Boxes, ServerRack, Fridge, Vending, Trolley, Recycle, Credenza } from './officeProps';
 
 // ------------------------------------------------------------------------ props
@@ -196,9 +199,11 @@ function Bin({ p }: { p: Prop }) {
   );
 }
 
-function Fishtank({ p, theme }: { p: Prop; theme: RoomTheme }) {
+function Fishtank({ p, theme, roomId }: { p: Prop; theme: RoomTheme; roomId?: string }) {
   const fish = useRef<(THREE.Group | null)[]>([]);
+  useBaked(fish);
   useFrame((s) => {
+    if (roomId !== undefined && !frame.visibleRooms.has(roomId)) return;
     const t = s.clock.elapsedTime;
     fish.current.forEach((f, i) => {
       if (!f) return;
@@ -343,7 +348,7 @@ function LoungeSet({ p, theme }: { p: Prop; theme: RoomTheme }) {
   );
 }
 
-export function PropView({ p, theme }: { p: Prop; theme: RoomTheme }) {
+export function PropView({ p, theme, roomId }: { p: Prop; theme: RoomTheme; roomId?: string }) {
   let body: React.ReactNode;
   switch (p.kind) {
     case 'bookshelf': body = <Bookshelf p={p} theme={theme} />; break;
@@ -358,14 +363,14 @@ export function PropView({ p, theme }: { p: Prop; theme: RoomTheme }) {
     case 'floorLamp': body = <FloorLamp p={p} />; break;
     case 'printer': body = <Printer p={p} />; break;
     case 'bin': body = <Bin p={p} />; break;
-    case 'fishtank': body = <Fishtank p={p} theme={theme} />; break;
+    case 'fishtank': body = <Fishtank p={p} theme={theme} roomId={roomId} />; break;
     case 'coatRack': body = <CoatRack p={p} />; break;
     case 'fileCabinet': body = <FileCabinet p={p} theme={theme} />; break;
     case 'copier': body = <Copier p={p} theme={theme} />; break;
     case 'meetingSet': body = <MeetingSet p={p} theme={theme} />; break;
     case 'whiteboardStand': body = <WhiteboardStand p={p} theme={theme} />; break;
     case 'boxes': body = <Boxes p={p} theme={theme} />; break;
-    case 'serverRack': body = <ServerRack p={p} theme={theme} />; break;
+    case 'serverRack': body = <ServerRack p={p} theme={theme} roomId={roomId} />; break;
     case 'fridge': body = <Fridge p={p} theme={theme} />; break;
     case 'vending': body = <Vending p={p} theme={theme} />; break;
     case 'trolley': body = <Trolley p={p} theme={theme} />; break;
@@ -374,6 +379,8 @@ export function PropView({ p, theme }: { p: Prop; theme: RoomTheme }) {
     case 'sink': body = <Sink p={p} theme={theme} />; break;
     case 'stove': body = <Stove p={p} theme={theme} />; break;
     case 'loungeSet': body = <LoungeSet p={p} theme={theme} />; break;
+    case 'punchDummy': body = <PunchDummy p={p} theme={theme} roomId={roomId} />; break;
+    case 'dumbbells': body = <Dumbbells p={p} theme={theme} roomId={roomId} />; break;
     default: body = null;
   }
   return (

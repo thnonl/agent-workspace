@@ -25,6 +25,8 @@ interface Scenario {
   opening: Line[];
   agents: AgentScript[];
   outro: Line[];
+  /** the director asks the user something after the opening and waits for the answer */
+  ask?: string;
 }
 
 const T = (text: string): Line => ({ kind: 'thinking', text });
@@ -75,6 +77,7 @@ const SCENARIOS: Scenario[] = [
       { label: 'Toggle component', type: 'general-purpose', lines: [W('src/components/ThemeToggle.tsx'), E('src/components/Header.tsx'), B('npm run lint')], summary: 'ThemeToggle in header, keyboard accessible.' },
     ],
     outro: [S('Dark mode works and follows the OS setting by default.')],
+    ask: 'Should the toggle remember the choice? — Yes, in localStorage / No, follow the OS only / Ask me per device',
   },
 ];
 
@@ -128,6 +131,16 @@ export function startDemo(emit: Emit, count = 3): () => void {
         if (stopped) return;
         emit({ type: 'agent_say', sessionId: p.id, agentId: 'main', kind: l.kind, text: l.text, tool: l.tool });
         await sleep(rnd(3000, 4200));
+      }
+      if (sc.ask) {
+        if (stopped) return;
+        emit({ type: 'agent_say', sessionId: p.id, agentId: 'main', kind: 'tool', tool: 'AskUserQuestion', text: 'Using AskUserQuestion' });
+        emit({ type: 'agent_ask', sessionId: p.id, text: sc.ask });
+        await sleep(rnd(25000, 40000)); // the user thinks it over
+        if (stopped) return;
+        emit({ type: 'agent_ask_end', sessionId: p.id });
+        emit({ type: 'agent_say', sessionId: p.id, agentId: 'main', kind: 'text', text: 'Thanks, going with that.' });
+        await sleep(3000);
       }
       // hand out the work, one by one
       const running: Promise<void>[] = [];

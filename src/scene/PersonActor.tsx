@@ -5,12 +5,14 @@ import { useStore } from '../store';
 import { makeAppearance } from '../world/appearance';
 import { rot2 } from '../world/layout';
 import type { RoomLayout } from '../world/layout';
-import { Actor, type ActorCtx, type Pose } from '../sim/actor';
+import { Actor, laptopDist, SEAT_LIFT, type ActorCtx, type Pose } from '../sim/actor';
 import { anchors, catsInRoom, enqueueSpeech, lastSpeech, queueLength, runtimeFor, sims, simsInRoom, view, type SimState } from '../sim/registry';
 import { frame, OFFSCREEN_STEP } from '../sim/frame';
 import { buildCharacter, RIG_SCALE, type Rig } from './character';
 import { buildLaptop } from './laptop';
-import { buildHeldItems } from './heldItems';
+import { disposeOwned } from './bake';
+import { buildHeldItems, PHONE_GLOWS } from './heldItems';
+import { buildDumbbells } from './dumbbells';
 import { G } from './kit';
 import { DESK_TOP } from './furniture';
 import { sfx } from '../audio';
@@ -51,38 +53,50 @@ function syncAnchor(key: string, outer: THREE.Group | null, wp: THREE.Vector3, s
   a.live = sim.onStage && sim.phase !== 'waiting';
 }
 const k = (rate: number, dt: number) => 1 - Math.exp(-rate * dt);
-const damp = (cur: number, target: number, rate: number, dt: number) => cur + (target - cur) * k(rate, dt);
+/** damping factors of applyPose: the same six rates for every person, so they are computed once per distinct dt */
+const dk = { dt: -1, r24: 0, r18: 0, r30: 0, r8: 0, r12: 0 };
+function dampFactors(dt: number) {
+  if (dk.dt !== dt) {
+    dk.dt = dt;
+    dk.r24 = k(24, dt);
+    dk.r18 = k(18, dt);
+    dk.r30 = k(30, dt);
+    dk.r8 = k(8, dt);
+    dk.r12 = k(12, dt);
+  }
+  return dk;
+}
 const ease = (t: number) => {
   t = Math.min(1, Math.max(0, t));
   return t * t * (3 - 2 * t);
 };
 
 function applyPose(rig: Rig, p: Pose, dt: number, eyeOpen: number, clock: number, walking: boolean, glance: number) {
-  const r = 18;
-  rig.pelvis.position.y = damp(rig.pelvis.position.y, p.bob, 24, dt);
-  rig.torso.rotation.x = damp(rig.torso.rotation.x, p.lean, r, dt);
-  rig.torso.rotation.y = damp(rig.torso.rotation.y, p.twist, r, dt);
-  rig.torso.rotation.z = damp(rig.torso.rotation.z, p.roll, r, dt);
-  rig.head.rotation.x = damp(rig.head.rotation.x, p.headX, r, dt);
-  rig.head.rotation.y = damp(rig.head.rotation.y, p.headY + glance, r, dt);
-  rig.head.rotation.z = damp(rig.head.rotation.z, p.headZ, r, dt);
-  rig.armL.rotation.x = damp(rig.armL.rotation.x, p.armLx, r, dt);
-  rig.armR.rotation.x = damp(rig.armR.rotation.x, p.armRx, r, dt);
-  rig.armL.rotation.z = damp(rig.armL.rotation.z, -p.armLz, r, dt);
-  rig.armR.rotation.z = damp(rig.armR.rotation.z, p.armRz, r, dt);
-  rig.foreL.rotation.x = damp(rig.foreL.rotation.x, p.foreLx, r + 6, dt);
-  rig.foreR.rotation.x = damp(rig.foreR.rotation.x, p.foreRx, r + 6, dt);
-  rig.thighL.rotation.x = damp(rig.thighL.rotation.x, p.thighLx, r, dt);
-  rig.thighR.rotation.x = damp(rig.thighR.rotation.x, p.thighRx, r, dt);
-  rig.kneeL.rotation.x = damp(rig.kneeL.rotation.x, p.kneeLx, r, dt);
-  rig.kneeR.rotation.x = damp(rig.kneeR.rotation.x, p.kneeRx, r, dt);
+  const f = dampFactors(dt);
+  rig.pelvis.position.y = rig.pelvis.position.y + (p.bob - rig.pelvis.position.y) * f.r24;
+  rig.torso.rotation.x = rig.torso.rotation.x + (p.lean - rig.torso.rotation.x) * f.r18;
+  rig.torso.rotation.y = rig.torso.rotation.y + (p.twist - rig.torso.rotation.y) * f.r18;
+  rig.torso.rotation.z = rig.torso.rotation.z + (p.roll - rig.torso.rotation.z) * f.r18;
+  rig.head.rotation.x = rig.head.rotation.x + (p.headX - rig.head.rotation.x) * f.r18;
+  rig.head.rotation.y = rig.head.rotation.y + (p.headY + glance - rig.head.rotation.y) * f.r18;
+  rig.head.rotation.z = rig.head.rotation.z + (p.headZ - rig.head.rotation.z) * f.r18;
+  rig.armL.rotation.x = rig.armL.rotation.x + (p.armLx - rig.armL.rotation.x) * f.r18;
+  rig.armR.rotation.x = rig.armR.rotation.x + (p.armRx - rig.armR.rotation.x) * f.r18;
+  rig.armL.rotation.z = rig.armL.rotation.z + (-p.armLz - rig.armL.rotation.z) * f.r18;
+  rig.armR.rotation.z = rig.armR.rotation.z + (p.armRz - rig.armR.rotation.z) * f.r18;
+  rig.foreL.rotation.x = rig.foreL.rotation.x + (p.foreLx - rig.foreL.rotation.x) * f.r24;
+  rig.foreR.rotation.x = rig.foreR.rotation.x + (p.foreRx - rig.foreR.rotation.x) * f.r24;
+  rig.thighL.rotation.x = rig.thighL.rotation.x + (p.thighLx - rig.thighL.rotation.x) * f.r18;
+  rig.thighR.rotation.x = rig.thighR.rotation.x + (p.thighRx - rig.thighR.rotation.x) * f.r18;
+  rig.kneeL.rotation.x = rig.kneeL.rotation.x + (p.kneeLx - rig.kneeL.rotation.x) * f.r18;
+  rig.kneeR.rotation.x = rig.kneeR.rotation.x + (p.kneeRx - rig.kneeR.rotation.x) * f.r18;
   // face
   const squint = 1 - 0.68 * p.happy;
-  const open = Math.max(0.08, eyeOpen) * squint;
-  rig.eyeL.scale.y = damp(rig.eyeL.scale.y, open, 30, dt);
-  rig.eyeR.scale.y = damp(rig.eyeR.scale.y, open, 30, dt);
-  rig.eyes.position.y = damp(rig.eyes.position.y, 0.035 * p.lookUp, 8, dt);
-  rig.browL.position.y = damp(rig.browL.position.y, 0.115 + 0.03 * p.happy + 0.02 * p.lookUp, 12, dt);
+  const open = Math.max(0.08, eyeOpen * (1 - p.sleep)) * squint;
+  rig.eyeL.scale.y = rig.eyeL.scale.y + (open - rig.eyeL.scale.y) * f.r30;
+  rig.eyeR.scale.y = rig.eyeR.scale.y + (open - rig.eyeR.scale.y) * f.r30;
+  rig.eyes.position.y = rig.eyes.position.y + (0.035 * p.lookUp - rig.eyes.position.y) * f.r8;
+  rig.browL.position.y = rig.browL.position.y + (0.115 + 0.03 * p.happy + 0.02 * p.lookUp - rig.browL.position.y) * f.r12;
   rig.browR.position.y = rig.browL.position.y;
   const showO = p.mouth === 'o';
   rig.mouthO.visible = showO;
@@ -117,8 +131,14 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
   const scale = RIG_SCALE * app.scale;
   const items = useMemo(() => {
     const it = buildHeldItems(layout.theme.accent);
-    rig.handHold.add(it.cup, it.book, it.can, it.bowl);
+    rig.handHold.add(it.cup, it.book, it.can, it.bowl, it.parcel, it.cig, it.phone, it.handset);
     return it;
+  }, [rig, layout.theme]);
+  const bells = useMemo(() => {
+    const b = buildDumbbells(layout.theme.accent2);
+    rig.handHold.add(b.right);
+    rig.handHoldL.add(b.left);
+    return b;
   }, [rig, layout.theme]);
 
   const ring = useRef<THREE.Mesh>(null);
@@ -131,6 +151,7 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
   const keyT = useRef(0);
   const wp = useMemo(() => new THREE.Vector3(), []);
 
+
   useEffect(() => {
     sims.set(personKey, actor.sim);
     return () => {
@@ -138,6 +159,9 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
       anchors.delete(personKey);
     };
   }, [personKey, actor]);
+
+  // R3F does not dispose <primitive>: free the merged geometry this person owns
+  useEffect(() => () => disposeOwned(rig.root, rig.bag, rig.folder, laptop.root), [rig, laptop]);
 
   useEffect(() => {
     rig.root.scale.setScalar(scale);
@@ -212,7 +236,9 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
     // ---- character transform
     const root = rig.root;
     root.visible = sim.onStage;
-    root.position.set(sim.x, sim.y, sim.z);
+    const ph = sim.phase;
+    const atDesk = ph === 'working' || ph === 'sitting' || ph === 'unpacking' || ph === 'packing' || ph === 'standing';
+    root.position.set(sim.x, sim.y + (atDesk ? SEAT_LIFT * sim.sitT : 0), sim.z);
     root.rotation.y = sim.yaw;
     // seated / talking characters glance towards the viewer so their cute faces stay visible
     let glance = 0;
@@ -261,7 +287,12 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
       const bagTop = vBagTop.set(floor.x, 0.5, floor.z);
       const hp = toRoom(sim, 0, 0.42 * scale);
       const hands = vHands.set(hp.x, DESK_TOP + 0.24, hp.z);
-      const desk = vDesk.set(laptopSpot.x, deskTop, laptopSpot.z);
+      // the laptop sits within reach of the typist (the layout puts it further into the desk than short arms reach)
+      const lx = seat.x - laptopSpot.x;
+      const lz = seat.z - laptopSpot.z;
+      const ld = Math.hypot(lx, lz) || 1;
+      const lk = Math.max(0, ld - laptopDist(isDirector)) / ld;
+      const desk = vDesk.set(laptopSpot.x + lx * lk, deskTop, laptopSpot.z + lz * lk);
       const pos = laptop.root.position;
       let sc = 1;
       if (lp < 1) {
@@ -324,14 +355,25 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
     items.book.visible = held === 'book';
     items.can.visible = held === 'can';
     items.bowl.visible = held === 'bowl';
-    if (held !== 'none') {
+    items.parcel.visible = held === 'parcel';
+    items.cig.visible = held === 'cig';
+    const phoneOn = held === 'phone';
+    items.phone.visible = phoneOn;
+    items.handset.visible = held === 'handsetEar';
+    if (phoneOn) {
+      // the glow flickers a little while scrolling
+      items.phoneScreen.material = PHONE_GLOWS[Math.floor(clockRef.current * 2.6) % PHONE_GLOWS.length];
+    }
+    // dumbbells sit in both hands as they are (no upright correction needed)
+    bells.right.visible = bells.left.visible = held === 'dumbbell';
+    if (held !== 'none' && held !== 'dumbbell') {
       rig.root.updateMatrixWorld(true);
       rig.handHold.getWorldQuaternion(qHand);
       rig.root.getWorldQuaternion(qRoot);
       qRel.copy(qHand).invert().multiply(qRoot);
       qTilt.setFromAxisAngle(tiltAxis, actor.heldTilt);
-      const item = held === 'cup' ? items.cup : held === 'book' ? items.book : held === 'bowl' ? items.bowl : items.can;
-      const off = held === 'cup' ? vTmp.set(0, 0.07, 0.03) : held === 'book' ? vTmp.set(-0.13, 0.03, 0.06) : held === 'bowl' ? vTmp.set(0, 0.05, 0.06) : vTmp.set(0, -0.03, 0.1);
+      const item = phoneOn ? items.phone : held === 'handsetEar' ? items.handset : held === 'parcel' ? items.parcel : held === 'cig' ? items.cig : held === 'cup' ? items.cup : held === 'book' ? items.book : held === 'bowl' ? items.bowl : items.can;
+      const off = held === 'phone' ? vTmp.set(-0.03, 0.05, 0.05) : held === 'handsetEar' ? vTmp.set(-0.045, 0.05, 0) : held === 'parcel' ? vTmp.set(-0.2, -0.02, 0.14) : held === 'cig' ? vTmp.set(0, 0.03, 0.02) : held === 'cup' ? vTmp.set(0, 0.07, 0.03) : held === 'book' ? vTmp.set(-0.13, 0.03, 0.06) : held === 'bowl' ? vTmp.set(0, 0.05, 0.06) : vTmp.set(0, -0.03, 0.1);
       item.position.copy(off).applyQuaternion(qRel);
       item.quaternion.copy(qRel).multiply(qTilt);
       if (held === 'book') {
@@ -357,6 +399,20 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
       p.position.set(actor.steamAt.x + Math.sin(i * 2.3 + clockRef.current * 1.4) * 0.05, 0.98 + ph * 0.6, actor.steamAt.z + Math.cos(i * 1.7 + clockRef.current) * 0.05);
       p.scale.setScalar(0.6 + ph * 1.3);
       (p.material as THREE.MeshBasicMaterial).opacity = (1 - ph) * 0.5 * actor.steam;
+    });
+    // cigarette smoke: a few pooled puffs rise from the mouth while the exhale lasts
+    const smokeOn = sim.onStage && actor.smoke > 0.03 && !!outer.current;
+    if (smokeOn) {
+      rig.mouthSmile.getWorldPosition(vDrop);
+      outer.current!.worldToLocal(vDrop);
+    }
+    items.smoke.forEach((p, i) => {
+      p.visible = smokeOn;
+      if (!smokeOn) return;
+      const ph = (clockRef.current * 0.45 + i / items.smoke.length) % 1;
+      p.position.set(vDrop.x + Math.sin(sim.yaw) * ph * 0.18 + Math.sin(i * 2.3 + clockRef.current) * 0.04 * ph, vDrop.y + ph * 0.4, vDrop.z + Math.cos(sim.yaw) * ph * 0.18 + Math.cos(i * 1.7 + clockRef.current) * 0.04 * ph);
+      p.scale.setScalar(0.35 + ph * 1.3);
+      (p.material as THREE.MeshBasicMaterial).opacity = Math.sin(ph * Math.PI) * 0.45 * actor.smoke;
     });
     // ...and from the spout of the can
     const pouring = held === 'can' && actor.pour > 0.35;

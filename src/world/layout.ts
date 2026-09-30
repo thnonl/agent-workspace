@@ -6,7 +6,7 @@ export type PropKind =
   | 'bookshelf' | 'plant' | 'tallPlant' | 'cactus' | 'cooler' | 'coffee' | 'sofa' | 'beanbag' | 'floorLamp'
   | 'printer' | 'bin' | 'fishtank' | 'coatRack' | 'armchair'
   | 'fileCabinet' | 'copier' | 'meetingSet' | 'whiteboardStand' | 'boxes' | 'serverRack' | 'fridge' | 'vending'
-  | 'trolley' | 'recycle' | 'loungeSet' | 'credenza' | 'sink' | 'stove';
+  | 'trolley' | 'recycle' | 'loungeSet' | 'credenza' | 'sink' | 'stove' | 'punchDummy' | 'dumbbells';
 
 export interface Prop {
   kind: PropKind;
@@ -128,7 +128,7 @@ export interface CatWindow {
 }
 
 /** Things people like to do when there is nothing to work on. */
-export type StationKind = 'drink' | 'read' | 'fish' | 'wash' | 'water' | 'cook';
+export type StationKind = 'drink' | 'read' | 'fish' | 'wash' | 'water' | 'cook' | 'box' | 'lift';
 
 /** A spot in front of something (water cooler, bookshelf, fish tank, sink, plant) where a person can spend a moment. */
 export interface Station {
@@ -198,7 +198,7 @@ const KINDS: SizeKind[] = [
 
 const DESK_D = 1.0;
 /** one desk per possible staff member (the director has their own desk) */
-export const MAX_DESKS = 7;
+export const MAX_DESKS = 6;
 /** the random generators try for more than we need, then the best seats are kept */
 const DESK_CANDIDATES = 14;
 
@@ -232,6 +232,8 @@ const FOOT: Record<PropKind, [number, number, number]> = {
   recycle: [1.35, 0.5, 0.75],
   loungeSet: [2.9, 2.5, 0.9],
   credenza: [1.9, 0.55, 0.9],
+  punchDummy: [0.62, 0.62, 1.7],
+  dumbbells: [0.9, 0.5, 0.3],
 };
 
 /** furniture tall enough to hide posters / boards behind it */
@@ -309,11 +311,12 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
   const wallHeight = 3.1;
 
   // ------------------------------------------------------------------ door
+  // the door stays in the top corner (left wall, next to the back wall) or the right corner (back wall, next to the right wall) of the picture
   const doorOnLeft = r.chance(0.68);
   const doorWidth = 1.5;
   const door: DoorSpec = doorOnLeft
     ? (() => {
-        const z = D / 2 - r.range(2.3, 3.4);
+        const z = -D / 2 + r.range(1.8, 2.6);
         return {
           wall: 'left' as const, pos: z, width: doorWidth, height: 2.4,
           threshold: { x: -W / 2, z }, inside: { x: -W / 2 + 1.0, z }, outside: { x: -W / 2 - 2.7, z }, dir: { x: 1, z: 0 },
@@ -547,6 +550,20 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
   if (windows.length > 1 && windows.every((w) => w.openSide === windows[0].openSide)) {
     windows[windows.length - 1].openSide = (windows[windows.length - 1].openSide * -1) as 1 | -1;
   }
+  // the strip in front of a window that curtains and sill plants occupy (nothing stands in it)
+  const curtainZone = (wn: WindowSpec): OR =>
+    wn.wall === 'back' ? { x: wn.pos, z: -D / 2 + 0.35, w: wn.w + 1.2, d: 0.7, rot: 0 } : { x: -W / 2 + 0.35, z: wn.pos, w: 0.7, d: wn.w + 1.2, rot: 0 };
+  // a desk or the director's chair that stands in that strip: no curtains there (they would hang through it)
+  for (const wn of windows) {
+    if (!wn.curtain) continue;
+    const zone = curtainZone(wn);
+    const blockers: OR[] = [
+      ...desks.map((d) => ({ x: d.x, z: d.z, w: d.w, d: DESK_D, rot: d.rot })),
+      { x: dirX, z: dirDeskZ, w: 3.0, d: 1.2, rot: 0 },
+      { x: director.seat.x, z: director.seat.z, w: 0.9, d: 0.9, rot: 0 },
+    ];
+    if (blockers.some((q) => overlapOR(zone, q, 0.1))) wn.curtain = false;
+  }
 
   // ----------------------------------------------------------------- props
   const props: Prop[] = [];
@@ -567,6 +584,7 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
   // keep the floor under every window free so the office cats can hop in and out
   for (const wn of windows) {
     reserved.push(wn.wall === 'back' ? { x: wn.pos, z: -D / 2 + 0.95, w: 1.5, d: 1.9, rot: 0 } : { x: -W / 2 + 0.95, z: wn.pos, w: 1.9, d: 1.5, rot: 0 });
+    reserved.push(curtainZone(wn));
   }
   const add = (kindName: PropKind, x: number, z: number, rot: number, pad = 0.18): boolean => {
     const p: Prop = { kind: kindName, x, z, rot, variant: r.int(0, 3), color: r.pick(colorsAll), color2: r.pick(colorsAll) };
@@ -602,13 +620,16 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
     return false;
   };
 
-  if (door.wall === 'left') add('coatRack', -W / 2 + 0.45, door.pos - 1.5, Math.PI / 2);
+  if (door.wall === 'left') add('coatRack', -W / 2 + 0.45, door.pos + 1.5, Math.PI / 2);
   else add('coatRack', door.pos - 1.5, -D / 2 + 0.45, 0);
 
   // big, characterful pieces first
-  const lounge = r.pick(['loungeSet', 'meetingSet', 'both', 'meetingSet'] as const);
-  if (lounge !== 'meetingSet') tryFloor('loungeSet', [0, Math.PI / 2, -Math.PI / 2]);
+  // every office gets a lounge sofa (the sofa breaks are a favourite); three of four also get a meeting table
+  const lounge = r.pick(['both', 'both', 'both', 'loungeSet'] as const);
+  tryFloor('loungeSet', [0, Math.PI / 2, -Math.PI / 2]);
   if (lounge !== 'loungeSet') tryFloor('meetingSet', [0, Math.PI / 4]);
+  // the big rooms have room for a second lounge corner
+  if (kind.name !== 'cozy' && r.chance(0.4)) tryFloor('loungeSet', [0, Math.PI / 2, -Math.PI / 2]);
   const wallWants: PropKind[] = [
     'coffee', 'copier', 'bookshelf', 'bookshelf', 'fridge', 'cooler', 'fileCabinet', 'fileCabinet', 'fileCabinet',
     ...(r.chance(0.6) ? (['serverRack'] as PropKind[]) : []),
@@ -718,6 +739,43 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
     nav = buildNav(props);
   }
 
+  // ------------------------------------------------ exercise corner (punching dummy, dumbbells)
+  // own generator and placed last, so every room keeps exactly the furniture it had before these props existed
+  {
+    const gymRng = new Rng((seed ^ 0x7f4a7c15) >>> 0);
+    const base = props.length;
+    for (const gk of ['punchDummy', 'dumbbells'] as const) {
+      if (!gymRng.chance(0.7)) continue;
+      const [gw, gd] = FOOT[gk];
+      for (let t = 0; t < 80; t++) {
+        const side = gymRng.int(0, 3);
+        let gx: number, gz: number, grot: number;
+        if (side === 0) { gx = gymRng.range(-W / 2 + gw / 2 + 0.3, W / 2 - gw / 2 - 0.3); gz = -D / 2 + gd / 2 + 0.06; grot = 0; }
+        else if (side === 1) { gx = -W / 2 + gd / 2 + 0.06; gz = gymRng.range(-D / 2 + gw / 2 + 0.4, D / 2 - gw / 2 - 0.4); grot = Math.PI / 2; }
+        else if (side === 2) { gx = W / 2 - gd / 2 - 0.05; gz = gymRng.range(-D / 2 + gw / 2 + 0.4, D / 2 - gw / 2 - 0.4); grot = -Math.PI / 2; }
+        else { gx = gymRng.range(-W / 2 + 1.4, W / 2 - 1.4); gz = gymRng.range(dirDeskZ + 2.6, D / 2 - 1.0); grot = gymRng.pick([0, Math.PI / 2, Math.PI, -Math.PI / 2]); }
+        const rect: OR = { x: gx, z: gz, w: gw, d: gd, rot: grot };
+        // the floor in front of it must be free too (that is where the person stands)
+        const o = rot2(0, gd / 2 + 0.5, grot);
+        const clear: OR = { x: gx + o.x, z: gz + o.z, w: 0.9, d: 0.8, rot: grot };
+        const inside = (q: OR) => corners(q).every((c) => c.x > -W / 2 + 0.3 && c.x < W / 2 - 0.3 && c.z > -D / 2 + 0.3 && c.z < D / 2 - 0.3);
+        if (!corners(rect).every((c) => c.x > -W / 2 + 0.05 && c.x < W / 2 - 0.05 && c.z > -D / 2 + 0.05 && c.z < D / 2 - 0.05) || !inside(clear)) continue;
+        if (reserved.some((q) => overlapOR(rect, q) || overlapOR(clear, q))) continue;
+        if (placed.some((q) => overlapOR(rect, q, 0.25) || overlapOR(clear, q))) continue;
+        placed.push(rect, clear);
+        props.push({ kind: gk, x: gx, z: gz, rot: grot, variant: gymRng.int(0, 3), color: gymRng.pick(colorsAll), color2: gymRng.pick(colorsAll) });
+        break;
+      }
+    }
+    if (props.length > base) {
+      nav = buildNav(props);
+      if (!reachable(nav)) {
+        props.length = base;
+        nav = buildNav(props);
+      }
+    }
+  }
+
   // ---------------------------------------------------------- floor clutter
   const decals: FloorDecal[] = [];
   const decalKinds: DecalKind[] = ['paper', 'paper', 'paper', 'ball', 'ball', 'sticky', 'stain', 'pen'];
@@ -764,7 +822,8 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
       const c = rot2(lx, lz, p.rot);
       const ap = rot2(ax, az, p.rot);
       const a = freeNear({ x: p.x + ap.x, z: p.z + ap.z });
-      if (a) spots.push({ kind: (p.kind === 'loungeSet' ? 'sofa' : p.kind) as Spot['kind'], x: p.x + c.x, z: p.z + c.z, y, yaw: p.rot, approach: a });
+      // (a seat nobody can walk up to is no seat)
+      if (a && nav.reachable(door.inside, a)) spots.push({ kind: (p.kind === 'loungeSet' ? 'sofa' : p.kind) as Spot['kind'], x: p.x + c.x, z: p.z + c.z, y, yaw: p.rot, approach: a });
     }
   }
   spots.push({ kind: 'desk', x: dirX + 0.5, z: dirDeskZ + 0.12, y: 0.76, yaw: 0, approach: director.visitors[2] });
@@ -779,7 +838,7 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
   // ------------- things to do when there is time: get a drink, read a book, watch the fish, wash, water the plants
   const stations: Station[] = [];
   const stationOf: Partial<Record<PropKind, [StationKind, number]>> = {
-    cooler: ['drink', 0.5], coffee: ['drink', 0.5], bookshelf: ['read', 0.5], fishtank: ['fish', 0.55], sink: ['wash', 0.36], stove: ['cook', 0.42],
+    cooler: ['drink', 0.5], coffee: ['drink', 0.5], bookshelf: ['read', 0.5], fishtank: ['fish', 0.55], sink: ['wash', 0.36], stove: ['cook', 0.42], punchDummy: ['box', 0.32], dumbbells: ['lift', 0.4],
     plant: ['water', 0.5], tallPlant: ['water', 0.55], cactus: ['water', 0.5],
   };
   const perKind = new Map<StationKind, number>();
@@ -837,5 +896,3 @@ export function getLayout(seed: number, themeIndex: number): RoomLayout {
   }
   return l;
 }
-
-export const DESK_DEPTH = DESK_D;
