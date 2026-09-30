@@ -7,7 +7,7 @@ import type { Phase } from '../sim/registry';
 import type { ActivityEntry, Speech, TaskLogEntry, TaskRec } from '../types';
 import { FALLBACK_NAMES, parseNames } from '../names';
 import { sfx } from '../audio';
-import { PROVIDER_NAME, ProviderLogo } from './ProviderLogo';
+import { PROVIDER_NAME, ProviderLogo, watchedSources } from './ProviderLogo';
 
 /** The demo buttons are for development and screenshots: a production build hides them (the D key and ?demo still work). */
 const SHOW_DEMO_BUTTON = import.meta.env.DEV;
@@ -70,7 +70,7 @@ function timeIcon(h: number) {
 
 export function TopBar() {
   const connection = useStore((s) => s.connection);
-  const claudeDir = useStore((s) => s.claudeDir);
+  const sources = useStore((s) => s.sources);
   const demoOn = useStore((s) => s.demoOn);
   const autoDemo = useStore((s) => s.autoDemo);
   const liveRooms = useStore((s) => s.visibleOrder.filter((id) => !s.rooms[id].demo).length);
@@ -84,7 +84,7 @@ export function TopBar() {
   const muted = useStore((s) => s.muted);
   const setMuted = useStore((s) => s.setMuted);
   const nameCount = useStore((s) => s.names.length);
-  const dir = claudeDir.replace(/\\/g, '/').replace(/^.*\/(\.claude\/.*)$/, '~/$1');
+  const watched = watchedSources(sources);
 
   return (
     <header className="topbar">
@@ -96,13 +96,13 @@ export function TopBar() {
         </div>
       </div>
       <div className="topbar-right">
-        <span className={`pill pill-${connection}`} title={claudeDir}>
+        <span className={`pill pill-${connection}`}>
           <i className="pill-dot" />
           {connection === 'live' ? (liveRooms ? `Live · ${liveRooms} session${liveRooms > 1 ? 's' : ''}` : 'Live · idle') : connection === 'connecting' ? 'Connecting…' : 'Monitor offline'}
-          {connection === 'live' && dir ? <em>{dir}</em> : null}
+          {connection === 'live' && watched.length ? <em>{watched.map((w) => PROVIDER_NAME[w.provider].split(' ')[0]).join(' · ')}</em> : null}
         </span>
         {SHOW_DEMO_BUTTON ? (
-          <button className={`btn${demoOn ? ' btn-on' : ''}`} onClick={() => setDemo(!demoOn)} title="Simulated Claude sessions">
+          <button className={`btn${demoOn ? ' btn-on' : ''}`} onClick={() => setDemo(!demoOn)} title="Simulated agent sessions">
             {demoOn ? '⏸ Demo' : '▶ Demo'}
             {demoOn && autoDemo ? <em>auto</em> : null}
           </button>
@@ -298,7 +298,7 @@ export function RoomHeader() {
         <b>{room.project}</b>
         {room.demo ? <em className="tag-demo">demo</em> : null}
       </div>
-      <div className="room-header-sub" title={room.cwd}>{room.title}</div>
+      <div className="room-header-sub">{room.title}</div>
       <div className="room-header-stats">
         <span className={st.working ? 'on' : ''}>{st.working ? '💼 Working' : '☕ Idle'}</span>
         <span>👥 {st.people} in the office</span>
@@ -378,7 +378,7 @@ function inlineMd(t: string): ReactNode[] {
   });
 }
 
-/** The few bits of markdown Claude's answers use: headings, bullet / numbered lists, bold, code. */
+/** The few bits of markdown the agents' answers use: headings, bullet / numbered lists, bold, code. */
 function MiniMarkdown({ text }: { text: string }) {
   const out: ReactNode[] = [];
   let list: string[] = [];
@@ -471,7 +471,7 @@ export function SummaryPaper() {
           {reports.length === 0 && summary.tasks.length === 0 ? null : <p className="paper-end">— end of report —</p>}
         </div>
         <div className="paper-foot">
-          {idle ? <button className="btn" onClick={askRelease} title="Take this room off the list – continue the session in Claude Code to bring it back">Release room</button> : null}
+          {idle ? <button className="btn" onClick={askRelease} title="Take this room off the list – continue the session in its agent to bring it back">Release room</button> : null}
           <button className="btn btn-big" onClick={dismiss}>Got it</button>
         </div>
       </article>
@@ -494,7 +494,7 @@ export function ReleaseConfirm() {
         <h3>{onClose ? 'Release this room before you close the summary?' : 'Release this room?'}</h3>
         <p className="confirm-room">🏢 {room.project} <em>{room.title}</em></p>
         <p className="confirm-note">
-          ℹ️ Releasing only takes the room off the list. Nothing is deleted – when you <b>continue this session in Claude Code</b>, the room opens again by itself.
+          ℹ️ Releasing only takes the room off the list. Nothing is deleted – when you <b>continue this session in {PROVIDER_NAME[room.provider]}</b>, the room opens again by itself.
           {onClose ? ' If you keep it, the blue dot keeps blinking until you release the room or the session starts working again.' : ''}
         </p>
         <div className="confirm-actions">
@@ -570,7 +570,7 @@ export function EmptyState() {
   const empty = useStore((s) => s.visibleOrder.length === 0);
   const connection = useStore((s) => s.connection);
   const setDemo = useStore((s) => s.setDemo);
-  const claudeDir = useStore((s) => s.claudeDir);
+  const sources = useStore((s) => s.sources);
   if (!empty) return null;
   return (
     <div className="empty">
@@ -579,7 +579,7 @@ export function EmptyState() {
         <h2>The office is empty</h2>
         <p>
           {connection === 'live'
-            ? <>Watching <code>{claudeDir || '~/.claude/projects'}</code>. Start Claude Code in any terminal and a room will appear here.</>
+            ? <>Watching {watchedSources(sources).map((w, i) => <span key={w.provider}>{i ? ', ' : ''}<b>{PROVIDER_NAME[w.provider]}</b></span>)}. Start a session in any of them and a room will appear here.</>
             : connection === 'connecting'
               ? 'Connecting to the transcript monitor…'
               : 'The monitor is not reachable (run with npm run dev or npm start).'}
@@ -645,7 +645,7 @@ export function Help() {
         <button className="panel-close" onClick={() => setHelp(false)}>×</button>
         <h2>How the office works</h2>
         <ul>
-          <li>🏢 Every Claude Code <b>session</b> gets its own <b>room</b>. Rooms appear when a session is active and disappear after it has been quiet for a while.</li>
+          <li>🏢 Every <b>session</b> of Claude Code, Codex or OpenCode gets its own <b>room</b>; the round logo on the room button says which one. Rooms appear when a session is active and disappear after it has been quiet for a while.</li>
           <li>👑 The <b>director</b> is in the office for as long as the session works. They voice the main agent (prompt, thoughts, delegating) and walk out last, when everything is finished.</li>
           <li>🧩 Characters are not agents any more: every <b>task</b> is done by one <b>staff member</b> – a sub-agent run, or one tool call (of the main agent or of a sub-agent). Staff walk in, unpack their laptop, type, and show what they are doing in speech bubbles. A bubble stays until they do something else – on a break a thought cloud says what they are up to (which book they read, that they get a drink…).</li>
           <li>🔁 The staff <b>take turns</b>: whoever has rested longest gets the next task. When a sub-agent&apos;s task is done they hand the report to the director, then stay at their desk, sit on the sofa or pet a cat until the next task comes round.</li>
@@ -655,7 +655,7 @@ export function Help() {
           <li>👋 Everybody who walks in greets the room first; the job they came for shows up five seconds later.</li>
           <li>☕ Whoever has nothing to do takes a break: strolls around, sits on the sofa, watches a colleague work, looks out of the window, pets a cat, gets a drink, reads a book, watches the fish, washes their face, waters the plants, cooks noodles at the stove and eats them on the spot, or chats with a colleague at their desk. Breaks are long and far apart, so nobody is busy with one thing after another. The thought bubble goes away the moment the break is over.</li>
           <li>🧩 The header buttons Tasks / Reports / Activity open the full list – the Activity tab is open by default (the activity feed is everything that happened, newest first), click again to close it. 📜 Summary always shows the last summary of the session on a sheet of paper.</li>
-          <li>🗂️ The room buttons in the column on the right (working sessions first, then the most recently updated; it scrolls when there are many) keep every session until you <b>release</b> it (from the summary paper: Release room, or when you close the paper). Releasing only takes the room off the list – continue the session in Claude Code and the room opens again. A session that has stood still for an hour is released automatically.</li>
+          <li>🗂️ The room buttons in the column on the right (working sessions first, then the most recently updated; it scrolls when there are many) keep every session until you <b>release</b> it (from the summary paper: Release room, or when you close the paper). Releasing only takes the room off the list – continue the session in its agent and the room opens again. A session that has stood still for an hour is released automatically.</li>
           <li>🔵 When a session has finished all its work the director reads the summary aloud in their speech bubble (two lines at a time) and only goes home after the last line. A blinking blue dot in the top-left corner of the room button means the summary is still unread. Whenever you step into a room whose session is done, its summary lies on the screen as a sheet of paper (📜 Summary in the header brings it back). The dot keeps blinking until you release the room or the session starts working again.</li>
           <li>🐱 Every room has 1–2 cats. They hop in through the open sash of a window, wander, nap on the sofa or the director&apos;s desk and hop out again whenever they like.</li>
           <li>👥 Use the <b>Names</b> button to give the director and the staff real names (saved in this browser, unique inside a room, common English names are used when the list runs out).</li>

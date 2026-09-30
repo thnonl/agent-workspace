@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { createMonitor } from './monitor.mjs';
 import { createAppServer } from './app.mjs';
 
-const HELP = `Agent Workspace – watch your Claude Code sessions as a 3D office
+const HELP = `Agent Workspace – watch your Claude Code, Codex and OpenCode sessions as a 3D office
 
 Usage: agent-workspace [options]
 
@@ -57,7 +57,8 @@ server.on('error', (err) => {
 server.listen(port, host, () => {
   const url = `http://${host === '0.0.0.0' || host === '::' ? 'localhost' : host}:${port}`;
   console.log(`Agent Workspace → ${url}`);
-  console.log(`Watching ${monitor.claudeDir} (window ${Math.round(monitor.windowMs / 60000)} min)`);
+  for (const [name, source] of Object.entries(monitor.sources)) if (source) console.log(`Watching ${name}`);
+  console.log(`Sessions stay for ${Math.round(monitor.windowMs / 60000)} min after their last activity`);
   if (!args.includes('--no-open')) openBrowser(url);
 });
 

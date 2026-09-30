@@ -1,7 +1,8 @@
-// Watches Claude Code transcripts (~/.claude/projects/<project>/<session>.jsonl and
-// <session>/subagents/agent-*.jsonl) and turns raw JSONL lines into small "office events"
-// that the front-end animates. No Claude configuration is required: transcripts are
-// append-only files, so we simply tail them.
+// Watches what the coding agents already write and turns it into small "office events" that the front-end animates:
+//   Claude Code  ~/.claude/projects/<project>/<session>.jsonl and <session>/subagents/agent-*.jsonl (tailed)
+//   Codex        ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl (tailed, see codex.mjs)
+//   OpenCode     ~/.local/share/opencode/opencode.db (SQLite, read-only, see opencode.mjs)
+// No agent configuration is required.
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';

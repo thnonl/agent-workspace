@@ -24,7 +24,7 @@ export function createApi(monitor) {
     }
     if (url.pathname === '/api/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, claudeDir: monitor.claudeDir, sessions: monitor.sessionCount() }));
+      res.end(JSON.stringify({ ok: true, claudeDir: monitor.claudeDir, sources: monitor.sources, sessions: monitor.sessionCount() }));
       return;
     }
     next();

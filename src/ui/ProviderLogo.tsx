@@ -1,5 +1,12 @@
 import type { Provider } from '../types';
 
+export const PROVIDERS: Provider[] = ['claude', 'codex', 'opencode'];
+
+/** The sources the monitor reports as watched (switched-off ones are null), in a fixed order. */
+export function watchedSources(sources: Record<string, string | null>): { provider: Provider; path: string }[] {
+  return PROVIDERS.flatMap((provider) => (sources[provider] ? [{ provider, path: sources[provider] as string }] : []));
+}
+
 export const PROVIDER_NAME: Record<Provider, string> = { claude: 'Claude Code', codex: 'Codex / ChatGPT', opencode: 'OpenCode' };
 
 /** Round provider badge (simplified marks). It has a fixed size and never shrinks, whatever the text next to it does. */

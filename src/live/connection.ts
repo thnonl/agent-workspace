@@ -21,7 +21,7 @@ export function connectLive(): () => void {
       const s = useStore.getState();
       if (ev.type === 'hello') {
         s.beginSync();
-        s.setConnection('live', ev.claudeDir);
+        s.setConnection('live', ev.sources ?? { claude: ev.claudeDir });
       }
       s.applyEvent(ev, false);
       if (ev.type === 'ready') s.endSync();

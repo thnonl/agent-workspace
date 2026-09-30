@@ -11,10 +11,12 @@ import { bufferTaskSpeech, clearTalk, dropRoomRuntime, dropRuntime, dropTaskSpee
 
 export type Connection = 'connecting' | 'live' | 'offline';
 export type TimeMode = 'auto' | 'day' | 'dusk' | 'night';
+export type Sources = Record<string, string | null>;
 
 interface State {
   connection: Connection;
-  claudeDir: string;
+  /** what the monitor watches, by provider (null = switched off) */
+  sources: Sources;
   demoOn: boolean;
   rooms: Record<string, RoomRec>;
   roomOrder: string[];
@@ -59,7 +61,7 @@ interface State {
   hour: number;
   syncing: { sessions: Set<string>; agents: Set<string> } | null;
 
-  setConnection: (c: Connection, dir?: string) => void;
+  setConnection: (c: Connection, sources?: Sources) => void;
   applyEvent: (ev: MonitorEvent, demo?: boolean) => void;
   beginSync: () => void;
   endSync: () => void;
@@ -75,7 +77,7 @@ interface State {
   closeSummary: () => void;
   askRelease: () => void;
   cancelRelease: () => void;
-  /** hide the room from the list (the session can be continued in Claude Code to bring it back) */
+  /** hide the room from the list (continuing the session in its agent brings it back) */
   releaseRoom: (roomId: string) => void;
   /** release every room that is not working right now (working ones stay: they would come straight back) */
   releaseAllRooms: () => void;
@@ -619,7 +621,7 @@ function handleEvent(get: Get, set: SetFn, ev: MonitorEvent, demo: boolean) {
   const s = get();
   switch (ev.type) {
     case 'hello':
-      set({ claudeDir: ev.claudeDir });
+      set({ sources: ev.sources ?? { claude: ev.claudeDir } });
       return;
     case 'ready':
       return;
@@ -788,7 +790,7 @@ function handleEvent(get: Get, set: SetFn, ev: MonitorEvent, demo: boolean) {
 
 const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
   connection: 'connecting',
-  claudeDir: '',
+  sources: {},
   demoOn: false,
   rooms: {},
   roomOrder: [],
@@ -817,7 +819,7 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
   hour: localHour(),
   syncing: null,
 
-  setConnection: (connection, dir) => set((s) => ({ connection, claudeDir: dir ?? s.claudeDir })),
+  setConnection: (connection, sources) => set((s) => ({ connection, sources: sources ?? s.sources })),
 
   beginSync: () => set({ syncing: { sessions: new Set(), agents: new Set() } }),
 
