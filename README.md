@@ -155,6 +155,7 @@ If no session is running the app starts a **demo** with three scripted sessions 
 | `src/sim/actor.ts` | per-character state machine (enter → sit → unpack → type → hand over report → wait / break → pack → leave) |
 | `src/sim/cat.ts`, `src/scene/catModel.ts`, `catMesh.ts`, `CatView.tsx` | the office cats: behaviour, skinned model + fur colouring, bone animation |
 | `?catlab&seed=1&count=6&pose=sit` | dev turntable to inspect cats (`pose`: idle, walk, sit, groom, sleep, purr, stretch) |
+| `?wardrobe&seed=1&count=12&cols=6` | dev turntable for people: any look field can be forced (`top=blazer&hat=fedora`, comma lists are handed out in turn), `back=1` for the back, `&laptops` shows every laptop model |
 | `src/env.ts`, `src/scene/glow.ts` | time-of-day model (light, sky) and materials that glow when the lights are on |
 | `src/scene/*` | room, furniture (`furniture.tsx`, `props.tsx`, `officeProps.tsx`), walls, camera, lights |
 | `src/scene/bake.ts`, `StaticBake.tsx` | merge static primitives into a few meshes (≈1/3 of the draw calls); the baked-away sources are no longer walked by three |

@@ -9,7 +9,7 @@ import { applyCat, smoothPose } from './CatView';
  * Dev-only cat turntable: open /?catlab&seed=3&pose=sit and orbit around a single cat.
  * `window.__labPose = 'walk'` switches pose, `window.__labCam(x, y, z)` moves the camera.
  */
-function Cat({ seed, x }: { seed: number; x: number }) {
+function Cat({ seed, x, z }: { seed: number; x: number; z: number }) {
   const look = useMemo(() => makeCatLook(seed), [seed]);
   const rig = useMemo(() => buildCat(look), [look]);
   const pose = useRef<CatPose>(neutralCatPose());
@@ -21,7 +21,7 @@ function Cat({ seed, x }: { seed: number; x: number }) {
     applyCat(rig, pose.current, clock.current);
   });
   return (
-    <group position={[x, 0, 0]}>
+    <group position={[x, 0, z]}>
       <primitive object={rig.root} />
     </group>
   );
@@ -38,7 +38,9 @@ function CamHook() {
 export function CatLab() {
   const q = new URLSearchParams(location.search);
   const seed = Number(q.get('seed') ?? 1);
-  const count = Math.max(1, Math.min(8, Number(q.get('count') ?? 1)));
+  const count = Math.max(1, Math.min(32, Number(q.get('count') ?? 1)));
+  const cols = Math.min(count, 8);
+  const rows = Math.ceil(count / cols);
   return (
     <Canvas shadows flat camera={{ fov: 32, position: [1.1, 0.75, 1.3], near: 0.05, far: 50 }} style={{ position: 'fixed', inset: 0, background: '#dfe6f5' }}>
       <hemisphereLight args={['#ffffff', '#e8d6c4', 1.1]} />
@@ -48,7 +50,7 @@ export function CatLab() {
         <meshStandardMaterial color="#f2dfc9" />
       </mesh>
       {Array.from({ length: count }, (_, i) => (
-        <Cat key={i} seed={seed + i} x={(i - (count - 1) / 2) * 0.9} />
+        <Cat key={i} seed={seed + i} x={((i % cols) - (cols - 1) / 2) * 0.9} z={Math.floor(i / cols) * 0.9 - ((rows - 1) * 0.9) / 2} />
       ))}
       <CamHook />
       <OrbitControls target={[0, 0.22, 0]} />

@@ -3,14 +3,26 @@ import { Rng } from '../util/rng';
 import { G, M, MB, group, mesh } from './kit';
 import { addTube, buffersToGeometry, buildHeadGeometry, newBuffers } from './catMesh';
 
-export type CoatPattern = 'solid' | 'tabby' | 'tuxedo' | 'calico' | 'siamese';
+export type CoatPattern = 'solid' | 'tabby' | 'tuxedo' | 'calico' | 'siamese' | 'bicolor' | 'cow' | 'spotted' | 'tortie';
+export type EarStyle = 'pointy' | 'fold' | 'tall' | 'round';
+export type TailStyle = 'long' | 'short' | 'up' | 'fluffy';
 
 export interface CatLook {
   base: string;
   dark: string;
   pattern: CoatPattern;
   eye: string;
+  /** a different colour for the right eye (odd-eyed white cats) */
+  eye2: string | null;
   scale: number;
+  /** body thickness: 1 = normal, below slim, above chubby */
+  build: number;
+  /** long-haired: a bit thicker all round, cheek tufts */
+  fluffy: boolean;
+  ears: EarStyle;
+  tail: TailStyle;
+  /** colour of a collar with a bell, or null */
+  collar: string | null;
 }
 
 const COATS: { base: string; dark: string; pattern: CoatPattern }[] = [
@@ -21,12 +33,46 @@ const COATS: { base: string; dark: string; pattern: CoatPattern }[] = [
   { base: '#f7f0e6', dark: '#e0902f', pattern: 'calico' },
   { base: '#f1e6d2', dark: '#6b5445', pattern: 'siamese' },
   { base: '#ffcf9e', dark: '#f0a860', pattern: 'solid' },
+  { base: '#ffe9c7', dark: '#f0cfa0', pattern: 'solid' }, // cream
+  { base: '#8a6350', dark: '#5e3f31', pattern: 'solid' }, // chocolate
+  { base: '#9aa3b8', dark: '#6b7389', pattern: 'solid' }, // blue grey
+  { base: '#fbfaf7', dark: '#e8e2d8', pattern: 'solid' }, // white
+  { base: '#c9ced9', dark: '#4a4f60', pattern: 'tabby' }, // silver tabby
+  { base: '#a9805a', dark: '#4b3324', pattern: 'tabby' }, // brown tabby
+  { base: '#ffdcae', dark: '#e0a86a', pattern: 'tabby' }, // cream tabby
+  { base: '#ffffff', dark: '#f0a458', pattern: 'bicolor' }, // orange and white
+  { base: '#ffffff', dark: '#8f98ad', pattern: 'bicolor' }, // grey and white
+  { base: '#ffffff', dark: '#2f2c38', pattern: 'cow' }, // black and white patches
+  { base: '#e6b676', dark: '#5a3a26', pattern: 'spotted' }, // bengal
+  { base: '#dfe3ea', dark: '#454a5a', pattern: 'spotted' }, // silver spotted
+  { base: '#3a3440', dark: '#e08a3c', pattern: 'tortie' }, // tortoiseshell
+  { base: '#f3f0ea', dark: '#7d8398', pattern: 'siamese' }, // blue point
+  { base: '#f6ecdd', dark: '#7a5544', pattern: 'siamese' }, // chocolate point
+  { base: '#fff1de', dark: '#e0902f', pattern: 'siamese' }, // flame point
 ];
+const EYES = ['#7bd88f', '#ffd166', '#6ec6ff', '#b7e07a', '#ffb347', '#d98b3a', '#7fb6ff'];
+const COLLARS = ['#ff5d73', '#6ec6ff', '#ffd166', '#b79bff', '#5ed3b0', '#ffffff', '#ff9ec4'];
 
 export function makeCatLook(seed: number): CatLook {
   const r = new Rng(seed ^ 0x2c1b3);
+  // (what a cat had before – coat, eyes, size – comes from this stream; the shape and the extras from the second one)
+  const w = new Rng(seed ^ 0x7f4a7c15);
   const c = r.pick(COATS);
-  return { ...c, eye: r.pick(['#7bd88f', '#ffd166', '#6ec6ff', '#b7e07a']), scale: r.range(1.3, 1.5) };
+  const eye = r.pick(EYES);
+  const scale = r.range(1.3, 1.5);
+  const white = c.pattern === 'bicolor' || c.pattern === 'cow' || c.pattern === 'tuxedo' || c.base === '#fbfaf7';
+  const fluffy = w.chance(0.28);
+  return {
+    ...c,
+    eye,
+    eye2: white && w.chance(0.3) ? (eye === '#6ec6ff' ? '#ffd166' : '#6ec6ff') : null,
+    scale,
+    build: w.pick([0.9, 1, 1, 1.08, 1.2]),
+    fluffy,
+    ears: w.weighted<EarStyle>([['pointy', 6], ['fold', 1.6], ['tall', 1.1], ['round', 1.3]]),
+    tail: w.weighted<TailStyle>([['long', 5], ['short', 1.2], ['up', 1.2], ['fluffy', fluffy ? 5 : 0.4]]),
+    collar: w.chance(0.3) ? w.pick(COLLARS) : null,
+  };
 }
 
 export interface LegBones {
@@ -88,7 +134,9 @@ export function buildCat(look: CatLook): CatRig {
   const head = mk(pHead, neck, pNeck, 'head'); // 4
 
   // ---- tail (6 bones along a relaxed, upward curving centre line)
-  const tailPts = [v(0, 0.212, -0.2), v(0, 0.212, -0.255), v(0, 0.212, -0.315), v(0, 0.212, -0.375), v(0, 0.212, -0.435), v(0, 0.212, -0.49), v(0, 0.212, -0.54)];
+  const tailZ = [-0.2, -0.255, -0.315, -0.375, -0.435, -0.49, -0.54];
+  const tailK = look.tail === 'short' ? 0.42 : look.tail === 'up' ? 0.85 : look.tail === 'fluffy' ? 0.92 : 1;
+  const tailPts = tailZ.map((z, i) => v(0, 0.212 + (look.tail === 'up' ? 0.3 * (i / 6) ** 2 : 0), -0.2 + (z + 0.2) * tailK));
   const tail: THREE.Bone[] = [];
   let par: THREE.Object3D = hips;
   let parAbs = pHips;
@@ -122,12 +170,15 @@ export function buildCat(look: CatLook): CatRig {
   const legBone = (leg: number, k: 'a' | 'b' | 'c') => bones.indexOf(legs[leg][k]);
 
   // ---- skinned geometry
+  const girth = look.build * (look.fluffy ? 1.08 : 1);
+  const limbK = 0.85 + 0.15 * girth;
+  const tailThick = look.tail === 'fluffy' ? 1.6 : look.tail === 'short' ? 1.15 : look.fluffy ? 1.2 : 1;
   const buf = newBuffers();
   addTube(
     {
       pts: [v(0, 0.2, -0.235), v(0, 0.212, -0.19), pHips, v(0, 0.222, -0.06), pSpine1, v(0, 0.222, 0.07), pSpine2, v(0, 0.222, 0.17), pNeck, v(0, 0.272, 0.255), pHead],
-      rx: fat([0.06, 0.07, 0.074, 0.066, 0.06, 0.065, 0.071, 0.066, 0.056, 0.052, 0.05], 1.12),
-      ry: fat([0.064, 0.074, 0.078, 0.07, 0.066, 0.071, 0.079, 0.074, 0.062, 0.056, 0.05], 1.1),
+      rx: fat([0.06, 0.07, 0.074, 0.066, 0.06, 0.065, 0.071, 0.066, 0.056, 0.052, 0.05].map((x, i) => (i < 9 ? x * girth : x)), 1.12),
+      ry: fat([0.064, 0.074, 0.078, 0.07, 0.066, 0.071, 0.079, 0.074, 0.062, 0.056, 0.05].map((x, i) => (i < 9 ? x * girth : x)), 1.1),
       samples: 34,
       radial: 22,
       region: 'body',
@@ -146,8 +197,8 @@ export function buildCat(look: CatLook): CatRig {
   addTube(
     {
       pts: tailPts,
-      rx: fat([0.036, 0.034, 0.031, 0.029, 0.027, 0.026, 0.024], 1.2),
-      ry: fat([0.036, 0.034, 0.031, 0.029, 0.027, 0.026, 0.024], 1.2),
+      rx: fat([0.036, 0.034, 0.031, 0.029, 0.027, 0.026, 0.024], 1.2 * tailThick),
+      ry: fat([0.036, 0.034, 0.031, 0.029, 0.027, 0.026, 0.024], 1.2 * tailThick),
       samples: 28,
       radial: 12,
       region: 'tail',
@@ -165,8 +216,8 @@ export function buildCat(look: CatLook): CatRig {
     addTube(
       {
         pts,
-        rx: fat(front ? [0.034, 0.029, 0.02, 0.021, 0.022] : [0.05, 0.032, 0.021, 0.02, 0.022], 1.18),
-        ry: fat(front ? [0.036, 0.03, 0.021, 0.02, 0.017] : [0.058, 0.036, 0.022, 0.02, 0.017], 1.18),
+        rx: fat(front ? [0.034, 0.029, 0.02, 0.021, 0.022] : [0.05, 0.032, 0.021, 0.02, 0.022], 1.18 * limbK),
+        ry: fat(front ? [0.036, 0.03, 0.021, 0.02, 0.017] : [0.058, 0.036, 0.022, 0.02, 0.017], 1.18 * limbK),
         samples: 18,
         radial: front ? 12 : 16,
         region: front ? 'front' : 'hind',
@@ -200,33 +251,56 @@ export function buildCat(look: CatLook): CatRig {
 
   // ---- head details (rigid, children of the head bone)
   const face = group();
-  face.scale.setScalar(1.16);
+  face.scale.setScalar(look.fluffy ? 1.22 : 1.16);
   head.add(face);
   const headMesh = new THREE.Mesh(buildHeadGeometry(look), fur);
   headMesh.geometry.userData.owned = true;
   headMesh.castShadow = true;
   face.add(headMesh);
 
-  const baseCol = look.pattern === 'tuxedo' || look.pattern === 'siamese' || look.pattern === 'calico' ? look.dark : look.base;
-  const earMat = M(baseCol, { rough: 0.9 });
+  const patched = look.pattern === 'tuxedo' || look.pattern === 'calico' || look.pattern === 'bicolor' || look.pattern === 'cow';
+  const darkEars = patched || look.pattern === 'siamese';
+  const earMat = M(darkEars ? look.dark : look.base, { rough: 0.9 });
   const pink = M('#ffa6b8', { rough: 0.7 });
   const ears: THREE.Group[] = [];
   for (const s of [-1, 1]) {
     const ear = group(s * 0.05, 0.07, -0.008);
     ear.rotation.z = -s * 0.32;
     ear.rotation.x = -0.12;
-    const outer = mesh(G.cone(0.04, 0.072, 6), earMat, 0, 0.033, 0, { s: [1.05, 1, 0.55], r: [0, Math.PI, 0] });
-    const inner = mesh(G.cone(0.028, 0.052, 6), pink, 0, 0.027, 0.01, { s: [1.05, 1, 0.35], r: [0, Math.PI, 0], cast: false });
-    ear.add(outer, inner);
+    // (the animation drives the ear group itself; the style lives in what hangs below it)
+    const shape = group();
+    switch (look.ears) {
+      case 'tall':
+        shape.add(mesh(G.cone(0.04, 0.072, 6), earMat, 0, 0.047, 0, { s: [1.0, 1.45, 0.55], r: [0, Math.PI, 0] }));
+        shape.add(mesh(G.cone(0.028, 0.052, 6), pink, 0, 0.039, 0.01, { s: [1.0, 1.45, 0.35], r: [0, Math.PI, 0], cast: false }));
+        break;
+      case 'round':
+        shape.add(mesh(G.sphere(0.036, 14, 10), earMat, 0, 0.028, 0, { s: [1, 0.95, 0.5] }));
+        shape.add(mesh(G.sphere(0.023, 12, 8), pink, 0, 0.026, 0.008, { s: [1, 0.95, 0.4], cast: false }));
+        break;
+      case 'fold':
+        shape.rotation.x = 1.0; // the tip folds forward over the head
+        shape.add(mesh(G.cone(0.04, 0.072, 6), earMat, 0, 0.026, 0, { s: [1.12, 0.72, 0.6], r: [0, Math.PI, 0] }));
+        break;
+      default:
+        shape.add(mesh(G.cone(0.04, 0.072, 6), earMat, 0, 0.033, 0, { s: [1.05, 1, 0.55], r: [0, Math.PI, 0] }));
+        shape.add(mesh(G.cone(0.028, 0.052, 6), pink, 0, 0.027, 0.01, { s: [1.05, 1, 0.35], r: [0, Math.PI, 0], cast: false }));
+    }
+    ear.add(shape);
     face.add(ear);
     ears.push(ear);
+  }
+  if (look.fluffy) {
+    // cheek tufts
+    const tuft = M(patched ? '#ffffff' : look.base, { rough: 0.95 });
+    for (const s of [-1, 1]) for (let k = 0; k < 2; k++) face.add(mesh(G.cone(0.02, 0.05, 6), tuft, s * (0.092 + k * 0.004), -0.03 - k * 0.018, 0.03, { r: [0.2, 0, s * (Math.PI / 2 + 0.5 + k * 0.35)], s: [1, 1, 0.6], cast: false }));
   }
   const eyes: THREE.Group[] = [];
   const closedEyes: THREE.Mesh[] = [];
   const lineMat = M('#3a3040', { rough: 0.6 });
   for (const s of [-1, 1]) {
     const eye = group(s * 0.04, 0.008, 0.073);
-    eye.add(mesh(G.sphere(0.0175, 16, 12), M(look.eye, { rough: 0.15 }), 0, 0, 0, { s: [1, 1.18, 0.55], cast: false }));
+    eye.add(mesh(G.sphere(0.0175, 16, 12), M(s === 1 && look.eye2 ? look.eye2 : look.eye, { rough: 0.15 }), 0, 0, 0, { s: [1, 1.18, 0.55], cast: false }));
     eye.add(mesh(G.sphere(0.0105, 12, 10), M('#1d1a24', { rough: 0.2 }), 0, -0.001, 0.0045, { s: [0.32, 1.45, 0.6], cast: false }));
     eye.add(mesh(G.sphere(0.0048, 8, 6), MB('#ffffff'), s * -0.004, 0.0075, 0.0095, { cast: false }));
     eye.add(mesh(G.sphere(0.0026, 6, 5), MB('#ffffff'), s * 0.005, -0.006, 0.0095, { cast: false }));
@@ -243,6 +317,12 @@ export function buildCat(look: CatLook): CatRig {
     for (let k = 0; k < 3; k++) {
       face.add(mesh(G.cyl(0.0007, 0.0007, 0.08, 4), M('#fffaf0', { rough: 0.5 }), s * 0.09, -0.026 + (k - 1) * 0.011, 0.066, { r: [0, s * -0.3, -s * (Math.PI / 2) + (k - 1) * 0.2 * s], cast: false }));
     }
+  }
+
+  if (look.collar) {
+    // a thin collar with a bell: it hangs on the neck bone, so it follows every head movement
+    neck.add(mesh(G.torus(0.064 * girth, 0.0085, Math.PI * 2, 6, 24), M(look.collar, { rough: 0.5 }), 0, 0, 0.004, { s: [1, 1.06, 1], cast: false }));
+    neck.add(mesh(G.sphere(0.0125, 10, 8), M('#ffd166', { metal: 0.6, rough: 0.3 }), 0, -0.066 * girth, 0.012, { cast: false }));
   }
 
   root.scale.setScalar(look.scale);

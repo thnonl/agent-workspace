@@ -43,7 +43,20 @@ export const RIG_SCALE = 0.85;
 
 const SLEEVE: Record<Appearance['top'], 'long' | 'short' | 'none'> = {
   tee: 'short', hoodie: 'long', shirt: 'long', sweater: 'long', dress: 'short', overalls: 'short', suit: 'long', jacket: 'long', tank: 'none',
+  blazer: 'long', vest: 'long', cardigan: 'long', polo: 'short', coat: 'long', stripe: 'long',
 };
+
+/** The torso is a capsule (radius 0.235, straight between y 0.195 and 0.365), squashed to 0.86 in depth: these give the surface to hang details on. */
+const TORSO_R = 0.235;
+function torsoR(y: number): number {
+  const dy = y < 0.195 ? y - 0.195 : y > 0.365 ? y - 0.365 : 0;
+  return Math.sqrt(Math.max(0, TORSO_R * TORSO_R - dy * dy));
+}
+/** z of the front of the torso at (x, y) in torso space */
+function frontZ(x: number, y: number): number {
+  const r = torsoR(y);
+  return 0.86 * Math.sqrt(Math.max(0, r * r - x * x));
+}
 
 export function buildCharacter(a: Appearance): Rig {
   const skin = M(a.skin, { rough: 0.55 });
@@ -55,6 +68,10 @@ export function buildCharacter(a: Appearance): Rig {
   const hairMat = M(a.hair, { rough: 0.5 });
   const hairDark = M(shade(a.hair, -0.1), { rough: 0.55 });
   const accMat = M(a.accessoryColor, { rough: 0.5 });
+  const shirtMat = M(a.shirt, { rough: 0.6 });
+  const neckMat = M(a.neckColor, { rough: 0.55 });
+  const gold = M('#ffd166', { metal: 0.55, rough: 0.3 });
+  const leather = M('#3a3345', { rough: 0.45 });
   const eyeMat = M(a.eye, { rough: 0.25 });
   const white = M('#ffffff', { rough: 0.4 });
 
@@ -63,17 +80,48 @@ export function buildCharacter(a: Appearance): Rig {
   root.add(pelvis);
 
   // ------------------------------------------------------------------ legs
+  const shortsLeg = a.bottom === 'shorts';
+  const bareLeg = a.bottom === 'skirt' || a.bottom === 'none' || a.bottom === 'midi';
   const legs = (side: -1 | 1) => {
     const thigh = group(side * 0.125, HIP_Y, 0);
-    const shortsLeg = a.bottom === 'shorts';
-    const bareLeg = a.bottom === 'skirt' || a.bottom === 'none';
     thigh.add(mesh(G.capsule(0.098, 0.03), bareLeg ? skin : bottomMat, 0, -0.11, 0));
     const knee = group(0, -0.22, 0);
     thigh.add(knee);
     knee.add(mesh(G.capsule(0.088, 0.03), shortsLeg || bareLeg ? skin : bottomMat, 0, -0.1, 0));
-    if (shortsLeg || bareLeg) knee.add(mesh(G.cyl(0.092, 0.092, 0.05, 14), white, 0, -0.145, 0)); // sock cuff
-    knee.add(mesh(G.sphere(0.12, 18, 12), shoeMat, 0, -0.19, 0.045, { s: [0.92, 0.66, 1.42] }));
-    knee.add(mesh(G.sphere(0.06, 10, 8), white, 0, -0.215, 0.13, { s: [1.5, 0.4, 0.9], cast: false }));
+    if (a.bottom === 'slacks') {
+      // a pressed crease down the front of each leg
+      const crease = M(shade(a.bottomColor, -0.08), { rough: 0.8 });
+      thigh.add(mesh(G.box(0.012, 0.2, 0.012), crease, 0, -0.11, 0.097, { cast: false }));
+      knee.add(mesh(G.box(0.012, 0.2, 0.012), crease, 0, -0.1, 0.087, { cast: false }));
+    }
+    if (a.bottom === 'joggers') knee.add(mesh(G.torus(0.088, 0.02, Math.PI * 2, 6, 16), accentMat, 0, -0.165, 0, { r: [Math.PI / 2, 0, 0], cast: false }));
+    // ---- shoes
+    const sole = M(shade(a.shoes, -0.25), { rough: 0.7 });
+    switch (a.shoeStyle) {
+      case 'loafer':
+        if (shortsLeg || bareLeg) knee.add(mesh(G.cyl(0.092, 0.092, 0.05, 14), white, 0, -0.145, 0)); // sock cuff
+        knee.add(mesh(G.sphere(0.12, 18, 12), shoeMat, 0, -0.2, 0.05, { s: [0.84, 0.5, 1.5] }));
+        knee.add(mesh(G.sphere(0.12, 14, 8), sole, 0, -0.243, 0.05, { s: [0.86, 0.14, 1.52], cast: false }));
+        knee.add(mesh(G.sphere(0.05, 10, 8), M(shade(a.shoes, 0.08), { rough: 0.45 }), 0, -0.172, 0.115, { s: [1.5, 0.45, 0.9], cast: false }));
+        knee.add(mesh(G.sphere(0.013, 8, 6), gold, 0, -0.166, 0.14, { cast: false }));
+        break;
+      case 'boot':
+        knee.add(mesh(G.cyl(0.098, 0.106, 0.17, 16), shoeMat, 0, -0.085, 0));
+        knee.add(mesh(G.torus(0.1, 0.014, Math.PI * 2, 6, 18), M(shade(a.shoes, 0.12), { rough: 0.5 }), 0, -0.005, 0, { r: [Math.PI / 2, 0, 0], cast: false }));
+        knee.add(mesh(G.sphere(0.12, 18, 12), shoeMat, 0, -0.19, 0.05, { s: [0.94, 0.66, 1.4] }));
+        knee.add(mesh(G.sphere(0.12, 14, 8), sole, 0, -0.245, 0.05, { s: [0.96, 0.14, 1.42], cast: false }));
+        break;
+      case 'mary-jane':
+        knee.add(mesh(G.cyl(0.092, 0.092, 0.055, 14), white, 0, -0.14, 0)); // sock
+        knee.add(mesh(G.sphere(0.12, 18, 12), shoeMat, 0, -0.2, 0.048, { s: [0.9, 0.5, 1.38] }));
+        knee.add(mesh(G.box(0.17, 0.022, 0.03), shoeMat, 0, -0.165, 0.06, { cast: false }));
+        knee.add(mesh(G.sphere(0.014, 8, 6), gold, side * 0.085, -0.165, 0.06, { cast: false }));
+        break;
+      default:
+        if (shortsLeg || bareLeg) knee.add(mesh(G.cyl(0.092, 0.092, 0.05, 14), white, 0, -0.145, 0)); // sock cuff
+        knee.add(mesh(G.sphere(0.12, 18, 12), shoeMat, 0, -0.19, 0.045, { s: [0.92, 0.66, 1.42] }));
+        knee.add(mesh(G.sphere(0.06, 10, 8), white, 0, -0.215, 0.13, { s: [1.5, 0.4, 0.9], cast: false }));
+    }
     pelvis.add(thigh);
     return { thigh, knee };
   };
@@ -85,6 +133,24 @@ export function buildCharacter(a: Appearance): Rig {
   if (a.bottom === 'skirt') {
     pelvis.add(mesh(G.cyl(0.2, 0.36, 0.26, 24), bottomMat, 0, HIP_Y - 0.06, 0));
     pelvis.add(mesh(G.torus(0.36, 0.014, Math.PI * 2, 6, 32), accentMat, 0, HIP_Y - 0.185, 0, { r: [Math.PI / 2, 0, 0], cast: false }));
+  }
+  if (a.bottom === 'midi' && a.top !== 'coat') {
+    // a long skirt down to the calves
+    pelvis.add(mesh(G.cyl(0.2, 0.4, 0.42, 24), bottomMat, 0, HIP_Y - 0.14, 0));
+    pelvis.add(mesh(G.torus(0.4, 0.014, Math.PI * 2, 6, 32), accentMat, 0, HIP_Y - 0.35, 0, { r: [Math.PI / 2, 0, 0], cast: false }));
+    pelvis.add(mesh(G.torus(0.21, 0.02, Math.PI * 2, 6, 24), accentMat, 0, HIP_Y + 0.03, 0, { r: [Math.PI / 2, 0, 0], cast: false }));
+  }
+  if (a.top === 'coat') {
+    // the coat flares below the waist all the way to the knees
+    const coatDark = M(shade(a.topColor, -0.08), { rough: 0.75 });
+    pelvis.add(mesh(G.cyl(0.21, 0.42, 0.42, 24), topMat, 0, HIP_Y - 0.15, 0));
+    pelvis.add(mesh(G.torus(0.42, 0.014, Math.PI * 2, 6, 32), coatDark, 0, HIP_Y - 0.36, 0, { r: [Math.PI / 2, 0, 0], cast: false }));
+    // front closure along the slant of the skirt, with buttons
+    pelvis.add(mesh(G.box(0.05, 0.47, 0.012), coatDark, 0, HIP_Y - 0.15, 0.318, { r: [-0.4636, 0, 0], cast: false }));
+    for (let i = 0; i < 3; i++) {
+      const t = i / 2;
+      { const y = HIP_Y - 0.03 - t * 0.28; pelvis.add(mesh(G.sphere(0.016, 8, 6), coatDark, 0, y, 0.21 + 0.21 * ((HIP_Y + 0.06 - y) / 0.42) + 0.008, { cast: false })); }
+    }
   }
   if (a.top === 'dress') {
     pelvis.add(mesh(G.cyl(0.2, 0.4, 0.32, 24), topMat, 0, HIP_Y - 0.08, 0));
@@ -122,17 +188,72 @@ export function buildCharacter(a: Appearance): Rig {
       torso.add(mesh(G.sphere(0.03, 8, 6), M('#ffd166', { metal: 0.6 }), 0.13, 0.36, 0.215, { cast: false }));
       break;
     }
-    case 'suit': {
+    case 'suit':
+    case 'blazer': {
       const lapel = M(shade(a.topColor, -0.05));
-      torso.add(mesh(G.box(0.16, 0.42, 0.03), white, 0, 0.36, 0.2, { r: [0.05, 0, 0], cast: false }));
+      torso.add(mesh(G.box(0.16, 0.42, 0.03), shirtMat, 0, 0.36, 0.2, { r: [0.05, 0, 0], cast: false }));
       torso.add(mesh(G.box(0.07, 0.4, 0.05), lapel, -0.1, 0.36, 0.2, { r: [0.05, 0, 0.16] }));
       torso.add(mesh(G.box(0.07, 0.4, 0.05), lapel, 0.1, 0.36, 0.2, { r: [0.05, 0, -0.16] }));
-      // tie
-      const tie = M('#ff5d73');
-      torso.add(mesh(G.box(0.06, 0.06, 0.03), tie, 0, 0.52, 0.215));
-      torso.add(mesh(G.cone(0.055, 0.3, 4), tie, 0, 0.3, 0.215, { r: [Math.PI, Math.PI / 4, 0], s: [0.6, 1, 0.3] }));
-      // golden name badge
-      torso.add(mesh(G.rbox(0.09, 0.05, 0.02, 0.01), M('#ffd166', { metal: 0.5, rough: 0.35 }), 0.14, 0.42, 0.21, { cast: false }));
+      // the front closes below the lapels: seam, two buttons, pocket flaps
+      torso.add(mesh(G.box(0.012, 0.18, 0.012), lapel, 0, 0.13, frontZ(0, 0.13) + 0.006, { cast: false }));
+      for (const y of [0.2, 0.1]) torso.add(mesh(G.sphere(0.017, 8, 6), a.top === 'blazer' ? gold : lapel, 0.03, y, frontZ(0.03, y) + 0.012, { cast: false }));
+      for (const side of [-1, 1]) torso.add(mesh(G.rbox(0.09, 0.022, 0.02, 0.008), lapel, side * 0.15, 0.09, frontZ(side * 0.15, 0.09) + 0.006, { r: [0, side * -0.3, side * 0.12], cast: false }));
+      if (a.pocketSquare) {
+        // folded square in the breast pocket
+        const sq = M(a.neckColor, { rough: 0.6 });
+        torso.add(mesh(G.box(0.05, 0.03, 0.014), M('#ffffff', { rough: 0.6 }), 0.15, 0.475, frontZ(0.15, 0.475) + 0.01, { r: [0, 0, 0.12], cast: false }));
+        torso.add(mesh(G.cone(0.03, 0.04, 3), sq, 0.15, 0.5, frontZ(0.15, 0.475) + 0.012, { r: [0, 0, 0.1], s: [1, 1, 0.3], cast: false }));
+      }
+      // golden name badge (the director's)
+      if (a.isDirector) torso.add(mesh(G.rbox(0.09, 0.05, 0.02, 0.01), M('#ffd166', { metal: 0.5, rough: 0.35 }), 0.14, 0.42, 0.21, { cast: false }));
+      break;
+    }
+    case 'vest': {
+      // waistcoat: the shirt shows as a V above the buttons
+      torso.add(mesh(G.cone(0.11, 0.3, 4), shirtMat, 0, 0.46, frontZ(0, 0.46) + 0.006, { r: [Math.PI, Math.PI / 4, 0], s: [1, 1, 0.2], cast: false }));
+      torso.add(mesh(G.box(0.1, 0.06, 0.05), shirtMat, -0.07, 0.57, 0.16, { r: [0.3, 0, 0.5], cast: false }));
+      torso.add(mesh(G.box(0.1, 0.06, 0.05), shirtMat, 0.07, 0.57, 0.16, { r: [0.3, 0, -0.5], cast: false }));
+      for (const y of [0.25, 0.18, 0.11]) torso.add(mesh(G.sphere(0.016, 8, 6), gold, 0, y, frontZ(0, y) + 0.012, { cast: false }));
+      const welt = M(shade(a.topColor, -0.1));
+      for (const side of [-1, 1]) torso.add(mesh(G.box(0.07, 0.012, 0.012), welt, side * 0.11, 0.14, frontZ(side * 0.11, 0.14) + 0.006, { r: [0, 0, side * 0.15], cast: false }));
+      break;
+    }
+    case 'cardigan': {
+      // an open knit over a tee, with buttons on one panel and two patch pockets
+      const knit = M(shade(a.topColor, -0.1), { rough: 0.85 });
+      torso.add(mesh(G.box(0.11, 0.46, 0.02), accentMat, 0, 0.34, frontZ(0, 0.34) + 0.005, { cast: false }));
+      torso.add(mesh(G.torus(0.13, 0.036, Math.PI * 2, 8, 20), accentMat, 0, 0.6, 0, { r: [Math.PI / 2, 0, 0] }));
+      for (const y of [0.44, 0.33, 0.22]) torso.add(mesh(G.sphere(0.018, 8, 6), knit, 0.085, y, frontZ(0.085, y) + 0.012, { cast: false }));
+      for (const side of [-1, 1]) torso.add(mesh(G.rbox(0.07, 0.012, 0.014, 0.005), knit, side * 0.14, 0.2, frontZ(side * 0.14, 0.2) + 0.006, { r: [0, side * -0.55, side * 0.2], cast: false }));
+      torso.add(mesh(G.rbox(0.03, 0.44, 0.03, 0.012), knit, -0.068, 0.34, frontZ(-0.068, 0.34) + 0.006, { cast: false }));
+      torso.add(mesh(G.rbox(0.03, 0.44, 0.03, 0.012), knit, 0.068, 0.34, frontZ(0.068, 0.34) + 0.006, { cast: false }));
+      break;
+    }
+    case 'polo': {
+      const collar = M(shade(a.topColor, -0.07), { rough: 0.7 });
+      torso.add(mesh(G.box(0.1, 0.06, 0.05), collar, -0.07, 0.57, 0.16, { r: [0.3, 0, 0.5] }));
+      torso.add(mesh(G.box(0.1, 0.06, 0.05), collar, 0.07, 0.57, 0.16, { r: [0.3, 0, -0.5] }));
+      torso.add(mesh(G.box(0.032, 0.15, 0.012), white, 0, 0.47, frontZ(0, 0.47) + 0.006, { cast: false }));
+      for (const y of [0.5, 0.44]) torso.add(mesh(G.sphere(0.012, 8, 6), collar, 0, y, frontZ(0, y) + 0.012, { cast: false }));
+      break;
+    }
+    case 'coat': {
+      // trench coat: big collar, wide lapels, double-breasted buttons and a belt
+      const dk = M(shade(a.topColor, -0.08), { rough: 0.75 });
+      torso.add(mesh(G.box(0.11, 0.09, 0.05), dk, -0.09, 0.57, 0.15, { r: [0.35, 0, 0.6] }));
+      torso.add(mesh(G.box(0.11, 0.09, 0.05), dk, 0.09, 0.57, 0.15, { r: [0.35, 0, -0.6] }));
+      torso.add(mesh(G.box(0.07, 0.36, 0.045), dk, -0.075, 0.4, 0.195, { r: [0.05, 0, 0.18] }));
+      torso.add(mesh(G.box(0.07, 0.36, 0.045), dk, 0.075, 0.4, 0.195, { r: [0.05, 0, -0.18] }));
+      for (const y of [0.45, 0.34, 0.24]) for (const side of [-1, 1]) torso.add(mesh(G.sphere(0.017, 8, 6), leather, side * 0.075, y, frontZ(side * 0.075, y) + 0.02, { cast: false }));
+      torso.add(mesh(G.torus(0.2, 0.022, Math.PI * 2, 6, 28), dk, 0, 0.11, 0, { r: [Math.PI / 2, 0, 0], s: [1.05, 0.9, 1] }));
+      torso.add(mesh(G.rbox(0.05, 0.04, 0.02, 0.008), gold, 0, 0.11, frontZ(0, 0.11) + 0.02, { cast: false }));
+      // shoulder straps
+      for (const side of [-1, 1]) torso.add(mesh(G.rbox(0.09, 0.02, 0.05, 0.008), dk, side * 0.2, 0.59, 0.02, { r: [0, 0, side * -0.25] }));
+      break;
+    }
+    case 'stripe': {
+      // breton stripes: a ring every hand's breadth, following the body
+      for (let y = 0.07; y < 0.56; y += 0.1) torso.add(mesh(G.cyl(torsoR(y) + 0.004, torsoR(y) + 0.004, 0.045, 32), accentMat, 0, y, 0, { s: [1, 1, 0.86], cast: false }));
       break;
     }
     case 'jacket':
@@ -143,16 +264,79 @@ export function buildCharacter(a: Appearance): Rig {
     default:
   }
 
+  if (a.bottom === 'slacks' && a.top !== 'coat' && a.top !== 'dress') {
+    // belt with a buckle at the waist
+    torso.add(mesh(G.torus(0.19, 0.02, Math.PI * 2, 6, 28), leather, 0, 0.045, 0, { r: [Math.PI / 2, 0, 0], s: [1.08, 0.88, 1], cast: false }));
+    torso.add(mesh(G.rbox(0.045, 0.034, 0.02, 0.008), gold, 0, 0.045, 0.172, { cast: false }));
+  }
+
+  // ------------------------------------------------------------------ neckwear
+  switch (a.neckwear) {
+    case 'tie':
+      torso.add(mesh(G.box(0.06, 0.06, 0.03), neckMat, 0, 0.52, 0.215));
+      torso.add(mesh(G.cone(0.055, 0.3, 4), neckMat, 0, 0.3, 0.215, { r: [Math.PI, Math.PI / 4, 0], s: [0.6, 1, 0.3] }));
+      break;
+    case 'bowtie':
+      for (const side of [-1, 1]) torso.add(mesh(G.cone(0.07, 0.12, 4), neckMat, side * 0.06, 0.55, 0.225, { r: [0, Math.PI / 4, -side * Math.PI / 2], s: [1, 1, 0.55] }));
+      torso.add(mesh(G.sphere(0.03, 8, 6), M(shade(a.neckColor, -0.1)), 0, 0.55, 0.23));
+      break;
+    case 'ascot':
+      torso.add(mesh(G.sphere(0.055, 10, 8), neckMat, 0, 0.54, 0.205, { s: [1.3, 0.9, 0.7] }));
+      torso.add(mesh(G.cone(0.075, 0.2, 4), neckMat, 0, 0.44, 0.21, { r: [Math.PI, Math.PI / 4, 0.12], s: [1, 1, 0.3] }));
+      torso.add(mesh(G.sphere(0.014, 8, 6), gold, 0, 0.53, 0.245, { cast: false }));
+      break;
+    case 'pearls': {
+      const pearl = M('#fff4f4', { rough: 0.25, metal: 0.1 });
+      for (let i = 0; i < 11; i++) {
+        const t = (i / 10 - 0.5) * 2.6;
+        torso.add(mesh(G.sphere(0.02, 8, 6), pearl, Math.sin(t) * 0.18, 0.5 - 0.075 * Math.cos(t), Math.max(0.05, frontZ(Math.sin(t) * 0.18, 0.5 - 0.075 * Math.cos(t)) + 0.014), { cast: false }));
+      }
+      torso.add(mesh(G.sphere(0.028, 8, 6), M(a.neckColor, { rough: 0.3, metal: 0.3 }), 0, 0.41, frontZ(0, 0.41) + 0.02, { cast: false }));
+      break;
+    }
+    case 'kerchief':
+      torso.add(mesh(G.torus(0.125, 0.03, Math.PI * 2, 8, 22), neckMat, 0, 0.585, 0, { r: [Math.PI / 2, 0, 0], s: [1, 0.9, 1] }));
+      torso.add(mesh(G.cone(0.13, 0.17, 3), neckMat, 0, 0.5, 0.185, { r: [Math.PI, 0, 0], s: [1, 1, 0.25] }));
+      break;
+    case 'lanyard': {
+      for (const side of [-1, 1]) torso.add(mesh(G.box(0.018, 0.4, 0.008), neckMat, side * 0.055, 0.41, frontZ(side * 0.055, 0.41) + 0.01, { r: [0, 0, -side * 0.28], cast: false }));
+      torso.add(mesh(G.rbox(0.1, 0.14, 0.012, 0.006), white, 0, 0.2, frontZ(0, 0.2) + 0.012, { cast: false }));
+      torso.add(mesh(G.box(0.1, 0.03, 0.014), neckMat, 0, 0.253, frontZ(0, 0.2) + 0.013, { cast: false }));
+      torso.add(mesh(G.sphere(0.02, 8, 6), skin, 0, 0.2, frontZ(0, 0.2) + 0.02, { s: [1, 1, 0.3], cast: false }));
+      break;
+    }
+    case 'scarf':
+      torso.add(mesh(G.torus(0.19, 0.06, Math.PI * 2, 8, 24), neckMat, 0, 0.59, 0.0, { r: [Math.PI / 2, 0, 0], s: [1, 0.9, 1] }));
+      torso.add(mesh(G.rbox(0.1, 0.3, 0.05, 0.02), neckMat, 0.1, 0.44, 0.19, { r: [0.05, 0, -0.1] }));
+      break;
+    default:
+  }
+
   // ------------------------------------------------------------------ arms
   const sleeve = SLEEVE[a.top];
+  const sleeveMat = a.top === 'vest' ? shirtMat : topMat;
+  const cuffMat = a.top === 'vest' || a.top === 'blazer' || a.top === 'suit' ? shirtMat : a.top === 'cardigan' || a.top === 'coat' ? M(shade(a.topColor, -0.1), { rough: 0.8 }) : accentMat;
   const arm = (side: -1 | 1) => {
     const shoulder = group(side * 0.285, 0.5, 0);
     shoulder.add(mesh(G.sphere(0.085, 12, 10), sleeve === 'none' ? skin : topMat, 0, 0, 0));
-    shoulder.add(mesh(G.capsule(0.07, 0.09), sleeve === 'none' ? skin : topMat, 0, -0.11, 0));
+    shoulder.add(mesh(G.capsule(0.07, 0.09), sleeve === 'none' ? skin : sleeve === 'long' ? sleeveMat : topMat, 0, -0.11, 0));
+    if (a.top === 'polo') shoulder.add(mesh(G.torus(0.074, 0.016, Math.PI * 2, 6, 16), accentMat, 0, -0.2, 0, { r: [Math.PI / 2, 0, 0], cast: false }));
     const fore = group(0, -0.22, 0);
     shoulder.add(fore);
-    fore.add(mesh(G.capsule(0.064, 0.07), sleeve === 'long' ? topMat : skin, 0, -0.09, 0));
-    if (sleeve === 'long') fore.add(mesh(G.torus(0.062, 0.018, Math.PI * 2, 6, 14), accentMat, 0, -0.16, 0, { r: [Math.PI / 2, 0, 0], cast: false }));
+    fore.add(mesh(G.capsule(0.064, 0.07), sleeve === 'long' ? sleeveMat : skin, 0, -0.09, 0));
+    if (sleeve === 'long') fore.add(mesh(G.torus(0.062, 0.018, Math.PI * 2, 6, 14), cuffMat, 0, -0.16, 0, { r: [Math.PI / 2, 0, 0], cast: false }));
+    // ---- watch, bracelets or a sweat band on the left wrist (the right hand holds things)
+    if (side === -1 && a.wrist !== 'none') {
+      if (a.wrist === 'watch') {
+        fore.add(mesh(G.torus(0.07, 0.013, Math.PI * 2, 6, 18), leather, 0, -0.14, 0, { r: [Math.PI / 2, 0, 0], cast: false }));
+        fore.add(mesh(G.rbox(0.02, 0.058, 0.058, 0.008), gold, -0.074, -0.14, 0, { cast: false }));
+        fore.add(mesh(G.plane(0.046, 0.046), MB('#1d2134'), -0.0855, -0.14, 0, { r: [0, -Math.PI / 2, 0], cast: false }));
+      } else if (a.wrist === 'bracelet') {
+        for (let i = 0; i < 3; i++) fore.add(mesh(G.torus(0.069, 0.008, Math.PI * 2, 6, 18), i === 1 ? accMat : gold, 0, -0.125 - i * 0.022, 0, { r: [Math.PI / 2, 0, 0], cast: false }));
+      } else {
+        fore.add(mesh(G.torus(0.07, 0.026, Math.PI * 2, 6, 18), accMat, 0, -0.14, 0, { r: [Math.PI / 2, 0, 0], s: [1, 1, 1] }));
+      }
+    }
     const hand = group(0, -0.215, 0.005);
     hand.add(mesh(G.sphere(0.078, 14, 10), skin, 0, 0, 0));
     fore.add(hand);
@@ -173,6 +357,18 @@ export function buildCharacter(a: Appearance): Rig {
   // ears
   head.add(mesh(G.sphere(0.06, 10, 8), skinDark, -0.43, -0.03, 0, { s: [0.5, 1, 0.9], cast: false }));
   head.add(mesh(G.sphere(0.06, 10, 8), skinDark, 0.43, -0.03, 0, { s: [0.5, 1, 0.9], cast: false }));
+
+  // earrings
+  if (a.earrings !== 'none') {
+    for (const side of [-1, 1]) {
+      if (a.earrings === 'studs') head.add(mesh(G.sphere(0.024, 8, 6), gold, side * 0.44, -0.1, 0.03, { cast: false }));
+      else if (a.earrings === 'hoops') head.add(mesh(G.torus(0.05, 0.009, Math.PI * 2, 6, 18), gold, side * 0.445, -0.14, 0.03, { r: [0, Math.PI / 2, 0], cast: false }));
+      else {
+        head.add(mesh(G.cyl(0.006, 0.006, 0.07, 6), gold, side * 0.445, -0.13, 0.03, { cast: false }));
+        head.add(mesh(G.sphere(0.028, 8, 6), M(a.neckColor, { rough: 0.25, metal: 0.2 }), side * 0.445, -0.185, 0.03, { cast: false }));
+      }
+    }
+  }
 
   const eyes = group(0, 0, 0);
   head.add(eyes);
@@ -314,17 +510,116 @@ export function buildCharacter(a: Appearance): Rig {
       break;
   }
 
-  // ----------------------------------------------------------- accessories
+  // -------------------------------------------------------------- eyewear
   const dark = M('#3a3345', { rough: 0.4 });
-  switch (a.accessory) {
+  switch (a.eyewear) {
     case 'glasses':
     case 'round-glasses': {
-      const r = a.accessory === 'glasses' ? 0.1 : 0.115;
-      for (const side of [-1, 1]) head.add(mesh(G.torus(r, 0.013, Math.PI * 2, 6, 22), a.accessory === 'glasses' ? dark : accMat, side * 0.16, -0.03, 0.4, { cast: false, s: [a.accessory === 'glasses' ? 1.15 : 1, 1, 1] }));
+      const r = a.eyewear === 'glasses' ? 0.1 : 0.115;
+      for (const side of [-1, 1]) head.add(mesh(G.torus(r, 0.013, Math.PI * 2, 6, 22), a.eyewear === 'glasses' ? dark : accMat, side * 0.16, -0.03, 0.4, { cast: false, s: [a.eyewear === 'glasses' ? 1.15 : 1, 1, 1] }));
       head.add(mesh(G.box(0.07, 0.014, 0.014), dark, 0, -0.01, 0.41, { cast: false }));
       for (const side of [-1, 1]) head.add(mesh(G.box(0.014, 0.014, 0.3), dark, side * 0.285, -0.02, 0.26, { cast: false, r: [0, side * -0.25, 0] }));
       break;
     }
+    case 'sunglasses': {
+      const lens = M('#1e1a2a', { rough: 0.12, metal: 0.25 });
+      for (const side of [-1, 1]) {
+        head.add(mesh(G.cyl(0.108, 0.108, 0.016, 22), lens, side * 0.16, -0.03, 0.402, { cast: false, s: [1.18, 1, 0.9], r: [Math.PI / 2, 0, 0] }));
+        head.add(mesh(G.torus(0.108, 0.012, Math.PI * 2, 6, 22), dark, side * 0.16, -0.03, 0.408, { cast: false, s: [1.18, 0.9, 1] }));
+        head.add(mesh(G.sphere(0.014, 6, 4), MB('#ffffff', 0.6), side * 0.16 - 0.045, 0.0, 0.42, { cast: false }));
+      }
+      head.add(mesh(G.box(0.07, 0.016, 0.016), dark, 0, -0.005, 0.412, { cast: false }));
+      for (const side of [-1, 1]) head.add(mesh(G.box(0.016, 0.016, 0.3), dark, side * 0.29, -0.012, 0.26, { cast: false, r: [0, side * -0.25, 0] }));
+      break;
+    }
+    case 'cateye': {
+      for (const side of [-1, 1]) {
+        head.add(mesh(G.torus(0.095, 0.014, Math.PI * 2, 6, 22), accMat, side * 0.16, -0.03, 0.4, { cast: false, s: [1.25, 0.82, 1], r: [0, 0, side * 0.22] }));
+        head.add(mesh(G.box(0.05, 0.022, 0.014), accMat, side * 0.265, 0.005, 0.4, { cast: false, r: [0, 0, side * 0.55] }));
+      }
+      head.add(mesh(G.box(0.06, 0.014, 0.014), accMat, 0, 0.0, 0.41, { cast: false }));
+      for (const side of [-1, 1]) head.add(mesh(G.box(0.014, 0.014, 0.3), accMat, side * 0.29, 0.005, 0.26, { cast: false, r: [0, side * -0.25, 0] }));
+      break;
+    }
+    case 'monocle': {
+      head.add(mesh(G.torus(0.108, 0.012, Math.PI * 2, 6, 22), gold, 0.16, -0.03, 0.404, { cast: false }));
+      head.add(mesh(G.circle(0.098, 20), MB('#ffffff', 0.18), 0.16, -0.03, 0.4, { cast: false }));
+      // the chain hangs from the rim down past the cheek
+      head.add(mesh(G.cyl(0.004, 0.004, 0.36, 5), gold, 0.29, -0.2, 0.36, { cast: false, r: [0, 0, 0.12] }));
+      break;
+    }
+    default:
+  }
+
+  // ------------------------------------------------------------------ hats
+  const hatG = group();
+  hair.add(hatG);
+  const hatMat = M(a.hatColor, { rough: 0.62 });
+  const hatDark = M(shade(a.hatColor, -0.14), { rough: 0.65 });
+  const hatLum = new THREE.Color(a.hatColor).getHSL({ h: 0, s: 0, l: 0 }).l;
+  const band = M(shade(a.hatColor, hatLum > 0.55 ? -0.3 : 0.32), { rough: 0.55 });
+  const ribbon = M(a.accessoryColor, { rough: 0.5 });
+  const brimRim = (r: number, y: number, z: number, m: THREE.Material, tube = 0.016) =>
+    hatG.add(mesh(G.torus(r, tube, Math.PI * 2, 6, 40), m, 0, y, z, { r: [Math.PI / 2, 0, 0], cast: false }));
+  switch (a.hat) {
+    case 'beanie':
+      hatG.add(mesh(G.cap(0.5, 24, 14, Math.PI * 0.52), hatMat, 0, 0.055, -0.02, { s: [1, 0.95, 1.02], r: [-0.28, 0, 0] }));
+      hatG.add(mesh(G.torus(0.46, 0.05, Math.PI * 2, 8, 28), hatDark, 0, 0.14, 0.0, { r: [Math.PI / 2 - 0.28, 0, 0], s: [1, 1, 1] }));
+      hatG.add(mesh(G.sphere(0.09, 10, 8), white, 0, 0.5, -0.12));
+      break;
+    case 'cap':
+      hatG.add(mesh(G.cap(0.49, 24, 14, Math.PI * 0.5), hatMat, 0, 0.06, -0.02, { s: [1, 0.95, 1.02], r: [-0.3, 0, 0] }));
+      hatG.add(mesh(G.cyl(0.3, 0.3, 0.03, 20), hatDark, 0, 0.16, 0.36, { s: [1.05, 1, 0.9], r: [0.28, 0, 0] }));
+      hatG.add(mesh(G.sphere(0.04, 8, 6), white, 0, 0.5, -0.08, { cast: false }));
+      break;
+    case 'beret':
+      hatG.add(mesh(G.sphere(0.4, 22, 14), hatMat, 0.05, 0.36, -0.01, { s: [1.02, 0.34, 1.0], r: [0.08, 0, -0.16] }));
+      hatG.add(mesh(G.torus(0.335, 0.02, Math.PI * 2, 6, 30), hatDark, 0, 0.245, -0.005, { r: [Math.PI / 2 - 0.02, 0, 0], s: [1, 0.95, 1], cast: false }));
+      hatG.add(mesh(G.cyl(0.014, 0.02, 0.05, 8), hatDark, 0.06, 0.505, -0.01, { cast: false }));
+      break;
+    case 'fedora':
+      hatG.rotation.x = 0.05;
+      hatG.add(mesh(G.cyl(0.24, 0.3, 0.24, 24), hatMat, 0, 0.42, -0.01));
+      hatG.add(mesh(G.cyl(0.302, 0.302, 0.055, 24), band, 0, 0.335, -0.01, { cast: false }));
+      hatG.add(mesh(G.cyl(0.58, 0.58, 0.03, 36), hatMat, 0, 0.3, 0.03, { s: [1, 1, 1.05] }));
+      brimRim(0.58, 0.31, 0.03, hatDark);
+      // the pinch in the crown
+      hatG.add(mesh(G.box(0.05, 0.03, 0.26), hatDark, 0, 0.545, -0.01, { cast: false }));
+      break;
+    case 'tophat':
+      hatG.add(mesh(G.cyl(0.26, 0.27, 0.4, 24), hatMat, 0, 0.5, -0.01));
+      hatG.add(mesh(G.torus(0.262, 0.014, Math.PI * 2, 6, 28), hatDark, 0, 0.7, -0.01, { r: [Math.PI / 2, 0, 0], cast: false }));
+      hatG.add(mesh(G.cyl(0.274, 0.274, 0.075, 24), band, 0, 0.36, -0.01, { cast: false }));
+      hatG.add(mesh(G.cyl(0.42, 0.42, 0.03, 32), hatMat, 0, 0.3, 0.02));
+      brimRim(0.42, 0.31, 0.02, hatDark);
+      break;
+    case 'bowler':
+      hatG.add(mesh(G.cap(0.33, 24, 14, Math.PI * 0.55), hatMat, 0, 0.29, -0.01, { s: [1, 1.2, 1.08] }));
+      hatG.add(mesh(G.cyl(0.336, 0.336, 0.045, 24), band, 0, 0.3, -0.01, { cast: false }));
+      hatG.add(mesh(G.cyl(0.42, 0.42, 0.025, 32), hatMat, 0, 0.25, 0.02));
+      brimRim(0.42, 0.262, 0.02, hatDark, 0.014);
+      break;
+    case 'bucket':
+      hatG.add(mesh(G.cyl(0.31, 0.34, 0.2, 24), hatMat, 0, 0.38, 0));
+      hatG.add(mesh(G.cyl(0.34, 0.52, 0.07, 32), hatMat, 0, 0.265, 0.02));
+      hatG.add(mesh(G.cyl(0.345, 0.345, 0.03, 24), band, 0, 0.33, 0, { cast: false }));
+      break;
+    case 'newsboy':
+      hatG.add(mesh(G.sphere(0.44, 22, 16), hatMat, 0, 0.27, 0, { s: [1.03, 0.42, 1.08], r: [0.12, 0, 0] }));
+      hatG.add(mesh(G.cyl(0.22, 0.22, 0.02, 20), hatDark, 0, 0.22, 0.4, { s: [1.25, 1, 0.75], r: [0.22, 0, 0] }));
+      hatG.add(mesh(G.sphere(0.03, 8, 6), hatDark, 0, 0.455, -0.02, { cast: false }));
+      break;
+    case 'sunhat':
+      hatG.add(mesh(G.cap(0.31, 24, 14, Math.PI * 0.5), hatMat, 0, 0.29, -0.01, { s: [1, 0.85, 1] }));
+      hatG.add(mesh(G.cyl(0.36, 0.72, 0.05, 40), hatMat, 0, 0.27, 0.03));
+      hatG.add(mesh(G.torus(0.31, 0.03, Math.PI * 2, 6, 30), ribbon, 0, 0.32, -0.01, { r: [Math.PI / 2, 0, 0], cast: false }));
+      for (const side of [-1, 1]) hatG.add(mesh(G.cone(0.06, 0.12, 8), ribbon, 0.3 + side * 0.06, 0.34, 0.14, { r: [0, 0, side * -Math.PI / 2 - 0.4], cast: false }));
+      break;
+    default:
+  }
+
+  // ------------------------------------------------- head accessories (hair and ears)
+  switch (a.accessory) {
     case 'headphones':
       head.add(mesh(G.torus(0.47, 0.03, Math.PI, 8, 24), dark, 0, 0.0, 0, { r: [0, 0, 0], s: [1, 0.98, 1] }));
       for (const side of [-1, 1]) {
@@ -332,15 +627,9 @@ export function buildCharacter(a: Appearance): Rig {
         head.add(mesh(G.cyl(0.085, 0.085, 0.1, 16), dark, side * 0.48, -0.02, 0, { r: [0, 0, Math.PI / 2], cast: false }));
       }
       break;
-    case 'beanie':
-      hair.add(mesh(G.cap(0.5, 24, 14, Math.PI * 0.52), accMat, 0, 0.055, -0.02, { s: [1, 0.95, 1.02], r: [-0.28, 0, 0] }));
-      hair.add(mesh(G.torus(0.46, 0.05, Math.PI * 2, 8, 28), M(shade(a.accessoryColor, -0.08)), 0, 0.14, 0.0, { r: [Math.PI / 2 - 0.28, 0, 0], s: [1, 1, 1] }));
-      hair.add(mesh(G.sphere(0.09, 10, 8), white, 0, 0.5, -0.12));
-      break;
-    case 'cap':
-      hair.add(mesh(G.cap(0.49, 24, 14, Math.PI * 0.5), accMat, 0, 0.06, -0.02, { s: [1, 0.95, 1.02], r: [-0.3, 0, 0] }));
-      hair.add(mesh(G.cyl(0.3, 0.3, 0.03, 20, ), accMat, 0, 0.16, 0.36, { s: [1.05, 1, 0.9], r: [0.28, 0, 0] }));
-      hair.add(mesh(G.sphere(0.04, 8, 6), white, 0, 0.5, -0.08, { cast: false }));
+    case 'earmuffs':
+      head.add(mesh(G.torus(0.47, 0.024, Math.PI, 8, 24), dark, 0, 0.0, 0, { s: [1, 0.98, 1] }));
+      for (const side of [-1, 1]) head.add(mesh(G.sphere(0.13, 14, 10), accMat, side * 0.47, -0.03, 0, { s: [0.7, 1, 1] }));
       break;
     case 'bow':
       for (const side of [-1, 1]) hair.add(mesh(G.cone(0.1, 0.2, 10), accMat, 0.3 + side * 0.12, 0.38, 0.14, { r: [0, 0, side * -Math.PI / 2 - 0.5] }));
@@ -348,6 +637,11 @@ export function buildCharacter(a: Appearance): Rig {
       break;
     case 'headband':
       hair.add(mesh(G.torus(0.47, 0.025, Math.PI, 8, 24), accMat, 0, 0.02, 0.02, { r: [0, 0, 0], s: [1, 0.98, 1] }));
+      break;
+    case 'hairclip':
+      for (const [x, y, z, rz] of [[0.25, 0.24, 0.31, -0.6], [0.31, 0.16, 0.27, -0.75]] as const) {
+        hair.add(mesh(G.rbox(0.1, 0.03, 0.022, 0.01), accMat, x, y, z, { r: [0.3, 0.55, rz], cast: false }));
+      }
       break;
     case 'bunny-ears':
       ears.push(group(), group());
@@ -381,7 +675,6 @@ export function buildCharacter(a: Appearance): Rig {
       break;
     }
     case 'crown': {
-      const gold = M('#ffd166', { metal: 0.55, rough: 0.3 });
       hair.add(mesh(G.cyl(0.2, 0.22, 0.09, 20), gold, 0, 0.47, -0.02, { r: [-0.15, 0, 0] }));
       for (let i = 0; i < 5; i++) {
         const ang = (i / 5) * Math.PI * 2;
@@ -390,10 +683,6 @@ export function buildCharacter(a: Appearance): Rig {
       }
       break;
     }
-    case 'scarf':
-      torso.add(mesh(G.torus(0.19, 0.06, Math.PI * 2, 8, 24), accMat, 0, 0.59, 0.0, { r: [Math.PI / 2, 0, 0], s: [1, 0.9, 1] }));
-      torso.add(mesh(G.rbox(0.1, 0.3, 0.05, 0.02), accMat, 0.1, 0.44, 0.19, { r: [0.05, 0, -0.1] }));
-      break;
     default:
   }
 

@@ -126,7 +126,8 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
 
   const app = useMemo(() => makeAppearance(seed, { director: isDirector }), [seed, isDirector]);
   const rig = useMemo(() => buildCharacter(app), [app]);
-  const laptop = useMemo(() => buildLaptop(layout.theme.accent, layout.theme.accent3), [layout.theme]);
+  // (the laptop model follows the person's seed: everybody keeps their own)
+  const laptop = useMemo(() => buildLaptop(layout.theme.accent, layout.theme.accent3, seed), [layout.theme, seed]);
   const actor = useMemo(() => new Actor(personKey, roomId, isDirector, layout, desk, app.scale), [personKey, roomId, isDirector, layout, desk, app.scale]);
   const scale = RIG_SCALE * app.scale;
   const items = useMemo(() => {

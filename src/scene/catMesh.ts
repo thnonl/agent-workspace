@@ -94,6 +94,44 @@ export function coatAt(look: CatLook, region: Region, p: THREE.Vector3, dorsal: 
       c.lerp(dark, pts);
       break;
     }
+    case 'bicolor': {
+      // white cat with a coloured saddle over the back and a coloured tail (white tip and paws)
+      c.copy(WHITE);
+      let m = 0;
+      if (region === 'body') m = smooth(-0.05, 0.5, dorsal) * (0.4 + 0.75 * smooth(0.3, 0.6, noise3(p.x * 3.2 + 2, p.y * 3.2, p.z * 4.2)));
+      else if (region === 'tail') m = 1 - smooth(0.86, 0.95, u);
+      else if (region === 'hind') m = smooth(0.09, 0.16, p.y) * 0.85;
+      c.lerp(dark, clamp01(m));
+      break;
+    }
+    case 'cow': {
+      // large black patches on white
+      c.copy(WHITE);
+      const n1 = noise3(p.x * 4.4 + 5, p.y * 4.4, p.z * 3.8 + 1);
+      let m = smooth(0.5, 0.58, n1) * (1 - bellyMask * 0.9);
+      if (limb) m *= smooth(0.06, 0.13, p.y);
+      if (region === 'tail') m = u > 0.5 ? 1 - smooth(0.9, 0.98, u) : smooth(0.48, 0.58, n1);
+      c.lerp(dark, clamp01(m));
+      break;
+    }
+    case 'spotted': {
+      c.lerp(new THREE.Color(look.base).lerp(WHITE, 0.45), bellyMask * 0.6);
+      const sp = noise3(p.x * 27 + 3, p.y * 27, p.z * 27 + 7);
+      const ring = smooth(0.62, 0.7, sp) * (1 - smooth(0.78, 0.86, sp) * 0.45);
+      let m = ring * (1 - bellyMask * 0.35);
+      if (region === 'tail') m = Math.max(m * 0.7, smooth(0.25, 0.7, Math.sin(u * 40)) * 0.75) * (u > 0.92 ? 1.2 : 1);
+      if (limb) m = Math.max(m, smooth(0.4, 0.8, Math.sin(p.y * 80)) * 0.55);
+      c.lerp(dark, clamp01(m) * 0.92);
+      break;
+    }
+    case 'tortie': {
+      // near-black cat with fine patches of orange
+      const n1 = noise3(p.x * 8 + 1, p.y * 8, p.z * 7 + 3);
+      const n2 = noise3(p.x * 3 + 6, p.y * 3, p.z * 3);
+      c.lerp(dark, smooth(0.42, 0.56, n1 * 0.6 + n2 * 0.4) * 0.95);
+      c.lerp(new THREE.Color(look.dark).lerp(WHITE, 0.35), bellyMask * 0.15 * smooth(0.4, 0.6, n1));
+      break;
+    }
     default: {
       c.lerp(new THREE.Color(look.base).lerp(WHITE, 0.4), bellyMask * 0.5);
       c.multiplyScalar(0.95 + n * 0.1);
@@ -136,6 +174,39 @@ export function headCoat(look: CatLook, d: THREE.Vector3): THREE.Color {
     case 'siamese': {
       const mask = smooth(0.2, 0.6, d.z) * smooth(0.75, 0.3, Math.abs(d.x)) * smooth(0.6, 0.05, d.y);
       c.lerp(dark, mask * 0.95);
+      break;
+    }
+    case 'bicolor': {
+      // a coloured cap over the top and back of the head, the face stays white with a blaze
+      c.copy(WHITE);
+      const cap = smooth(0.2, 0.55, d.y) * smooth(0.55, -0.1, d.z) + smooth(0.55, 0.85, Math.abs(d.x)) * smooth(0.2, 0.5, d.y) * 0.9;
+      const blaze = smooth(0.13, 0.05, Math.abs(d.x)) * smooth(0.1, 0.5, d.z);
+      c.lerp(dark, clamp01(cap) * (1 - blaze * 0.9));
+      break;
+    }
+    case 'cow': {
+      c.copy(WHITE);
+      // one dark patch around an eye, another over an ear and the back of the head
+      const eyePatch = smooth(0.42, 0.22, Math.hypot(d.x + 0.4, d.y - 0.1, d.z - 0.85));
+      const back = smooth(0.15, 0.55, d.y) * smooth(0.3, -0.3, d.z) * smooth(-0.1, 0.6, d.x + 0.2);
+      c.lerp(dark, clamp01(Math.max(eyePatch, back)));
+      break;
+    }
+    case 'spotted': {
+      const sp = noise3(d.x * 11 + 4, d.y * 11, d.z * 11 + 8);
+      let fore = 0;
+      for (const cx of [-0.22, 0, 0.22]) fore = Math.max(fore, smooth(0.06, 0.03, Math.abs(d.x - cx)) * smooth(0.3, 0.55, d.y) * smooth(0.05, 0.4, d.z));
+      let cheek = 0;
+      for (const cy of [-0.1, -0.3]) cheek = Math.max(cheek, smooth(0.07, 0.03, Math.abs(d.y - cy)) * smooth(0.72, 0.9, Math.abs(d.x)));
+      c.lerp(dark, Math.max(fore * 0.85, cheek * 0.8, smooth(0.66, 0.74, sp) * smooth(0.1, 0.5, d.y) * 0.75));
+      c.lerp(new THREE.Color(look.base).lerp(WHITE, 0.6), muzzle * 0.75);
+      break;
+    }
+    case 'tortie': {
+      const n1 = noise3(d.x * 5 + 2, d.y * 5, d.z * 5 + 9);
+      // a split blaze of orange down the forehead is typical of the breed
+      const blaze = smooth(0.18, 0.06, Math.abs(d.x)) * smooth(0.25, 0.6, d.y) * smooth(0.0, 0.4, d.z);
+      c.lerp(dark, Math.max(smooth(0.5, 0.6, n1) * 0.9, blaze * 0.85) * (1 - muzzle * 0.6));
       break;
     }
     default:
