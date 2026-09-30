@@ -1,5 +1,9 @@
-import { memo, useMemo } from 'react';
+import { memo, useMemo, useRef } from 'react';
+import type * as THREE from 'three';
+import { useFrame } from '@react-three/fiber';
 import { useShallow } from 'zustand/react/shallow';
+import { frame } from '../sim/frame';
+import { walkMatrices } from './matrixWalk';
 import { useStore } from '../store';
 import { getLayout } from '../world/layout';
 import type { RoomLayout } from '../world/layout';
@@ -133,11 +137,24 @@ export const RoomView = memo(function RoomView({ roomId }: { roomId: string }) {
   const layout = useMemo(() => getLayout(seed, themeIndex), [seed, themeIndex]);
   const { theme } = layout;
 
+  // A room the camera does not see is neither drawn nor walked by three (FrameSync has already decided which
+  // rooms are on screen). It is brought up to date in the frame it comes back, before that frame is drawn.
+  const group = useRef<THREE.Group>(null);
+  useFrame(() => {
+    const g = group.current;
+    if (!g) return;
+    const on = frame.visibleRooms.has(roomId);
+    if (g.visible === on) return;
+    g.visible = on;
+    walkMatrices(g, on);
+    frame.shadowDirty = true;
+  });
+
   if (!exists) return null;
   const origin = roomOrigin(index);
 
   return (
-    <group position={origin}>
+    <group ref={group} position={origin}>
       <RoomStatic roomId={roomId} layout={layout} signTitle={signTitle} />
 
       {/* movable furniture */}

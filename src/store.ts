@@ -77,6 +77,8 @@ interface State {
   cancelRelease: () => void;
   /** hide the room from the list (the session can be continued in Claude Code to bring it back) */
   releaseRoom: (roomId: string) => void;
+  /** release every room that is not working right now (working ones stay: they would come straight back) */
+  releaseAllRooms: () => void;
   toggleList: (tab: 'tasks' | 'reports' | 'activity') => void;
   setListTab: (tab: 'tasks' | 'reports' | 'activity') => void;
   setActiveRoom: (id: string | null) => void;
@@ -922,6 +924,23 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
       releaseAsk: null,
       selectedKey: st.selectedKey && st.people[st.selectedKey]?.sessionId === roomId ? null : st.selectedKey,
     });
+    refreshVisible(get, set);
+  },
+  releaseAllRooms: () => {
+    const st = get();
+    const now = Date.now();
+    const released = { ...st.released };
+    const unseen = { ...st.unseen };
+    const unread = { ...st.unread };
+    for (const id of st.roomOrder) {
+      const r = st.rooms[id];
+      if (!r || r.mainActive || Object.values(st.tasks).some((t) => t.sessionId === id)) continue;
+      released[id] = now;
+      unseen[id] = false;
+      unread[id] = false;
+    }
+    saveReleased(released);
+    set({ released, unseen, unread, summaryOpen: null, releaseAsk: null, selectedKey: null });
     refreshVisible(get, set);
   },
   toggleList: (tab) => set((st) => ({ listTab: st.listTab === tab ? null : tab })),

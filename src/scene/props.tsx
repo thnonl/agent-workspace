@@ -30,7 +30,7 @@ function Plant({ p, tall }: { p: Prop; tall?: boolean }) {
     <group>
       <Ms geo={G.cyl(tall ? 0.3 : 0.27, tall ? 0.21 : 0.19, potH, 20)} mat={M(p.color, { rough: 0.55 })} pos={[0, potH / 2, 0]} />
       <Ms geo={G.torus(tall ? 0.3 : 0.27, 0.025, Math.PI * 2, 8, 24)} mat={M(p.color, { rough: 0.55 })} pos={[0, potH, 0]} rot={[Math.PI / 2, 0, 0]} />
-      <Ms geo={G.cyl(0.24, 0.24, 0.02, 16)} mat={M('#6b4a35')} pos={[0, potH - 0.01, 0]} cast={false} />
+      <Ms geo={G.cyl(0.24, 0.24, 0.02, 16)} mat={MB('#000000')} pos={[0, potH - 0.006, 0]} cast={false} />
       {tall ? <Ms geo={G.cyl(0.035, 0.05, 0.75, 8)} mat={M('#8a6a4a')} pos={[0, 0.75, 0]} /> : null}
       {leaves.map((l, i) => (
         <Ms key={i} geo={G.sphere(l.s, 12, 10)} mat={M(l.c, { rough: 0.6 })} pos={[Math.sin(l.a) * l.r, l.y, Math.cos(l.a) * l.r]} scale={[1, tall ? 1.35 : 1.05, 1]} />

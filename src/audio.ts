@@ -1,13 +1,13 @@
 /**
- * Tiny sound effects, all synthesised with the Web Audio API (no files, no music). They are quiet on purpose
- * and only play for the room that is on screen. The browser only allows sound after the first click / key press.
+ * Tiny sound effects, all synthesised with the Web Audio API (no files, no music). They only play for the room
+ * that is on screen. The browser only allows sound after the first click / key press.
  */
 export type Sfx =
   | 'door' | 'pop' | 'talk' | 'ding' | 'chime' | 'key' | 'paper' | 'water' | 'sip' | 'page' | 'sizzle' | 'bite' | 'meow' | 'blip' | 'pour' | 'clink';
 
 const MUTE_KEY = 'claude-office:muted';
-/** overall level – every effect is already soft, this keeps them all in the background */
-const MASTER = 0.5;
+/** overall level – effects are synthesised soft, this brings them up to a clearly audible volume */
+const MASTER = 1.6;
 
 let ctx: AudioContext | null = null;
 let master: GainNode | null = null;
@@ -46,7 +46,14 @@ function ensure(): AudioContext | null {
   ctx = new AC();
   master = ctx.createGain();
   master.gain.value = muted ? 0 : MASTER;
-  master.connect(ctx.destination);
+  // limiter so overlapping effects at the higher master level do not clip
+  const limiter = ctx.createDynamicsCompressor();
+  limiter.threshold.value = -10;
+  limiter.knee.value = 6;
+  limiter.ratio.value = 12;
+  limiter.attack.value = 0.003;
+  limiter.release.value = 0.15;
+  master.connect(limiter).connect(ctx.destination);
   return ctx;
 }
 

@@ -146,6 +146,13 @@ button { font: inherit; color: inherit; }
   padding: 7px 30px 7px 8px; border-radius: 22px; border: 2px solid transparent; background: rgba(255, 255, 255, 0.55);
   transition: transform 0.18s, background 0.18s, border-color 0.18s;
 }
+.room-clear {
+  flex: none; cursor: pointer; padding: 7px 10px; border-radius: 18px; border: 2px dashed rgba(120, 90, 160, 0.3); background: transparent;
+  font-size: 12px; font-weight: 800; color: var(--ink-soft); transition: background 0.18s, border-color 0.18s;
+}
+.room-clear:hover { background: rgba(255, 255, 255, 0.7); border-color: rgba(120, 90, 160, 0.55); }
+.app.is-night .room-clear { border-color: rgba(255, 255, 255, 0.22); }
+.app.is-night .room-clear:hover { background: rgba(255, 255, 255, 0.14); }
 .room-card:hover { transform: translateX(-2px); background: #fff; }
 .room-card.active { background: #fff; border-color: var(--accent); box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 35%, transparent); }
 /* the provider badge keeps its size and shape however long the text next to it is */

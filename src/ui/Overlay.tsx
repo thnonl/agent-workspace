@@ -318,6 +318,7 @@ export function RoomSwitcher() {
   const rooms = useStore((s) => s.rooms);
   const active = useStore((s) => s.activeRoomId);
   const setActive = useStore((s) => s.setActiveRoom);
+  const releaseAll = useStore((s) => s.releaseAllRooms);
   const unseen = useStore((s) => s.unseen);
   const status = JSON.parse(useRoomStatus()) as Record<string, RoomStatus>;
   const listRef = useRef<HTMLDivElement>(null);
@@ -466,7 +467,7 @@ export function SummaryPaper() {
         </div>
         <div className="paper-foot">
           {idle ? <button className="btn" onClick={askRelease} title="Take this room off the list – continue the session in Claude Code to bring it back">Release room</button> : null}
-          <button className="btn btn-big" onClick={close}>Got it</button>
+          <button className="btn btn-big" onClick={dismiss}>Got it</button>
         </div>
       </article>
     </div>
