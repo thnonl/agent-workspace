@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Production server and command line entry:  npx @thnonl/agent-workspace   (from a checkout: npm run build && npm start)
+// Production server and command line entry:  npx @thnonline/agent-workspace   (from a checkout: npm run build && npm start)
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';

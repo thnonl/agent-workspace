@@ -39,9 +39,9 @@ Each room button shows the logo of its provider instead of a colour swatch.
 From npm (no checkout needed, Node 20+):
 
 ```bash
-npx @thnonl/agent-workspace              # opens http://localhost:4173
-npx @thnonl/agent-workspace --port 8080 --no-open
-npm i -g @thnonl/agent-workspace         # then just: agent-workspace
+npx @thnonline/agent-workspace              # opens http://localhost:4173
+npx @thnonline/agent-workspace --port 8080 --no-open
+npm i -g @thnonline/agent-workspace         # then just: agent-workspace
 ```
 
 Options: `-p, --port <n>` (or `$PORT`), `--host <ip>` (default `127.0.0.1`; use `0.0.0.0` to open the page from another device on your network), `--no-open`, `-h, --help`. The page is served on your machine only unless you pass `--host`.
@@ -128,3 +128,7 @@ If no session is running the app starts a **demo** with three scripted sessions 
 | `src/ui/*` | HUD, room switcher, agent panel, speech bubbles |
 
 Stack: React 19, Vite, TypeScript, three.js, @react-three/fiber, zustand.
+
+## License
+
+[MIT](LICENSE) © Nam Thai. Bundled third-party software (React, three.js, react-three-fiber, drei, zustand and a few small helpers, all MIT) is listed in [THIRD_PARTY_LICENSES.txt](THIRD_PARTY_LICENSES.txt); run `npm run licenses` after changing dependencies. Unofficial – not affiliated with Anthropic.

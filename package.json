@@ -1,9 +1,10 @@
 {
-  "name": "@thnonl/agent-workspace",
+  "name": "@thnonline/agent-workspace",
   "version": "1.0.0",
   "type": "module",
   "description": "Cute 3D isometric office that visualises Claude Code sessions and sub-agents in real time.",
   "author": "Nam Thai <namth.onl@gmail.com>",
+  "license": "MIT",
   "keywords": [
     "claude-code",
     "visualization",
@@ -17,7 +18,8 @@
     "dist",
     "server",
     "!server/*.test.mjs",
-    "!server/vite-plugin.mjs"
+    "!server/vite-plugin.mjs",
+    "THIRD_PARTY_LICENSES.txt"
   ],
   "engines": {
     "node": ">=20"
@@ -32,7 +34,8 @@
     "start": "node server/index.mjs --no-open",
     "typecheck": "tsc --noEmit",
     "test": "node --test server/monitor.test.mjs",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "licenses": "node scripts/third-party-licenses.mjs"
   },
   "devDependencies": {
     "@react-three/drei": "^10.7.9",
