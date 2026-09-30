@@ -666,9 +666,10 @@ export function createMonitor({
       startWatchers();
       guard(coldScan)();
       hotTimer = setInterval(guard(hotPoll), hotPollMs);
-      // with a watcher the periodic scan is only a safety net
-      scanTimer = setInterval(guard(coldScan), watcher ? scanMs * 5 : scanMs);
+      // with a watcher the periodic scan is only a safety net (a new transcript wakes rescanSoon on its own)
+      scanTimer = setInterval(guard(coldScan), watcher ? scanMs * 20 : scanMs);
     },
+    /** Stops every timer and watcher and forgets all sessions: a later `start()` is a cold start like a fresh process. */
     stop() {
       clearInterval(hotTimer);
       clearInterval(scanTimer);
@@ -679,6 +680,11 @@ export function createMonitor({
       watcher = codexWatcher = null;
       oc?.close();
       hotTimer = scanTimer = null;
+      sessions.clear();
+      dirty.clear();
+      subTouched.clear();
+      nextPoll.clear();
+      ignored.clear();
     },
   };
 }

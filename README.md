@@ -14,7 +14,7 @@ npx @thnonline/agent-workspace
 
 Your browser opens on <http://localhost:4173> and every running session shows up as a room. Stop it with <kbd>Ctrl</kbd>+<kbd>C</kbd>. Nothing has to be configured.
 
-Rooms load lazily (the one you look at first, then the other working sessions one at a time) and the rooms you are not looking at run at a very low frame rate, so many sessions stay cheap.
+Rooms load lazily (the one you look at first, then the other working sessions one at a time) and the rooms you are not looking at run at a very low frame rate, so many sessions stay cheap. A room that has been off screen, empty and idle for a few minutes is taken out of the scene again (it comes back when you open it or its session starts working), the frame rate drops further when nobody touches the page, and a hidden tab draws nothing. The transcript monitor itself only runs while a browser is connected (it stops 30 s after the last one leaves).
 
 Want it as a command that is always there?
 

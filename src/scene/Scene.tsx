@@ -15,6 +15,12 @@ const AZIMUTH = 0.72;
 const POLAR = 0.8;
 /** frame rate while nothing moves in the active room (a calm office is not worth a laptop fan; still well above the background rooms' tick rate) */
 const IDLE_FPS = 12;
+/** ...and when nobody has touched the page for CALM_AFTER ms it drops to this (only the slow decor is left to draw) */
+const CALM_FPS = 6;
+const CALM_AFTER = 15_000;
+/** a room that is off screen, not working and empty is taken out of the scene after this long (ms), checked every EVICT_CHECK */
+const EVICT_AFTER = 3 * 60_000;
+const EVICT_CHECK = 10_000;
 /** staged loading: pause after a room reported ready, and after the render resolution had to be lowered (ms) */
 const STAGE_GAP = 1500;
 const STAGE_DPR_PAUSE = 6000;
@@ -170,26 +176,38 @@ function FrameSync() {
 
 /**
  * The canvas renders on demand. While the camera moves this asks for a frame on every display refresh; while
- * characters of the active room move, BUSY_FPS times per second; otherwise IDLE_FPS (which is also the floor for
- * the background rooms: they tick at most every BACKGROUND_STEP and are drawn by these frames). (Camera drags, resizes and React updates
- * invalidate on their own.)
+ * characters of the active room move, BUSY_FPS times per second; otherwise IDLE_FPS, or CALM_FPS once the page has been
+ * left alone for CALM_AFTER (the background rooms tick at most every BACKGROUND_STEP and are drawn by these frames).
+ * (Camera drags, resizes and React updates invalidate on their own; a hidden tab gets no animation frames at all.)
  */
 function IdleGovernor() {
   const invalidate = useThree((s) => s.invalidate);
   useEffect(() => {
     let raf = 0;
     let last = 0;
+    let input = performance.now();
+    const touch = () => {
+      input = performance.now();
+    };
+    const events = ['pointerdown', 'pointermove', 'wheel', 'keydown', 'touchstart'] as const;
+    for (const e of events) window.addEventListener(e, touch, { passive: true });
+    document.addEventListener('visibilitychange', touch);
     const loop = (t: number) => {
       raf = requestAnimationFrame(loop);
+      const fps = frame.busy ? BUSY_FPS : t - input > CALM_AFTER ? CALM_FPS : IDLE_FPS;
       // (a few ms of slack: a 33.3 ms interval would otherwise skip to every third refresh at 60 Hz)
-      const every = frame.cameraBusy ? 0 : 1000 / (frame.busy ? BUSY_FPS : IDLE_FPS) - 4;
+      const every = frame.cameraBusy ? 0 : 1000 / fps - 4;
       if (t - last >= every) {
         last = t;
         invalidate();
       }
     };
     raf = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      for (const e of events) window.removeEventListener(e, touch);
+      document.removeEventListener('visibilitychange', touch);
+    };
   }, [invalidate]);
   return null;
 }
@@ -408,6 +426,52 @@ function Lights() {
   );
 }
 
+/** Is the session of this room doing anything (the main agent runs, or a task of it is open)? */
+function isWorking(st: StoreState, id: string): boolean {
+  if (st.rooms[id]?.mainActive) return true;
+  for (const t of Object.values(st.tasks)) if (t.sessionId === id) return true;
+  return false;
+}
+
+/**
+ * Takes a room out of the scene (its meshes, textures and actors are disposed) once it has been off screen,
+ * not working and without anybody on stage for EVICT_AFTER. It comes back the way it came the first time:
+ * as the active room, or staged in when it starts working. Runs on a timer, not on frames, so a hidden tab frees
+ * its rooms too.
+ */
+function Evictor({ evict }: { evict: (ids: string[]) => void }) {
+  useEffect(() => {
+    const quietSince = new Map<string, number>();
+    const t = setInterval(() => {
+      const st = useStore.getState();
+      const now = performance.now();
+      const onStage = new Set<string>();
+      for (const s of sims.values()) if (s.onStage) onStage.add(s.roomId);
+      const gone: string[] = [];
+      for (const id of frame.readyRooms) {
+        const quiet = id !== st.activeRoomId && !frame.visibleRooms.has(id) && !onStage.has(id) && !isWorking(st, id);
+        if (!quiet) {
+          quietSince.delete(id);
+          continue;
+        }
+        const since = quietSince.get(id) ?? now;
+        quietSince.set(id, since);
+        if (now - since >= EVICT_AFTER) gone.push(id);
+      }
+      for (const id of quietSince.keys()) if (!frame.readyRooms.has(id)) quietSince.delete(id);
+      if (gone.length) {
+        for (const id of gone) {
+          quietSince.delete(id);
+          lastAnim.delete(id);
+        }
+        evict(gone);
+      }
+    }, EVICT_CHECK);
+    return () => clearInterval(t);
+  }, [evict]);
+  return null;
+}
+
 /**
  * Staged loading: once the active room is ready, the other sessions that are working are mounted one at a
  * time (in list order), each after the previous one reported ready plus STAGE_GAP. Nothing is started while
@@ -443,9 +507,7 @@ function Staging({ mount }: { mount: (id: string) => void }) {
     for (const id of st.visibleOrder) {
       const room = st.rooms[id];
       if (!room || frame.readyRooms.has(id)) continue;
-      let working = room.mainActive;
-      if (!working) for (const t of Object.values(st.tasks)) if (t.sessionId === id) working = true;
-      if (!working) continue;
+      if (!isWorking(st, id)) continue;
       r.loading = id;
       mount(id);
       return;
@@ -462,6 +524,15 @@ export function Scene() {
   if (activeRoomId && !visited.has(activeRoomId)) setVisited(new Set(visited).add(activeRoomId));
   // (the staged rooms join through the callback below; the functional update keeps them apart from the render-time one)
   const stage = useCallback((id: string) => setVisited((v) => (v.has(id) ? v : new Set(v).add(id))), []);
+  const evict = useCallback(
+    (ids: string[]) =>
+      setVisited((v) => {
+        const next = new Set(v);
+        for (const id of ids) next.delete(id);
+        return next.size === v.size ? v : next;
+      }),
+    [],
+  );
   return (
     <Canvas
       frameloop="demand"
@@ -479,6 +550,7 @@ export function Scene() {
       <RoomLights />
       <CameraRig />
       <Staging mount={stage} />
+      <Evictor evict={evict} />
       {roomOrder.map((id) => (visited.has(id) ? <RoomView key={id} roomId={id} /> : null))}
     </Canvas>
   );

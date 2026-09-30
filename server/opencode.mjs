@@ -329,5 +329,16 @@ export function createOpenCodeSource(host, { dbFile, windowMs, log = console.war
     lastStamp = st;
   };
 
-  return { scan, poll, close: () => { try { db?.close(); } catch { /* closed */ } db = null; stmts.clear(); } };
+  return {
+    scan,
+    poll,
+    close: () => {
+      try { db?.close(); } catch { /* closed */ }
+      db = null;
+      stmts.clear();
+      // a later open starts from scratch: the stamps and parent cache belong to sessions that were forgotten
+      lastStamp = scanStamp = '';
+      topOf.clear();
+    },
+  };
 }

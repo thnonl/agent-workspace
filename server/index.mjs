@@ -46,8 +46,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'd
 const port = Number(option(args, '--port', '-p') ?? process.env.PORT) || 4173;
 const host = option(args, '--host') ?? '127.0.0.1';
 
+// the monitor starts with the first browser stream and stops shortly after the last one (see api.mjs)
 const monitor = createMonitor();
-monitor.start();
 
 const server = createAppServer({ root, monitor });
 server.on('error', (err) => {

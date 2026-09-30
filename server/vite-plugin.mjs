@@ -6,7 +6,6 @@ export default function claudeMonitor() {
   let monitor;
   const attach = (server) => {
     monitor ??= createMonitor();
-    monitor.start();
     server.middlewares.use(createApi(monitor));
     server.httpServer?.once('close', () => monitor.stop());
   };

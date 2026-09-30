@@ -82,3 +82,37 @@ test('SSE: hello+snapshot first, every client gets every event once in order, cl
   h.server.closeAllConnections?.();
   await new Promise((r) => h.server.close(r));
 });
+
+test('the monitor runs only while a stream is open: first client starts it, it stops after the idle delay, a quick reconnect keeps it', async () => {
+  const em = new EventEmitter();
+  const calls = [];
+  const monitor = {
+    claudeDir: 'C:/x', sources: {}, windowMs: 60000,
+    snapshot: () => [],
+    sessionCount: () => 0,
+    on: (fn) => { em.on('event', fn); return () => em.off('event', fn); },
+    start: () => calls.push('start'),
+    stop: () => calls.push('stop'),
+  };
+  const api = createApi(monitor, { idleStopMs: 80 });
+  const server = http.createServer((req, res) => api(req, res, () => res.writeHead(404).end()));
+  await new Promise((r) => server.listen(0, r));
+  const port = server.address().port;
+  assert.deepEqual(calls, [], 'nothing runs before a browser connects');
+  const a = client(port);
+  await a.ready;
+  assert.deepEqual(calls, ['start']);
+  a.close();
+  await sleep(30);
+  const b = client(port); // reload: back within the delay
+  await b.ready;
+  await sleep(120);
+  assert.deepEqual(calls, ['start', 'start'], 'still running while a stream is open');
+  b.close();
+  await sleep(40);
+  assert.ok(!calls.includes('stop'), 'not stopped right away');
+  await sleep(120);
+  assert.equal(calls.at(-1), 'stop', 'stopped after the idle delay');
+  server.closeAllConnections?.();
+  await new Promise((r) => server.close(r));
+});
