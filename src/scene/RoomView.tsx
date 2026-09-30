@@ -1,4 +1,4 @@
-import { memo, useMemo, useRef } from 'react';
+import { memo, useEffect, useMemo, useRef } from 'react';
 import type * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { useShallow } from 'zustand/react/shallow';
@@ -141,9 +141,13 @@ export const RoomView = memo(function RoomView({ roomId }: { roomId: string }) {
   // A room the camera does not see is neither drawn nor walked by three (FrameSync has already decided which
   // rooms are on screen). It is brought up to date in the frame it comes back, before that frame is drawn.
   const group = useRef<THREE.Group>(null);
+  // "ready": the static bake ran in the mount commit; two drawn frames later the room counts as loaded (staged loading waits for it)
+  const framesSeen = useRef(0);
+  useEffect(() => () => void frame.readyRooms.delete(roomId), [roomId]);
   useFrame(() => {
     const g = group.current;
     if (!g) return;
+    if (framesSeen.current < 2 && ++framesSeen.current === 2) frame.readyRooms.add(roomId);
     const on = frame.visibleRooms.has(roomId);
     if (g.visible === on) return;
     g.visible = on;

@@ -7,7 +7,7 @@ import { rot2 } from '../world/layout';
 import type { RoomLayout } from '../world/layout';
 import { Actor, laptopDist, SEAT_LIFT, type ActorCtx, type Pose } from '../sim/actor';
 import { anchors, catsInRoom, enqueueSpeech, lastSpeech, queueLength, runtimeFor, sims, simsInRoom, view, type SimState } from '../sim/registry';
-import { frame, OFFSCREEN_STEP } from '../sim/frame';
+import { frame, roomStep, stepDt } from '../sim/frame';
 import { buildCharacter, RIG_SCALE, type Rig } from './character';
 import { buildLaptop } from './laptop';
 import { disposeOwned } from './bake';
@@ -145,7 +145,7 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
   const outer = useRef<THREE.Group>(null);
   const clockRef = useRef(0);
   const ctx = useRef<ActorCtx | null>(null);
-  /** time collected since the last update (rooms that are off screen only step every OFFSCREEN_STEP) */
+  /** time collected since the last update (rooms that are not the active one only step every BACKGROUND_STEP / HIDDEN_STEP) */
   const pending = useRef(0);
   const workersAt = useRef(-1);
   const keyT = useRef(0);
@@ -173,8 +173,9 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
   useFrame((_, rawDt) => {
     const visible = frame.visibleRooms.has(roomId);
     pending.current += rawDt;
-    if (!visible && pending.current < OFFSCREEN_STEP) return;
-    const dt = Math.min(pending.current, 0.1);
+    const step = roomStep(roomId);
+    if (pending.current < step) return;
+    const dt = stepDt(pending.current, step);
     pending.current = 0;
     const st = useStore.getState();
     const person = st.people[personKey];

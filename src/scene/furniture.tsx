@@ -237,7 +237,7 @@ export function Chair({ x, z, rot, turn, color, roomId, deskIndex, big = false, 
   const lat = useMemo(() => rot2(1, 0, rot), [rot]);
   const state = useRef({ pull: 0, turn });
   useFrame((clock, dt) => {
-    if (!pullG.current || !sw.current || !frame.visibleRooms.has(roomId)) return;
+    if (!pullG.current || !sw.current || !frame.animRooms.has(roomId)) return;
     let occ: SimState | undefined;
     if (deskIndex < 0) {
       const key = roomRuntime.get(roomId)?.directorKey;
@@ -307,7 +307,7 @@ function DirectorPhone({ roomId }: { roomId: string }) {
   useBaked(handset);
   useFrame(() => {
     const g = handset.current;
-    if (!g || !frame.visibleRooms.has(roomId)) return;
+    if (!g || !frame.animRooms.has(roomId)) return;
     const k = roomRuntime.get(roomId)?.directorKey;
     const s = k ? sims.get(k) : undefined;
     const shown = !(s && s.handsetUp && s.onStage);

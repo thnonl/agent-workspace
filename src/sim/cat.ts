@@ -2,7 +2,7 @@ import type { CatWindow, RoomLayout, Spot } from '../world/layout';
 import type { V2 } from '../world/nav';
 import { Rng } from '../util/rng';
 import { sfx } from '../audio';
-import { frame } from './frame';
+import { frame, SLOW_MAX_DT } from './frame';
 import { debugFlags, spotOwners, type CatSim, type SimState } from './registry';
 
 /** Joint angles of one leg: upper (shoulder / hip), lower (elbow / knee), paw. Positive swings backwards. */
@@ -342,7 +342,7 @@ export class CatBrain {
   }
 
   update(dt: number, ctx: CatCtx) {
-    dt = Math.min(dt, 0.1);
+    dt = Math.min(dt, SLOW_MAX_DT); // (see Actor.update)
     this.clock += dt;
     this.t += dt;
     this.land = Math.max(0, this.land - dt * 3.2);

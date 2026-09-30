@@ -11,6 +11,12 @@ export const frame = {
   fit: 20,
   /** rooms that intersect the camera frustum – everything else is simulated at a reduced rate and not animated */
   visibleRooms: new Set<string>(),
+  /** the store's active room (full rate); visible rooms other than this one are "background" */
+  activeId: null as string | null,
+  /** rooms whose decor animates this frame: the active one, plus background rooms that ticked (see roomStep) */
+  animRooms: new Set<string>(),
+  /** rooms that finished loading (static bake done and two frames drawn), see RoomView / the staging in Scene */
+  readyRooms: new Set<string>(),
   /** somebody (a person or an awake cat) moves in a visible room */
   dynamic: false,
   /** the camera is travelling / zooming on its own */
@@ -21,8 +27,23 @@ export const frame = {
   shadowDirty: true,
 };
 
+/** Rooms that are visible but not the active one (the neighbours at the screen edge) advance at most this often (seconds). */
+export const BACKGROUND_STEP = 0.4;
 /** Rooms that are off screen advance their simulation at most this often (seconds). */
-export const OFFSCREEN_STEP = 1 / 15;
+export const HIDDEN_STEP = 1;
+/** Largest time slice one update may take: the active room's frames are short, a slow room takes one long step (still real time). */
+export const ACTIVE_MAX_DT = 0.1;
+export const SLOW_MAX_DT = 1.5;
+
+/** Minimum time between two updates of the sim / animation of a room (0: every frame). Reads `frame`, allocates nothing. */
+export function roomStep(roomId: string): number {
+  if (roomId === frame.activeId) return 0;
+  return frame.visibleRooms.has(roomId) ? BACKGROUND_STEP : HIDDEN_STEP;
+}
+/** Time slice for an update that waited `pending` seconds under `step` (see roomStep). */
+export function stepDt(pending: number, step: number): number {
+  return Math.min(pending, step === 0 ? ACTIVE_MAX_DT : SLOW_MAX_DT);
+}
 
 /** Run after the 3D scene has drawn a frame (Scene calls them; keeps three out of the UI chunks). */
 export const afterRender = new Set<() => void>();

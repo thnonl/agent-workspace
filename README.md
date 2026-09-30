@@ -14,6 +14,8 @@ npx @thnonline/agent-workspace
 
 Your browser opens on <http://localhost:4173> and every running session shows up as a room. Stop it with <kbd>Ctrl</kbd>+<kbd>C</kbd>. Nothing has to be configured.
 
+Rooms load lazily (the one you look at first, then the other working sessions one at a time) and the rooms you are not looking at run at a very low frame rate, so many sessions stay cheap.
+
 Want it as a command that is always there?
 
 ```bash

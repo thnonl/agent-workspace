@@ -3,6 +3,7 @@ import { rot2, type RoomLayout, type Station, type StationKind } from '../world/
 import type { V2 } from '../world/nav';
 import { sfx, type Sfx } from '../audio';
 import { env } from '../env';
+import { SLOW_MAX_DT } from './frame';
 import { CHAT_SCRIPTS, eatLine, goodbyeLine, greetingLine, reportLine, serveLine, thoughts } from './phrases';
 import { kickDummy, takeDumbbells } from './gym';
 import { debugFlags, dismissIdle, enqueueSpeech, greet, parcelDone, roomRuntime, tickParcel, sims, simsInRoom, spotOwners, type CatSim, type Phase, type RoomRuntime, type SimState } from './registry';
@@ -480,6 +481,7 @@ export class Actor {
 
   /** Nudge sideways when another walking character is in the way. */
   private avoid(dt: number, ctx: ActorCtx) {
+    dt = Math.min(dt, 0.1); // (a slow room's long step must not shove anybody through a neighbour)
     const s = this.sim;
     for (const c of ctx.cats) {
       if (!c.onStage || c.y > 0.3) continue;
@@ -517,7 +519,7 @@ export class Actor {
 
   // -------------------------------------------------------------- state machine
   update(dt: number, ctx: ActorCtx) {
-    dt = Math.min(dt, 0.1);
+    dt = Math.min(dt, SLOW_MAX_DT); // (callers already cap the active room at ACTIVE_MAX_DT; slow rooms hand in one long step)
     this.clock += dt;
     this.t += dt;
     const s = this.sim;

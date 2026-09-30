@@ -5,7 +5,7 @@ import { useFrame } from '@react-three/fiber';
 import type { RoomLayout } from '../world/layout';
 import { CatBrain, neutralCatPose, type CatPose } from '../sim/cat';
 import { cats, catsInRoom, simsInRoom, spotOwners } from '../sim/registry';
-import { frame, OFFSCREEN_STEP } from '../sim/frame';
+import { frame, roomStep, stepDt } from '../sim/frame';
 import { buildCat, makeCatLook, type CatRig } from './catModel';
 import { MB } from './kit';
 import { useStore } from '../store';
@@ -135,7 +135,7 @@ export function CatView({ catKey, roomId, layout, seed }: Props) {
   const hearts = useRef<(THREE.Mesh | null)[]>([]);
   const clock = useRef(0);
   const smoothed = useRef<CatPose>(neutralCatPose());
-  /** time collected since the last update (a cat in a room that is off screen only steps every OFFSCREEN_STEP) */
+  /** time collected since the last update (a cat in a room that is not the active one only steps every BACKGROUND_STEP / HIDDEN_STEP) */
   const pending = useRef(0);
 
   // R3F does not dispose <primitive>: free the body/head geometry and bone texture this cat owns
@@ -155,8 +155,9 @@ export function CatView({ catKey, roomId, layout, seed }: Props) {
   useFrame((state, rawDt) => {
     const visible = frame.visibleRooms.has(roomId);
     pending.current += rawDt;
-    if (!visible && pending.current < OFFSCREEN_STEP) return;
-    const dt = Math.min(pending.current, 0.1);
+    const step = roomStep(roomId);
+    if (pending.current < step) return;
+    const dt = stepDt(pending.current, step);
     pending.current = 0;
     clock.current += dt;
     const now = performance.now() / 1000;

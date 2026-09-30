@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { Canvas, addAfterEffect, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { useStore } from '../store';
 import { getLayout } from '../world/layout';
 import { anchors, cats, sims, view } from '../sim/registry';
-import { afterRender, frame } from '../sim/frame';
+import { afterRender, BACKGROUND_STEP, frame } from '../sim/frame';
 import { env, envForHour, stepEnv } from '../env';
 import { lightParams } from './lighting';
 import { updateGlow } from './glow';
@@ -13,8 +13,11 @@ import { RoomView, roomOrigin } from './RoomView';
 
 const AZIMUTH = 0.72;
 const POLAR = 0.8;
-/** frame rate while nothing moves (a calm office is not worth a laptop fan) */
-const IDLE_FPS = 20;
+/** frame rate while nothing moves in the active room (a calm office is not worth a laptop fan; still well above the background rooms' tick rate) */
+const IDLE_FPS = 12;
+/** staged loading: pause after a room reported ready, and after the render resolution had to be lowered (ms) */
+const STAGE_GAP = 1500;
+const STAGE_DPR_PAUSE = 6000;
 /** frame rate while characters move but the camera does not (the app usually sits on a second screen) */
 const BUSY_FPS = 30;
 /** the render resolution is lowered when the busy scene cannot hold this frame rate */
@@ -65,6 +68,10 @@ function activeCenter(): { center: THREE.Vector3; fit: number } | null {
 const tmpFrustum = new THREE.Frustum();
 const tmpMat = new THREE.Matrix4();
 const tmpSphere = new THREE.Sphere();
+/** when a background room's decor last animated (performance.now ms) */
+const lastAnim = new Map<string, number>();
+/** performance.now of the last time the render resolution was lowered (staged loading waits after that) */
+let dprDropAt = -1e9;
 
 /**
  * Runs before everything else in a frame: publishes the shared per-frame facts (`frame`) – the camera
@@ -85,7 +92,10 @@ function FrameSync() {
     cam.updateMatrixWorld();
     tmpMat.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
     tmpFrustum.setFromProjectionMatrix(tmpMat);
+    frame.activeId = st.activeRoomId;
     frame.visibleRooms.clear();
+    frame.animRooms.clear();
+    const nowMs = performance.now();
     for (const id of st.visibleOrder) {
       const room = st.rooms[id];
       if (!room) continue;
@@ -93,19 +103,28 @@ function FrameSync() {
       const l = getLayout(room.seed, room.themeIndex);
       tmpSphere.center.set(o[0], 2, o[2]);
       tmpSphere.radius = Math.hypot(l.width, l.depth) / 2 + 4;
-      if (id === st.activeRoomId || tmpFrustum.intersectsSphere(tmpSphere)) frame.visibleRooms.add(id);
+      if (id === st.activeRoomId || tmpFrustum.intersectsSphere(tmpSphere)) {
+        frame.visibleRooms.add(id);
+        // decor of a background room only animates on the frames of its own (slow) tick
+        if (id === st.activeRoomId) frame.animRooms.add(id);
+        else if (nowMs - (lastAnim.get(id) ?? 0) >= BACKGROUND_STEP * 1000) {
+          lastAnim.set(id, nowMs);
+          frame.animRooms.add(id);
+        }
+      }
     }
 
+    // only the active room's movement asks for the busy frame rate; a background room is drawn on the frames that happen anyway
     let dynamic = false;
     for (const s of sims.values()) {
-      if (s.onStage && frame.visibleRooms.has(s.roomId)) {
+      if (s.onStage && s.roomId === st.activeRoomId) {
         dynamic = true;
         break;
       }
     }
     if (!dynamic) {
       for (const c of cats.values()) {
-        if (c.onStage && !c.still && frame.visibleRooms.has(c.roomId)) {
+        if (c.onStage && !c.still && c.roomId === st.activeRoomId) {
           dynamic = true;
           break;
         }
@@ -131,6 +150,7 @@ function FrameSync() {
         if (fps < LOW_FPS && r.dpr > Math.min(MIN_DPR, r.max)) {
           r.dpr = Math.max(Math.min(MIN_DPR, r.max), r.dpr * 0.85);
           r.good = 0;
+          dprDropAt = performance.now();
           state.setDpr(r.dpr);
         } else if (fps > HIGH_FPS && r.dpr < r.max) {
           if (++r.good >= 3) {
@@ -150,7 +170,8 @@ function FrameSync() {
 
 /**
  * The canvas renders on demand. While the camera moves this asks for a frame on every display refresh; while
- * only characters move, BUSY_FPS times per second; otherwise IDLE_FPS. (Camera drags, resizes and React updates
+ * characters of the active room move, BUSY_FPS times per second; otherwise IDLE_FPS (which is also the floor for
+ * the background rooms: they tick at most every BACKGROUND_STEP and are drawn by these frames). (Camera drags, resizes and React updates
  * invalidate on their own.)
  */
 function IdleGovernor() {
@@ -387,12 +408,60 @@ function Lights() {
   );
 }
 
+/**
+ * Staged loading: once the active room is ready, the other sessions that are working are mounted one at a
+ * time (in list order), each after the previous one reported ready plus STAGE_GAP. Nothing is started while
+ * the camera moves, the user drags, or the render resolution was just lowered. Idle rooms load on demand.
+ */
+function Staging({ mount }: { mount: (id: string) => void }) {
+  const gl = useThree((s) => s.gl);
+  const s = useRef({ loading: null as string | null, readyAt: 0, down: false });
+  useEffect(() => {
+    const el = gl.domElement;
+    const down = () => (s.current.down = true);
+    const up = () => (s.current.down = false);
+    el.addEventListener('pointerdown', down);
+    window.addEventListener('pointerup', up);
+    return () => {
+      el.removeEventListener('pointerdown', down);
+      window.removeEventListener('pointerup', up);
+    };
+  }, [gl]);
+  useFrame(() => {
+    const r = s.current;
+    const st = useStore.getState();
+    const now = performance.now();
+    if (r.loading) {
+      if (!st.rooms[r.loading]) r.loading = null; // released while loading
+      else if (frame.readyRooms.has(r.loading)) {
+        r.loading = null;
+        r.readyAt = now;
+      } else return;
+    }
+    if (!st.activeRoomId || !frame.readyRooms.has(st.activeRoomId)) return;
+    if (frame.cameraBusy || r.down || now - r.readyAt < STAGE_GAP || now - dprDropAt < STAGE_DPR_PAUSE) return;
+    for (const id of st.visibleOrder) {
+      const room = st.rooms[id];
+      if (!room || frame.readyRooms.has(id)) continue;
+      let working = room.mainActive;
+      if (!working) for (const t of Object.values(st.tasks)) if (t.sessionId === id) working = true;
+      if (!working) continue;
+      r.loading = id;
+      mount(id);
+      return;
+    }
+  });
+  return null;
+}
+
 export function Scene() {
   const roomOrder = useStore((s) => s.visibleOrder);
-  // rooms are built lazily: a room is put into the scene the first time it becomes the active one, and stays after that
+  // rooms are built lazily: a room is put into the scene the first time it becomes the active one (or, staged one at a time, when it is working; see Staging) and stays after that
   const activeRoomId = useStore((s) => s.activeRoomId);
   const [visited, setVisited] = useState<ReadonlySet<string>>(() => new Set());
   if (activeRoomId && !visited.has(activeRoomId)) setVisited(new Set(visited).add(activeRoomId));
+  // (the staged rooms join through the callback below; the functional update keeps them apart from the render-time one)
+  const stage = useCallback((id: string) => setVisited((v) => (v.has(id) ? v : new Set(v).add(id))), []);
   return (
     <Canvas
       frameloop="demand"
@@ -409,6 +478,7 @@ export function Scene() {
       <Lights />
       <RoomLights />
       <CameraRig />
+      <Staging mount={stage} />
       {roomOrder.map((id) => (visited.has(id) ? <RoomView key={id} roomId={id} /> : null))}
     </Canvas>
   );

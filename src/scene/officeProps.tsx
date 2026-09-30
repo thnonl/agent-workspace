@@ -159,7 +159,7 @@ export function ServerRack({ p, roomId }: PP) {
   const leds = useMemo(() => Array.from({ length: 14 }, (_, i) => new THREE.MeshBasicMaterial({ color: LED_ON[i % 3] })), []);
   const lit = useRef<boolean[]>([]);
   useFrame((s) => {
-    if (roomId !== undefined && !frame.visibleRooms.has(roomId)) return;
+    if (roomId !== undefined && !frame.animRooms.has(roomId)) return;
     const t = s.clock.elapsedTime;
     leds.forEach((m, i) => {
       const on = Math.sin(t * (1.5 + (i % 5) * 0.7) + i * 1.9) > -0.2;

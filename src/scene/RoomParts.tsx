@@ -167,7 +167,7 @@ export function DoorView({ door, theme, roomId, localX }: { door: DoorSpec; them
   const parcel = useMemo(() => buildParcelBox(), []);
   const parcelSlot = useRef<THREE.Group>(null);
   useFrame((_, dt) => {
-    if (!leaf.current || !frame.visibleRooms.has(roomId)) return;
+    if (!leaf.current || !frame.animRooms.has(roomId)) return;
     if (parcelSlot.current) parcelSlot.current.visible = runtimeFor(roomId).parcel === 'waiting';
     let near = false;
     for (const s of simsInRoom(roomId)) {
@@ -258,7 +258,7 @@ function Clock({ w, roomId }: { w: number; roomId?: string }) {
   const min = useRef<THREE.Mesh>(null);
   const last = useRef(0);
   useFrame(() => {
-    if (roomId !== undefined && !frame.visibleRooms.has(roomId)) return;
+    if (roomId !== undefined && !frame.animRooms.has(roomId)) return;
     const now = Date.now();
     // the hands only need a refresh once a second (also runs on the first frame after the room reappears)
     if (now - last.current < 1000 && now >= last.current) return;
@@ -391,7 +391,7 @@ function WallTV({ d, roomId }: { d: WallDecor; roomId?: string }) {
   const dot = useRef<THREE.Mesh>(null);
   const cols = [d.color, d.color2, '#5ed3b0', '#ffd166', d.color, d.color2];
   useFrame((s) => {
-    if (roomId !== undefined && !frame.visibleRooms.has(roomId)) return;
+    if (roomId !== undefined && !frame.animRooms.has(roomId)) return;
     const t = s.clock.elapsedTime;
     bars.current.forEach((m, i) => {
       if (!m) return;

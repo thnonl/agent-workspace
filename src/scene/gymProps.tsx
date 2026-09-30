@@ -23,7 +23,7 @@ export function PunchDummy({ p, theme, roomId }: { p: Prop; theme: RoomTheme; ro
     const g = body.current;
     if (!g) return;
     const S = st.current;
-    if (roomId !== undefined && !frame.visibleRooms.has(roomId)) {
+    if (roomId !== undefined && !frame.animRooms.has(roomId)) {
       // off screen: rest upright
       if (!S.rest) {
         S.a = S.v = 0;
@@ -95,7 +95,7 @@ export function Dumbbells({ p, theme, roomId }: { p: Prop; theme: RoomTheme; roo
   useBaked(pair);
   useFrame(() => {
     const g = pair.current;
-    if (!g || roomId === undefined || !frame.visibleRooms.has(roomId)) return;
+    if (!g || roomId === undefined || !frame.animRooms.has(roomId)) return;
     const show = (dumbbellsTaken.get(roomId) ?? 0) < performance.now();
     if (show !== shown.current) {
       shown.current = show;

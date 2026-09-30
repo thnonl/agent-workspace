@@ -203,7 +203,7 @@ function Fishtank({ p, theme, roomId }: { p: Prop; theme: RoomTheme; roomId?: st
   const fish = useRef<(THREE.Group | null)[]>([]);
   useBaked(fish);
   useFrame((s) => {
-    if (roomId !== undefined && !frame.visibleRooms.has(roomId)) return;
+    if (roomId !== undefined && !frame.animRooms.has(roomId)) return;
     const t = s.clock.elapsedTime;
     fish.current.forEach((f, i) => {
       if (!f) return;
