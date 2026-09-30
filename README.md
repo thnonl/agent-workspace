@@ -1,6 +1,6 @@
 # 🏢 Agent Workspace
 
-A cute, isometric 3D office that shows your **Claude Code** sessions at work, in real time.
+A cute, isometric 3D office that shows your **Claude Code**, **Codex** and **OpenCode** sessions at work, in real time.
 
 ![Agent Workspace: a new request arrives, the director sits down and the staff come in to work on it](https://raw.githubusercontent.com/thnonl/agent-workspace/main/docs/demo.gif)
 
@@ -21,7 +21,15 @@ npm i -g @thnonline/agent-workspace
 agent-workspace                    # from then on, in any terminal
 ```
 
-`npx` keeps a copy after the first run; `npx @thnonline/agent-workspace@latest` fetches the newest version, `npm update -g @thnonline/agent-workspace` does it for the global install. To remove it: `npm rm -g @thnonline/agent-workspace`.
+**Updating:** `npx` keeps a copy in its cache after the first run and does not always fetch a newer release. To be sure you run the newest version, add the `@latest` tag:
+
+```bash
+npx @thnonline/agent-workspace@latest          # always the newest release
+npm update -g @thnonline/agent-workspace       # update a global install
+npx clear-npx-cache                            # if npx still starts an old version
+```
+
+A copy installed globally or inside a project's `node_modules` is used as it is – `npx` never updates it. To remove the global install: `npm rm -g @thnonline/agent-workspace`.
 
 * Every **session** (Claude Code, Codex or OpenCode) gets its own **room** (each with a different colour theme, layout, furniture and decorations).
 * **Characters are not agents.** Every character – random gender, hair, outfit and colours – is a person of the office; the work they do comes from the session:
@@ -58,7 +66,7 @@ Each room button shows the logo of its provider instead of a colour swatch.
 ## Run
 
 ```bash
-agent-workspace                          # or: npx @thnonline/agent-workspace
+agent-workspace                          # or: npx @thnonline/agent-workspace@latest
 agent-workspace --port 8080              # another port
 agent-workspace --no-open                # do not open the browser
 agent-workspace --host 0.0.0.0           # also reachable from other devices on your network
