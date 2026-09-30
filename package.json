@@ -1,32 +1,52 @@
 {
-  "name": "claude-office",
-  "private": true,
+  "name": "@thnonl/agent-workspace",
   "version": "1.0.0",
   "type": "module",
   "description": "Cute 3D isometric office that visualises Claude Code sessions and sub-agents in real time.",
+  "author": "Nam Thai <namth.onl@gmail.com>",
+  "keywords": [
+    "claude-code",
+    "visualization",
+    "three.js",
+    "monitor"
+  ],
+  "bin": {
+    "agent-workspace": "server/index.mjs"
+  },
+  "files": [
+    "dist",
+    "server",
+    "!server/*.test.mjs",
+    "!server/vite-plugin.mjs"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "start": "node server/index.mjs",
+    "start": "node server/index.mjs --no-open",
     "typecheck": "tsc --noEmit",
-    "test": "node --test server/monitor.test.mjs"
-  },
-  "dependencies": {
-    "@react-three/drei": "^10.7.9",
-    "@react-three/fiber": "^9.8.1",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0",
-    "three": "^0.186.1",
-    "zustand": "^5.0.15"
+    "test": "node --test server/monitor.test.mjs",
+    "prepack": "npm run build"
   },
   "devDependencies": {
+    "@react-three/drei": "^10.7.9",
+    "@react-three/fiber": "^9.8.1",
     "@types/node": "^26.6.3",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@types/three": "^0.186.0",
     "@vitejs/plugin-react": "^6.1.1",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "three": "^0.186.1",
     "typescript": "^7.0.2",
-    "vite": "^8.3.1"
+    "vite": "^8.3.1",
+    "zustand": "^5.0.15"
   }
 }

@@ -36,6 +36,18 @@ Each room button shows the logo of its provider instead of a colour swatch.
 
 ## Run
 
+From npm (no checkout needed, Node 20+):
+
+```bash
+npx @thnonl/agent-workspace              # opens http://localhost:4173
+npx @thnonl/agent-workspace --port 8080 --no-open
+npm i -g @thnonl/agent-workspace         # then just: agent-workspace
+```
+
+Options: `-p, --port <n>` (or `$PORT`), `--host <ip>` (default `127.0.0.1`; use `0.0.0.0` to open the page from another device on your network), `--no-open`, `-h, --help`. The page is served on your machine only unless you pass `--host`.
+
+From a checkout:
+
 ```bash
 npm install
 npm run dev          # http://localhost:5173  (Vite + transcript monitor)
@@ -47,6 +59,8 @@ Production:
 npm run build
 npm start            # http://localhost:4173  (static files + SSE monitor)
 ```
+
+Publishing: `npm publish` (the `prepack` script builds `dist/` first; only `dist/` and `server/` are shipped, there are no runtime dependencies). Check the contents with `npm pack --dry-run`.
 
 If no session is running the app starts a **demo** with three scripted sessions so you can see everything. Force it with `?demo`, disable with `?nodemo`, or use the ▶ Demo button / `D`.
 
@@ -97,6 +111,8 @@ If no session is running the app starts a **demo** with three scripted sessions 
 | --- | --- |
 | `server/monitor.mjs` | transcript watcher → events (unit tests: `npm test`) |
 | `server/codex.mjs`, `server/opencode.mjs` | Codex rollout parser, OpenCode database reader |
+| `server/app.mjs` | static files + `/api` (the web server) |
+| `server/index.mjs` | command line entry (`agent-workspace`): monitor + web server + opens the browser |
 | `src/world/layout.ts` | procedural room generator (fan / bench seating facing the director, door, windows, props, wall decor, floor clutter) + nav grid |
 | `src/world/nav.ts` | A* path finding with line-of-sight smoothing |
 | `src/world/appearance.ts` | random cute characters (gender, hair, outfits, accessories) |
@@ -107,7 +123,8 @@ If no session is running the app starts a **demo** with three scripted sessions 
 | `?catlab&seed=1&count=6&pose=sit` | dev turntable to inspect cats (`pose`: idle, walk, sit, groom, sleep, purr, stretch) |
 | `src/env.ts`, `src/scene/glow.ts` | time-of-day model (light, sky) and materials that glow when the lights are on |
 | `src/scene/*` | room, furniture (`furniture.tsx`, `props.tsx`, `officeProps.tsx`), walls, camera, lights |
-| `src/scene/bake.ts`, `StaticBake.tsx` | merge static primitives into a few meshes (≈1/3 of the draw calls) |
+| `src/scene/bake.ts`, `StaticBake.tsx` | merge static primitives into a few meshes (≈1/3 of the draw calls); the baked-away sources are no longer walked by three |
+| `src/scene/matrixWalk.ts` | switches the per-frame matrix update of a subtree off (baked sources, rooms that are off screen) |
 | `src/ui/*` | HUD, room switcher, agent panel, speech bubbles |
 
 Stack: React 19, Vite, TypeScript, three.js, @react-three/fiber, zustand.

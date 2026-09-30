@@ -349,6 +349,15 @@ export function RoomSwitcher() {
             </button>
           );
         })}
+        <button
+          className="room-clear"
+          onClick={() => {
+            if (window.confirm('Clear all rooms? Rooms that are working stay; the others come back when their session is continued.')) releaseAll();
+          }}
+          title="Release every room that is not working right now"
+        >
+          🧹 Clear all rooms
+        </button>
       </div>
     </nav>
   );
@@ -395,6 +404,7 @@ export function SummaryPaper() {
   const summary = useStore((s) => (s.summaryOpen ? s.summaries[s.summaryOpen] : undefined));
   const room = useStore((s) => (s.summaryOpen ? s.rooms[s.summaryOpen] : undefined));
   const close = useStore((s) => s.requestCloseSummary);
+  const dismiss = useStore((s) => s.closeSummary);
   const askRelease = useStore((s) => s.askRelease);
   const working = useStore((s) => !!(s.summaryOpen && s.rooms[s.summaryOpen]?.mainActive));
   // a room can only be released while nothing is going on in it
