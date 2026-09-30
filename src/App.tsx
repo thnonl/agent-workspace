@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo } from 'react';
 import { BubbleLayer } from './ui/BubbleLayer';
-import { AgentPanel, EmptyState, Help, NamesDialog, RoomHeader, ReleaseConfirm, RoomSwitcher, SummaryPaper, TopBar } from './ui/Overlay';
+import { AgentPanel, Announcer, EmptyState, Help, NamesDialog, RoomHeader, ReleaseConfirm, RoomSwitcher, SummaryPaper, TopBar } from './ui/Overlay';
 import { localHour, orderedRooms, useStore } from './store';
 import { celestial, envForHour, skyColors } from './env';
 import { connectLive } from './live/connection';
@@ -116,9 +116,20 @@ const TIME_ORDER = ['auto', 'day', 'dusk', 'night'] as const;
 function useHotkeys() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      // browser and system shortcuts (Ctrl+N, Cmd+M, Ctrl+1…) are not ours
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
       const s = useStore.getState();
+      const el = e.target as HTMLElement | null;
+      const typing = el?.tagName === 'INPUT' || el?.tagName === 'TEXTAREA' || el?.tagName === 'SELECT' || !!el?.isContentEditable;
+      if (typing) {
+        // while typing only Esc counts (it closes the dialog the text is in)
+        if (e.key === 'Escape') {
+          s.requestCloseSummary();
+          s.setHelp(false);
+          s.setShowNames(false);
+        }
+        return;
+      }
       if (e.key === 'ArrowRight' || e.key === ']') s.stepRoom(1);
       else if (e.key === 'ArrowLeft' || e.key === '[') s.stepRoom(-1);
       else if (e.key >= '1' && e.key <= '9') {
@@ -153,10 +164,11 @@ export default function App() {
   const e = useMemo(() => envForHour(hour), [hour]);
   const [sky1, sky2] = skyColors(themeFor(themeIndex).sky, e);
   const body = celestial(hour);
+  const showList = useStore((s) => s.showSwitcher && s.visibleOrder.length > 0);
   const stars = useMemo(() => Array.from({ length: 70 }, (_, i) => ({ x: (i * 37.7) % 100, y: (i * 53.3) % 62, s: 1 + ((i * 7) % 3), d: (i * 0.37) % 4 })), []);
   return (
     <div
-      className={`app${e.night > 0.55 ? ' is-night' : ''}`}
+      className={`app${e.night > 0.55 ? ' is-night' : ''}${showList ? ' has-list' : ''}`}
       style={{ ['--sky1' as string]: sky1, ['--sky2' as string]: sky2, ['--night' as string]: e.night.toFixed(3), ['--warm' as string]: e.warm.toFixed(3) }}
     >
       <div className="sky">
@@ -170,11 +182,11 @@ export default function App() {
         <i className="cloud c2" />
         <i className="cloud c3" />
       </div>
-      <div className="stage">
+      <main className="stage" aria-label="3D office: every session of your agents is a room with a director, staff and cats. Use the session list and the buttons to follow them.">
         <Suspense fallback={null}>
           <Scene />
         </Suspense>
-      </div>
+      </main>
       <BubbleLayer />
       <TopBar />
       <RoomHeader />
@@ -185,6 +197,7 @@ export default function App() {
       <NamesDialog />
       <SummaryPaper />
       <ReleaseConfirm />
+      <Announcer />
     </div>
   );
 }

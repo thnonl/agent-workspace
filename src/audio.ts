@@ -25,6 +25,17 @@ const lastPlayed = new Map<string, number>();
 
 export const isMuted = () => muted;
 
+// whether sound can be heard yet: the browser keeps the audio context suspended until the first click or key press
+const stateListeners = new Set<() => void>();
+const notifyState = () => stateListeners.forEach((f) => f());
+export const audioRunning = () => ctx?.state === 'running';
+export function subscribeAudioState(f: () => void): () => void {
+  stateListeners.add(f);
+  return () => {
+    stateListeners.delete(f);
+  };
+}
+
 export function setMuted(m: boolean) {
   muted = m;
   try {
@@ -45,6 +56,7 @@ function ensure(): AudioContext | null {
   const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
   if (!AC) return null;
   ctx = new AC();
+  ctx.onstatechange = notifyState;
   master = ctx.createGain();
   master.gain.value = muted ? 0 : MASTER;
   // limiter so overlapping effects at the higher master level do not clip
@@ -63,6 +75,7 @@ if (typeof window !== 'undefined') {
   const unlock = () => {
     const c = ensure();
     if (c && c.state === 'suspended') void c.resume();
+    notifyState();
   };
   window.addEventListener('pointerdown', unlock, { passive: true });
   window.addEventListener('keydown', unlock);

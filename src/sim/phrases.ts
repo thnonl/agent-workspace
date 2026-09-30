@@ -204,6 +204,38 @@ const REPORT_FAIL = [
 ];
 export const reportLine = (failed: boolean) => pick(failed ? REPORT_FAIL : REPORT_OK);
 
+// ------------------------------------------------- the whole session is done
+// The director does not read the closing message out (it is on the summary paper); they only announce that the work is finished.
+const DONE_OK = [
+  'And that’s a wrap! Everything is done.', 'All done, team. Good work today!', 'Finished! Everything went through.', 'That’s the last one. We’re done here!',
+  'Work complete. Nice job, everyone!', 'Done and dusted. Well played, team!', 'Everything is ticked off the list!', 'We did it – all finished!',
+  'That’s everything. Time to breathe out.', 'All tasks complete. Beautiful work!', 'Mission accomplished, team!', 'The job is done. Great teamwork!',
+  'Wrapped up, packed up, done!', 'Nothing left on the list. Lovely!', 'Finished ahead of my coffee getting cold.', 'That went smoothly. All done!',
+  'And… done! Give yourselves a pat on the back.', 'Everything is finished. High fives all around!', 'The desk is clear. That’s a wrap!',
+  'All finished – what a team!', 'Just like that, it’s done.', 'Boom. Finished.', 'Job complete. Time for a well-earned rest.',
+  'We’ve crossed the finish line!', 'All done here. Thank you, everybody!', 'That’s the whole thing – done!', 'Done! The team really delivered.',
+  'Last item checked. Excellent!', 'Case closed. Good work, all.', 'It’s finished, and it looks good.',
+];
+const DONE_FAILED = [
+  'We’re done – though a few things did not work out.', 'Finished, but not everything went to plan.', 'All wrapped up, with a couple of bumps along the way.',
+  'The work is over. Some parts fought back.', 'Done for now – a few tasks stumbled, though.', 'That’s the end of it. Not perfect, but finished.',
+  'We got through it, bruises and all.', 'Wrapped up. Some of it failed, so keep an eye on it.',
+];
+const DONE_BIG = [
+  'That was a big one – and it’s finished!', 'Long run, but we’re done. Well done, everyone!', 'A lot of work, all done. What a team!',
+  'Phew, that was a marathon. Finished!', 'So many tasks, and every one is finished!', 'A busy one, but the whole list is done.',
+];
+/** an optional second line that points at the summary paper */
+const DONE_HINT = [
+  'The summary is ready whenever you are.', 'The details are on the summary sheet.', 'Have a look at the summary when you have a moment.',
+  'I left the summary on the desk for you.', 'The full story is on the paper.', 'Summary’s ready – take a look!', 'Everything is written up on the summary sheet.',
+];
+/** what the director says when a session has finished all its work (one or two short lines) */
+export function doneLines(failed: number, tasks: number): string[] {
+  const main = pick(failed > 0 ? DONE_FAILED : tasks >= 8 ? (Math.random() < 0.6 ? DONE_BIG : DONE_OK) : DONE_OK);
+  return Math.random() < 0.4 ? [main, pick(DONE_HINT)] : [main];
+}
+
 // ------------------------------------------------------------------ small talk
 /** the first line is said by whoever walks over, then they take turns */
 export const CHAT_SCRIPTS: readonly (readonly string[])[] = [

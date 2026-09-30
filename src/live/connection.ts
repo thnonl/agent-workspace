@@ -1,6 +1,10 @@
 import { useStore } from '../store';
 import type { MonitorEvent } from '../types';
 
+/** Opens the stream again right now (set while the page is connected; the button on the offline screen calls it). */
+let reopen: (() => void) | null = null;
+export const retryConnection = () => reopen?.();
+
 /** Subscribes to the transcript monitor (Server-Sent Events) and feeds the store. */
 export function connectLive(): () => void {
   const store = useStore.getState();
@@ -27,8 +31,11 @@ export function connectLive(): () => void {
     timer = setTimeout(flush, 100);
   };
 
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
   const open = () => {
     if (closed) return;
+    clearTimeout(retryTimer);
+    es?.close();
     es = new EventSource('/api/events');
     es.onopen = () => useStore.getState().setConnection('live');
     es.onmessage = (m) => {
@@ -44,14 +51,21 @@ export function connectLive(): () => void {
     es.onerror = () => {
       flush();
       useStore.getState().setConnection('offline');
-      // EventSource reconnects on its own; when the server is gone for good it keeps retrying quietly
+      // EventSource reconnects on its own after a dropped connection; after a failed one (server down, wrong status) it gives up, so try again from here
+      if (es?.readyState === EventSource.CLOSED) retryTimer = setTimeout(open, 3000);
     };
+  };
+  reopen = () => {
+    useStore.getState().setConnection('connecting');
+    open();
   };
 
   store.setConnection('connecting');
   open();
   return () => {
     closed = true;
+    reopen = null;
+    clearTimeout(retryTimer);
     es?.close();
     flush();
   };

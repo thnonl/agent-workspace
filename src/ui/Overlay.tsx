@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { orderedRooms, useStore } from '../store';
 import { themeFor } from '../world/palettes';
@@ -6,13 +6,16 @@ import { cats, sims } from '../sim/registry';
 import type { Phase } from '../sim/registry';
 import type { ActivityEntry, Speech, TaskLogEntry, TaskRec } from '../types';
 import { FALLBACK_NAMES, parseNames } from '../names';
-import { sfx } from '../audio';
+import { audioRunning, sfx, subscribeAudioState } from '../audio';
+import { retryConnection } from '../live/connection';
+import { Dialog } from './Dialog';
+import { Icon, type IconName } from './Icon';
 import { PROVIDER_NAME, ProviderLogo, watchedSources } from './ProviderLogo';
 
 /** The demo buttons are for development and screenshots: a production build hides them (the D key and ?demo still work). */
 const SHOW_DEMO_BUTTON = import.meta.env.DEV;
 
-const ICON: Record<string, string> = { thinking: '💭', text: '💬', tool: '🔧', task: '📥', done: '✅', error: '⚠️' };
+const ICON: Record<string, IconName> = { thinking: 'lightbulb', text: 'message', tool: 'wrench', task: 'inbox', done: 'check-circle', error: 'alert' };
 
 const PHASE_TEXT: Record<Phase, string> = {
   waiting: 'Waiting outside',
@@ -71,8 +74,8 @@ export function useRoomStatus(): Record<string, RoomStatus> {
 }
 
 const TIME_CYCLE = ['auto', 'day', 'dusk', 'night'] as const;
-function timeIcon(h: number) {
-  return h >= 7.5 && h < 17.3 ? '☀️' : (h >= 5.2 && h < 7.5) || (h >= 17.3 && h < 19.8) ? '🌇' : '🌙';
+function timeIcon(h: number): IconName {
+  return h >= 7.5 && h < 17.3 ? 'sun' : (h >= 5.2 && h < 7.5) || (h >= 17.3 && h < 19.8) ? 'sunset' : 'moon';
 }
 
 export function TopBar() {
@@ -92,24 +95,33 @@ export function TopBar() {
   const nameCount = useStore((s) => s.names.length);
   const showSwitcher = useStore((s) => s.showSwitcher);
   const setShowSwitcher = useStore((s) => s.setShowSwitcher);
+  const soundReady = useSyncExternalStore(subscribeAudioState, audioRunning);
 
+  const status: ReactNode = connection === 'live' ? (liveRooms ? <>Live · {liveRooms}<span className="lbl"> session{liveRooms > 1 ? 's' : ''}</span></> : 'Live · idle') : connection === 'connecting' ? 'Connecting…' : 'Offline';
   return (
     <header className="topbar">
       <div className="brand">
-        <span className="brand-logo">🏢</span>
+        <span className="brand-logo" aria-hidden="true"><Icon name="building" size={22} /></span>
         <div>
-          <b>Agent Workspace</b>
+          <h1>Agent Workspace</h1>
           <small>watch your agents at work</small>
         </div>
       </div>
       <div className="topbar-right">
-        <button type="button" className={`pill pill-${connection}${showSwitcher ? '' : ' pill-collapsed'}`} onClick={() => setShowSwitcher(!showSwitcher)} aria-pressed={showSwitcher} title={showSwitcher ? 'Hide the list of sessions' : 'Show the list of sessions'}>
-          <i className="pill-dot" />
-          {connection === 'live' ? (liveRooms ? `Live · ${liveRooms} session${liveRooms > 1 ? 's' : ''}` : 'Live · idle') : connection === 'connecting' ? 'Connecting…' : 'Monitor offline'}
+        <button
+          type="button"
+          className={`pill pill-btn pill-${connection}${showSwitcher ? '' : ' pill-collapsed'}`}
+          onClick={() => setShowSwitcher(!showSwitcher)}
+          aria-pressed={showSwitcher}
+          title={showSwitcher ? 'Hide the list of sessions' : 'Show the list of sessions'}
+        >
+          <i className="pill-dot" aria-hidden="true" />
+          {status}
+          <span className="pill-caret" aria-hidden="true"><Icon name={showSwitcher ? 'chevron-down' : 'chevron-right'} size={13} /></span>
         </button>
         {SHOW_DEMO_BUTTON ? (
           <button className={`btn${demoOn ? ' btn-on' : ''}`} onClick={() => setDemo(!demoOn)} title="Simulated agent sessions">
-            {demoOn ? '⏸ Demo' : '▶ Demo'}
+            <Icon name={demoOn ? 'pause' : 'play'} size={13} /> Demo
             {demoOn && autoDemo ? <em>auto</em> : null}
           </button>
         ) : null}
@@ -118,24 +130,33 @@ export function TopBar() {
           onClick={() => setTimeMode(TIME_CYCLE[(TIME_CYCLE.indexOf(timeMode) + 1) % TIME_CYCLE.length])}
           title="Time of day: follows the system clock, click to preview day / dusk / night (N)"
         >
-          {timeIcon(hour)} {timeMode === 'auto' ? `${String(Math.floor(hour)).padStart(2, '0')}:${String(Math.floor((hour % 1) * 60)).padStart(2, '0')}` : timeMode}
+          <Icon name={timeIcon(hour)} size={18} /> <span className="lbl">{timeMode === 'auto' ? `${String(Math.floor(hour)).padStart(2, '0')}:${String(Math.floor((hour % 1) * 60)).padStart(2, '0')}` : timeMode}</span>
         </button>
-        <button className="btn" onClick={() => setShowNames(true)} title="Names for the director and the staff">
-          👥 Names{nameCount ? <em>{nameCount}</em> : null}
+        <button className="btn btn-names" onClick={() => setShowNames(true)} title="Names for the director and the staff" aria-label={`Names${nameCount ? ` (${nameCount})` : ''}`}>
+          <Icon name="users" size={18} />
+          <span className="lbl" aria-hidden="true">Names</span>
+          {nameCount ? <em aria-hidden="true">{nameCount}</em> : null}
         </button>
         <button
-          className="btn btn-icon"
+          className={`btn btn-icon${!muted && !soundReady ? ' btn-pending' : ''}`}
           onClick={() => {
             setMuted(!muted);
             if (muted) window.setTimeout(() => sfx('ding'), 60);
           }}
           aria-pressed={muted}
-          title={muted ? 'Sound effects are off – click to turn them on (M)' : 'Sound effects are on – click to mute (M)'}
+          aria-label={muted ? 'Sound effects off' : 'Sound effects on'}
+          title={
+            muted
+              ? 'Sound effects are off – click to turn them on (M)'
+              : soundReady
+                ? 'Sound effects are on – click to mute (M)'
+                : 'Sound effects are on, but the browser plays them only after your first click or key press (M mutes)'
+          }
         >
-          {muted ? '🔇' : '🔊'}
+          <Icon name={muted ? 'volume-x' : 'volume'} size={18} />
         </button>
-        <button className="btn btn-icon" onClick={resetView} title="Reset camera (R)">⌖</button>
-        <button className="btn btn-icon" onClick={() => setHelp(true)} title="Help (?)">?</button>
+        <button className="btn btn-icon" onClick={resetView} aria-label="Reset camera" title="Reset camera (R)"><Icon name="crosshair" size={18} /></button>
+        <button className="btn btn-icon" onClick={() => setHelp(true)} aria-label="Help" title="Help (?)"><Icon name="help" size={18} /></button>
       </div>
     </header>
   );
@@ -174,13 +195,15 @@ function taskTitle(t: { label: string; source: 'sub' | 'main'; first: string; st
   return t.steps > 1 ? `${t.first} · +${t.steps - 1} more` : t.first;
 }
 
-const FEED_ICON: Record<ActivityEntry['kind'], string> = {
-  prompt: '📥', thinking: '💭', text: '💬', tool: '🔧', task: '🧩', done: '✅', report: '📄', system: '🏢', error: '⚠️', ask: '❓',
+const FEED_ICON: Record<ActivityEntry['kind'], IconName> = {
+  prompt: 'inbox', thinking: 'lightbulb', text: 'message', tool: 'wrench', task: 'layers', done: 'check-circle', report: 'file-text', system: 'building', error: 'alert', ask: 'help',
 };
-const FEED_TOOL_ICON: Record<string, string> = {
-  Read: '📖', Edit: '✏️', MultiEdit: '✏️', NotebookEdit: '✏️', Write: '📝', Bash: '⌨️', PowerShell: '⌨️', Grep: '🔍', Glob: '🔍',
-  WebFetch: '🌐', WebSearch: '🌐', TodoWrite: '✅', TaskCreate: '✅', TaskUpdate: '✅', Agent: '📨', Task: '📨',
+const FEED_TOOL_ICON: Record<string, IconName> = {
+  Read: 'book-open', Edit: 'pencil', MultiEdit: 'pencil', NotebookEdit: 'pencil', Write: 'file-text', Bash: 'terminal', PowerShell: 'terminal', Grep: 'search', Glob: 'search',
+  WebFetch: 'globe', WebSearch: 'globe', TodoWrite: 'list-checks', TaskCreate: 'list-checks', TaskUpdate: 'list-checks', Agent: 'send', Task: 'send',
 };
+/** MCP tools (mcp__server__tool) get a plug */
+const feedToolIcon = (tool: string | undefined): IconName => FEED_TOOL_ICON[tool ?? ''] ?? (tool?.startsWith('mcp__') ? 'plug' : 'wrench');
 
 /** Everything that happened in the session – requests, thoughts, messages, tool calls, sub-agents, reports – newest first. */
 const ActivityFeed = memo(function ActivityFeed({ roomId }: { roomId: string }) {
@@ -193,7 +216,7 @@ const ActivityFeed = memo(function ActivityFeed({ roomId }: { roomId: string }) 
       {shown.map((e) => (
         <div key={e.id} className={`arow arow-${e.kind}${e.tool === 'failed' ? ' arow-bad' : ''}`}>
           <time>{clockSec(e.at)}</time>
-          <span className="arow-icon">{e.kind === 'tool' ? FEED_TOOL_ICON[e.tool ?? ''] ?? '🔧' : e.tool === 'failed' ? '😵' : FEED_ICON[e.kind]}</span>
+          <span className="arow-icon"><Icon name={e.kind === 'tool' ? feedToolIcon(e.tool) : e.tool === 'failed' ? 'x-circle' : FEED_ICON[e.kind]} size={14} /></span>
           <div>
             <b>{e.who}</b>
             {e.ctx ? <em> · {e.ctx}</em> : null}
@@ -211,7 +234,6 @@ const ActivityFeed = memo(function ActivityFeed({ roomId }: { roomId: string }) 
 /** Full list of the tasks of a room (running ones first), of the reports that were handed over, or of everything that happened. */
 function TaskList({ roomId }: { roomId: string }) {
   const tab = useStore((s) => s.listTab);
-  const setTab = useStore((s) => s.setListTab);
   const finished = useStore((s) => s.finished[roomId]);
   const tasks = useStore((s) => s.tasks);
   const people = useStore((s) => s.people);
@@ -235,13 +257,8 @@ function TaskList({ roomId }: { roomId: string }) {
     ...done.filter((t) => t.reported).map((t) => ({ key: t.key, label: taskTitle(t), who: t.who, at: t.finishedAt, failed: t.failed, summary: t.summary })),
   ];
   return (
-    <div className="tasklist">
-      <div className="tasklist-tabs">
-        <button className={tab === 'tasks' ? 'on' : ''} onClick={() => setTab('tasks')}>🧩 Tasks</button>
-        <button className={tab === 'reports' ? 'on' : ''} onClick={() => setTab('reports')}>📄 Reports</button>
-        <button className={tab === 'activity' ? 'on' : ''} onClick={() => setTab('activity')}>🕘 Activity</button>
-      </div>
-      <div className="tasklist-body">
+    <div className="tasklist" id="tasklist">
+      <div className="tasklist-body" role="region" aria-label={tab === 'tasks' ? 'Tasks' : tab === 'reports' ? 'Reports' : 'Activity'}>
         {tab === 'activity' ? (
           <ActivityFeed roomId={roomId} />
         ) : tab === 'tasks' ? (
@@ -249,7 +266,7 @@ function TaskList({ roomId }: { roomId: string }) {
             {open.length + done.length === 0 ? <p className="muted">No tasks yet.</p> : null}
             {open.map((t) => (
               <div key={t.key} className="trow trow-running">
-                <span className="trow-icon">{t.assignee ? (t.done ? '📨' : '⏳') : '🕒'}</span>
+                <span className="trow-icon"><Icon name={t.assignee ? (t.done ? 'send' : 'hourglass') : 'clock'} size={15} /></span>
                 <div>
                   <b>{taskTitle(t)}</b>
                   <small>
@@ -261,7 +278,7 @@ function TaskList({ roomId }: { roomId: string }) {
             ))}
             {done.map((t) => (
               <div key={t.key} className="trow">
-                <span className="trow-icon">{t.failed ? '😵' : '✅'}</span>
+                <span className="trow-icon"><Icon name={t.failed ? 'x-circle' : 'check-circle'} size={15} /></span>
                 <div>
                   <b>{taskTitle(t)}</b>
                   <small>
@@ -277,7 +294,7 @@ function TaskList({ roomId }: { roomId: string }) {
             {reported.length === 0 ? <p className="muted">No reports handed over yet.</p> : null}
             {reported.map((t) => (
               <div key={t.key} className="trow">
-                <span className="trow-icon">{t.failed ? '😵' : '📄'}</span>
+                <span className="trow-icon"><Icon name={t.failed ? 'x-circle' : 'file-text'} size={15} /></span>
                 <div>
                   <b>{t.label}</b>
                   <p>{t.summary || (t.failed ? 'Could not finish this one.' : 'Report handed over.')}</p>
@@ -292,6 +309,10 @@ function TaskList({ roomId }: { roomId: string }) {
   );
 }
 
+/** a small window (phone, split screen, 200% zoom): the header starts folded so the room stays in view */
+const SMALL_QUERY = '(max-width: 600px), (max-height: 560px)';
+const smallScreen = () => typeof window !== 'undefined' && !!window.matchMedia?.(SMALL_QUERY).matches;
+
 export function RoomHeader() {
   const room = useStore((s) => (s.activeRoomId ? s.rooms[s.activeRoomId] : null));
   const listTab = useStore((s) => s.listTab);
@@ -299,34 +320,53 @@ export function RoomHeader() {
   const openSummary = useStore((s) => s.openSummary);
   const status = useRoomStatus();
   const ask = useStore((s) => (s.activeRoomId ? s.asks[s.activeRoomId] : undefined));
+  const [folded, setFolded] = useState(smallScreen);
+  // the window grows or shrinks past the limit: fold or unfold to match (a click on the fold button lasts until the next change)
+  useEffect(() => {
+    const mq = window.matchMedia?.(SMALL_QUERY);
+    if (!mq) return;
+    const on = () => setFolded(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
   if (!room) return null;
   const st = status[room.id] ?? NO_STATUS;
   const theme = themeFor(room.themeIndex);
+  const askChip = ask ? <span className="room-header-ask" title={ask.full ?? ask.text}><Icon name="help" size={13} /> Needs your input</span> : null;
   return (
-    <div className="room-header" style={{ ['--accent' as string]: theme.accent }}>
+    <section className={`room-header${folded ? ' folded' : ''}`} style={{ ['--accent' as string]: theme.accent }} aria-label="Current room">
       <div className="room-header-title">
-        <span className="room-header-dot" />
+        <span className="room-header-dot" aria-hidden="true" />
         <b>{room.project}</b>
         {room.demo ? <em className="tag-demo">demo</em> : null}
+        <button className="room-header-fold" onClick={() => setFolded(!folded)} aria-expanded={!folded} aria-label={folded ? 'Show room details' : 'Hide room details'} title={folded ? 'Show room details' : 'Hide room details'}>
+          <Icon name={folded ? 'chevron-down' : 'chevron-up'} size={16} />
+        </button>
       </div>
-      <div className="room-header-sub">{room.title}</div>
-      <div className="room-header-stats">
-        <span className={st.working ? 'on' : ''}>{st.working ? '💼 Working' : '☕ Idle'}</span>
-        <span>👥 {st.people} in the office</span>
-        {ask ? <span className="room-header-ask" title={ask.full ?? ask.text}>❓ Needs your input</span> : null}
-        <button className={`stat-btn${listTab === 'tasks' ? ' open' : ''}`} onClick={() => toggleList('tasks')} aria-pressed={listTab === 'tasks'} title="Tasks of this session (sub-agent runs and the main agent's own work) – click for the full list">
-          🧩 Tasks
-        </button>
-        <button className={`stat-btn${listTab === 'reports' ? ' open' : ''}`} onClick={() => toggleList('reports')} aria-pressed={listTab === 'reports'} title="Reports handed over to the director – click for the full list">
-          📄 Reports
-        </button>
-        <button className={`stat-btn${listTab === 'activity' ? ' open' : ''}`} onClick={() => toggleList('activity')} aria-pressed={listTab === 'activity'} title="Everything that happened in this session, newest first – click again to close">
-          🕘 Activity
-        </button>
-        <button className="stat-btn" onClick={() => openSummary(room.id)} title="The last summary of this session on a sheet of paper (made from what is known so far if no run has finished yet)">📜 Summary</button>
-      </div>
-      <TaskList roomId={room.id} />
-    </div>
+      {folded ? (
+        askChip ? <div className="room-header-stats">{askChip}</div> : null
+      ) : (
+        <>
+          <div className="room-header-sub">{room.title}</div>
+          <div className="room-header-stats">
+            <span className={st.working ? 'on' : ''}><Icon name={st.working ? 'briefcase' : 'coffee'} size={13} /> {st.working ? 'Working' : 'Idle'}</span>
+            <span><Icon name="users" size={13} /> {st.people} in the office</span>
+            {askChip}
+            <button className={`stat-btn${listTab === 'tasks' ? ' open' : ''}`} onClick={() => toggleList('tasks')} aria-pressed={listTab === 'tasks'} aria-controls="tasklist" title="Tasks of this session (sub-agent runs and the main agent's own work) – click for the full list, click again to close">
+              <Icon name="list-checks" size={13} /> Tasks
+            </button>
+            <button className={`stat-btn${listTab === 'reports' ? ' open' : ''}`} onClick={() => toggleList('reports')} aria-pressed={listTab === 'reports'} aria-controls="tasklist" title="Reports handed over to the director – click for the full list, click again to close">
+              <Icon name="file-text" size={13} /> Reports
+            </button>
+            <button className={`stat-btn${listTab === 'activity' ? ' open' : ''}`} onClick={() => toggleList('activity')} aria-pressed={listTab === 'activity'} aria-controls="tasklist" title="Everything that happened in this session, newest first – click again to close">
+              <Icon name="clock" size={13} /> Activity
+            </button>
+            <button className="stat-btn" onClick={() => openSummary(room.id)} title="The last summary of this session on a sheet of paper (made from what is known so far if no run has finished yet)"><Icon name="scroll" size={13} /> Summary</button>
+          </div>
+          <TaskList roomId={room.id} />
+        </>
+      )}
+    </section>
   );
 }
 
@@ -335,7 +375,7 @@ export function RoomSwitcher() {
   const rooms = useStore((s) => s.rooms);
   const active = useStore((s) => s.activeRoomId);
   const setActive = useStore((s) => s.setActiveRoom);
-  const releaseAll = useStore((s) => s.releaseAllRooms);
+  const askReleaseAll = useStore((s) => s.askReleaseAll);
   const unseen = useStore((s) => s.unseen);
   const asks = useStore((s) => s.asks);
   const show = useStore((s) => s.showSwitcher);
@@ -343,11 +383,12 @@ export function RoomSwitcher() {
   const listRef = useRef<HTMLDivElement>(null);
   // the room that is opened stays in view when the list scrolls
   useEffect(() => {
-    listRef.current?.querySelector('.room-card.active')?.scrollIntoView({ block: 'nearest' });
+    listRef.current?.querySelector('.room-card.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [active]);
   if (!order.length || !show) return null;
+  const idleCount = order.filter((id) => !(status[id] ?? NO_STATUS).working).length;
   return (
-    <nav className="switcher">
+    <nav className="switcher" aria-label="Sessions">
       <div className="switcher-list" ref={listRef}>
         {order.map((id, i) => {
           const r = rooms[id];
@@ -355,29 +396,25 @@ export function RoomSwitcher() {
           const st = status[id] ?? NO_STATUS;
           const theme = themeFor(r.themeIndex);
           return (
-            <button key={id} className={`room-card${id === active ? ' active' : ''}`} style={{ ['--accent' as string]: theme.accent, ['--wall' as string]: theme.wall }} onClick={() => setActive(id)} title={`${r.title} · ${PROVIDER_NAME[r.provider]}${i < 9 ? ` (${i + 1})` : ''}`}>
+            <button key={id} className={`room-card${id === active ? ' active' : ''}`} style={{ ['--accent' as string]: theme.accent, ['--wall' as string]: theme.wall }} onClick={() => setActive(id)} aria-current={id === active ? 'true' : undefined} title={`${r.title} · ${PROVIDER_NAME[r.provider]}${i < 9 ? ` (${i + 1})` : ''}`}>
               <span className="room-card-logo" title={PROVIDER_NAME[r.provider]}>
                 <ProviderLogo provider={r.provider} />
               </span>
               <span className="room-card-text">
                 <b>{i + 1}. {r.project}</b>
                 {shortTitle(r) ? <small className="room-card-name">{shortTitle(r)}</small> : null}
-                <small>{st.working ? 'working' : 'idle'}</small>
+                <small>{st.working ? 'working' : 'idle'}{asks[id] ? ' · needs your input' : unseen[id] ? ' · summary ready' : ''}</small>
               </span>
               <span className={`room-card-status${st.working ? ' on' : ''}`} />
-              {asks[id] ? <i className="room-card-ask" title={`Waiting for your answer: ${asks[id].text}`}>❓</i> : unseen[id] ? <i className="room-card-alert" title="This session is done – click to read its summary" /> : null}
+              {asks[id] ? <i className="room-card-ask" title={`Waiting for your answer: ${asks[id].text}`} aria-hidden="true"><Icon name="help" size={12} /></i> : unseen[id] ? <i className="room-card-alert" title="This session is done – click to read its summary" aria-hidden="true" /> : null}
             </button>
           );
         })}
-        <button
-          className="room-clear"
-          onClick={() => {
-            if (window.confirm('Clear all rooms? Rooms that are working stay; the others come back when their session is continued.')) releaseAll();
-          }}
-          title="Release every room that is not working right now"
-        >
-          🧹 Clear all rooms
-        </button>
+        {idleCount ? (
+          <button className="room-clear" onClick={askReleaseAll} title="Take every room that is not working right now off the list (nothing is deleted)">
+            <Icon name="archive" size={14} /> Release {idleCount === order.length ? 'all' : idleCount} idle room{idleCount > 1 ? 's' : ''}
+          </button>
+        ) : null}
       </div>
     </nav>
   );
@@ -392,28 +429,47 @@ function inlineMd(t: string): ReactNode[] {
   });
 }
 
-/** The few bits of markdown the agents' answers use: headings, bullet / numbered lists, bold, code. */
+/** The few bits of markdown the agents' answers use: headings, bullet / numbered lists, code blocks, rules, bold, code. */
 function MiniMarkdown({ text }: { text: string }) {
   const out: ReactNode[] = [];
   let list: string[] = [];
+  let ordered = false;
   const flush = () => {
     if (!list.length) return;
     const items = list;
-    out.push(<ul key={`u${out.length}`}>{items.map((l, i) => <li key={i}>{inlineMd(l)}</li>)}</ul>);
+    const Tag = ordered ? 'ol' : 'ul';
+    out.push(<Tag key={`l${out.length}`}>{items.map((l, i) => <li key={i}>{inlineMd(l)}</li>)}</Tag>);
     list = [];
   };
-  text.split('\n').forEach((raw, i) => {
-    const line = raw.trimEnd();
-    const li = line.match(/^\s*(?:[-*•]|\d+[.)])\s+(.*)$/);
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trimEnd();
+    // a fenced code block runs to the closing fence (or to the end of the text when the message was cut off)
+    const fence = line.match(/^\s*(`{3,}|~{3,})/);
+    if (fence) {
+      flush();
+      const code: string[] = [];
+      for (i++; i < lines.length && !lines[i].trimStart().startsWith(fence[1]); i++) code.push(lines[i]);
+      out.push(<pre key={`c${out.length}`}><code>{code.join('\n')}</code></pre>);
+      continue;
+    }
+    const li = line.match(/^\s*(?:([-*•])|(\d+)[.)])\s+(.*)$/);
     if (li) {
-      list.push(li[1]);
-      return;
+      const isOrdered = !li[1];
+      if (list.length && isOrdered !== ordered) flush();
+      ordered = isOrdered;
+      list.push(li[3]);
+      continue;
     }
     flush();
-    if (!line.trim()) return;
+    if (!line.trim()) continue;
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) {
+      out.push(<hr key={`r${out.length}`} />);
+      continue;
+    }
     const h = line.match(/^#{1,4}\s+(.*)$/);
-    out.push(h ? <h4 key={i}>{inlineMd(h[1])}</h4> : <p key={i}>{inlineMd(line)}</p>);
-  });
+    out.push(h ? <h4 key={`h${out.length}`}>{inlineMd(h[1])}</h4> : <p key={`p${out.length}`}>{inlineMd(line)}</p>);
+  }
   flush();
   return <>{out}</>;
 }
@@ -427,6 +483,8 @@ export function SummaryPaper() {
   const dismiss = useStore((s) => s.closeSummary);
   const askRelease = useStore((s) => s.askRelease);
   const working = useStore((s) => !!(s.summaryOpen && s.rooms[s.summaryOpen]?.mainActive));
+  // tasks that are still going on (a summary "so far" only lists the finished ones)
+  const running = useStore((s) => (s.summaryOpen ? Object.values(s.tasks).filter((t) => t.sessionId === s.summaryOpen).length : 0));
   // a room can only be released while nothing is going on in it
   const idle = useStore((s) => !!s.summaryOpen && !s.rooms[s.summaryOpen]?.mainActive && !Object.values(s.tasks).some((t) => t.sessionId === s.summaryOpen));
   if (!roomId || !summary || !room) return null;
@@ -436,87 +494,97 @@ export function SummaryPaper() {
   const mix = new Map<string, number>();
   for (const c of calls) mix.set(c.tool || 'other', (mix.get(c.tool || 'other') ?? 0) + 1);
   const callMix = [...mix.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([tool, n]) => `${tool.replace(/^mcp__/, '')} ×${n}`).join(' · ');
+  const soFar = summary.partial;
   return (
-    <div className="paper-backdrop" onClick={close}>
-      <article className="paper" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Session summary">
-        <span className="paper-tape" />
-        <button className="paper-close" onClick={close} title="Close (Esc)">×</button>
-        <div className="paper-scroll">
-          <small className="paper-kicker">{summary.partial ? (working ? '🛠 Session so far' : '📜 Last known state') : '✅ Session summary'}</small>
-          <h2>{room.project}</h2>
-          <p className="paper-sub">{room.title}</p>
-          <div className="paper-stats">
-            <span>🕒 {summary.partial ? 'as of' : 'finished'} {clockText(summary.finishedAt)}</span>
-            <span>⏱ {durText(summary.finishedAt - summary.startedAt)}</span>
-            <span>🧩 {summary.tasks.length} task{summary.tasks.length === 1 ? '' : 's'}{failed ? ` (${failed} failed)` : ''}</span>
-            <span>📄 {summary.reports} report{summary.reports === 1 ? '' : 's'}</span>
-            <span>👥 {summary.staff} staff</span>
-          </div>
-          {summary.prompt ? (
-            <section>
-              <h3>The request</h3>
-              <p className="paper-quote">{summary.prompt}</p>
-            </section>
-          ) : null}
+    <Dialog backdrop="paper-backdrop" card="paper" as="article" label={`Session summary: ${room.project}`} onClose={close}>
+      <span className="paper-tape" aria-hidden="true" />
+      <button className="paper-close" onClick={close} aria-label="Close" title="Close (Esc)"><Icon name="x" size={18} /></button>
+      <div className="paper-scroll">
+        <small className="paper-kicker"><Icon name={summary.partial ? (working ? 'briefcase' : 'scroll') : 'check-circle'} size={14} /> {summary.partial ? (working ? 'Session so far' : 'Last known state') : 'Session summary'}</small>
+        <h2>{room.project}</h2>
+        <p className="paper-sub">{room.title}</p>
+        <div className="paper-stats">
+          <span><Icon name="clock" size={13} /> {summary.partial ? 'as of' : 'finished'} {clockText(summary.finishedAt)}</span>
+          <span><Icon name="timer" size={13} /> {durText(summary.finishedAt - summary.startedAt)}</span>
+          <span><Icon name="list-checks" size={13} /> {summary.tasks.length} task{summary.tasks.length === 1 ? '' : 's'}{soFar ? ' done' : ''}{failed ? ` (${failed} failed)` : ''}{running ? ` · ${running} running` : ''}</span>
+          <span><Icon name="file-text" size={13} /> {summary.reports} report{summary.reports === 1 ? '' : 's'}</span>
+          <span><Icon name="users" size={13} /> {summary.staff} staff</span>
+        </div>
+        {summary.prompt ? (
           <section>
-            <h3>Result</h3>
-            {summary.final ? <div className="paper-text"><MiniMarkdown text={summary.final} /></div> : <p className="muted">{summary.partial ? 'No closing message yet – the session is still working, or has not said anything since this page was opened.' : 'All the work is done – the main agent did not leave a closing message.'}</p>}
+            <h3>The request</h3>
+            <p className="paper-quote">{summary.prompt}</p>
           </section>
-          {summary.tasks.length ? (
-            <section>
-              <h3>What the team did</h3>
-              <ol className="paper-tasks">
-                {summary.tasks.filter((t) => t.source === 'sub').map((t) => (
-                  <li key={t.key} className={t.failed ? 'bad' : ''}>
-                    <b>{t.failed ? '😵 ' : '✓ '}{taskTitle(t)}</b>
-                    <small>{t.who} · {sourceText(t)} · {durText(t.finishedAt - t.startedAt)}</small>
-                    {t.reported && t.summary ? <p>{t.summary}</p> : null}
-                  </li>
-                ))}
-                {calls.length ? (
-                  <li>
-                    <b>🔧 {calls.length} tool call{calls.length === 1 ? '' : 's'}</b>
-                    <small>{callMix}</small>
-                  </li>
-                ) : null}
-              </ol>
-            </section>
-          ) : null}
-          {reports.length === 0 && summary.tasks.length === 0 ? null : <p className="paper-end">— end of report —</p>}
-        </div>
-        <div className="paper-foot">
-          {idle ? <button className="btn" onClick={askRelease} title="Take this room off the list – continue the session in its agent to bring it back">Release room</button> : null}
-          <button className="btn btn-big" onClick={dismiss}>Got it</button>
-        </div>
-      </article>
-    </div>
+        ) : null}
+        <section>
+          <h3>Result</h3>
+          {summary.final ? <div className="paper-text"><MiniMarkdown text={summary.final} /></div> : <p className="muted">{summary.partial ? 'No closing message yet – the session is still working, or has not said anything since this page was opened.' : 'All the work is done – the main agent did not leave a closing message.'}</p>}
+        </section>
+        {summary.tasks.length ? (
+          <section>
+            <h3>What the team did</h3>
+            <ol className="paper-tasks">
+              {summary.tasks.filter((t) => t.source === 'sub').map((t) => (
+                <li key={t.key} className={t.failed ? 'bad' : ''}>
+                  <b><Icon name={t.failed ? 'x-circle' : 'check'} size={14} /> {taskTitle(t)}</b>
+                  <small>{t.who} · {sourceText(t)} · {durText(t.finishedAt - t.startedAt)}</small>
+                  {t.reported && t.summary ? <p>{t.summary}</p> : null}
+                </li>
+              ))}
+              {calls.length ? (
+                <li>
+                  <b><Icon name="wrench" size={14} /> {calls.length} tool call{calls.length === 1 ? '' : 's'}</b>
+                  <small>{callMix}</small>
+                </li>
+              ) : null}
+            </ol>
+          </section>
+        ) : null}
+        {reports.length === 0 && summary.tasks.length === 0 ? null : <p className="paper-end">— end of report —</p>}
+      </div>
+      <div className="paper-foot">
+        {idle ? <button className="btn" onClick={askRelease} title="Take this room off the list – continue the session in its agent to bring it back">Release room</button> : null}
+        <button className="btn btn-big" onClick={dismiss} data-autofocus>Got it</button>
+      </div>
+    </Dialog>
   );
 }
 
-/** "Release this room?" – shown from the summary paper (Release button, or closing the paper). */
+/** "Release this room?" (from the summary paper) or "Release every idle room?" (from the room list). */
 export function ReleaseConfirm() {
   const ask = useStore((s) => s.releaseAsk);
+  const all = useStore((s) => s.releaseAllAsk);
   const room = useStore((s) => (s.releaseAsk ? s.rooms[s.releaseAsk.roomId] : undefined));
   const cancel = useStore((s) => s.cancelRelease);
   const release = useStore((s) => s.releaseRoom);
-  const closePaper = useStore((s) => s.closeSummary);
-  if (!ask || !room) return null;
-  const onClose = ask.via === 'close';
-  return (
-    <div className="confirm-backdrop" onClick={cancel}>
-      <div className="confirm-card" onClick={(e) => e.stopPropagation()} role="alertdialog" aria-label="Release this room">
-        <h3>{onClose ? 'Release this room before you close the summary?' : 'Release this room?'}</h3>
-        <p className="confirm-room">🏢 {room.project} <em>{room.title}</em></p>
+  const releaseAll = useStore((s) => s.releaseAllRooms);
+  if (all) {
+    return (
+      <Dialog backdrop="confirm-backdrop" card="confirm-card" role="alertdialog" label="Release every idle room" onClose={cancel}>
+        <h3>Release every idle room?</h3>
         <p className="confirm-note">
-          ℹ️ Releasing only takes the room off the list. Nothing is deleted – when you <b>continue this session in {PROVIDER_NAME[room.provider]}</b>, the room opens again by itself.
-          {onClose ? ' If you keep it, the blue dot keeps blinking until you release the room or the session starts working again.' : ''}
+          <Icon name="info" size={14} /> Rooms that are working stay. Releasing only takes a room off the list – nothing is deleted, and a room comes back by itself when its session is continued.
         </p>
         <div className="confirm-actions">
-          <button className="btn" onClick={onClose ? closePaper : cancel}>{onClose ? 'Keep the room' : 'Cancel'}</button>
-          <button className="btn btn-big" onClick={() => release(ask.roomId)}>Release room</button>
+          <button className="btn" onClick={cancel} data-autofocus>Cancel</button>
+          <button className="btn btn-big" onClick={releaseAll}>Release idle rooms</button>
         </div>
+      </Dialog>
+    );
+  }
+  if (!ask || !room) return null;
+  return (
+    <Dialog backdrop="confirm-backdrop" card="confirm-card" role="alertdialog" label="Release this room" onClose={cancel}>
+      <h3>Release this room?</h3>
+      <p className="confirm-room"><Icon name="building" size={14} /> {room.project} <em>{room.title}</em></p>
+      <p className="confirm-note">
+        <Icon name="info" size={14} /> Releasing only takes the room off the list. Nothing is deleted – when you <b>continue this session in {PROVIDER_NAME[room.provider]}</b>, the room opens again by itself.
+      </p>
+      <div className="confirm-actions">
+        <button className="btn" onClick={cancel} data-autofocus>Cancel</button>
+        <button className="btn btn-big" onClick={() => release(ask.roomId)}>Release room</button>
       </div>
-    </div>
+    </Dialog>
   );
 }
 
@@ -537,10 +605,10 @@ export function AgentPanel() {
   const cat = key ? cats.get(key) : undefined;
   if (key && cat && !person) {
     return (
-      <aside className="panel panel-cat" style={{ ['--accent' as string]: '#ff9ec4' }}>
-        <button className="panel-close" onClick={() => select(null)}>×</button>
+      <aside className="panel panel-cat" style={{ ['--accent' as string]: '#ff9ec4' }} aria-label="Office cat">
+        <button className="panel-close" onClick={() => select(null)} aria-label="Close" title="Close (Esc)"><Icon name="x" size={16} /></button>
         <div className="panel-title">
-          <span className="panel-avatar">🐱</span>
+          <span className="panel-avatar" aria-hidden="true"><Icon name="cat" size={22} /></span>
           <div>
             <b>Office cat</b>
             <small>{CAT_TEXT[cat.phase] ?? 'Being a cat'}</small>
@@ -557,10 +625,10 @@ export function AgentPanel() {
   const phaseText = !sim ? '…' : PHASE_TEXT[sim.phase];
   const theme = room ? themeFor(room.themeIndex) : themeFor(0);
   return (
-    <aside className="panel" style={{ ['--accent' as string]: director ? '#ffb020' : theme.accent }}>
-      <button className="panel-close" onClick={() => select(null)}>×</button>
+    <aside className="panel" style={{ ['--accent' as string]: director ? '#ffb020' : theme.accent }} aria-label={`${person.name}, ${director ? 'director' : 'staff'}`}>
+      <button className="panel-close" onClick={() => select(null)} aria-label="Close" title="Close (Esc)"><Icon name="x" size={16} /></button>
       <div className="panel-title">
-        <span className="panel-avatar">{director ? '👑' : '🧑‍💻'}</span>
+        <span className="panel-avatar" aria-hidden="true"><Icon name={director ? 'crown' : 'user'} size={22} /></span>
         <div>
           <b>{person.name}</b>
           <small>{director ? 'Director' : 'Staff'}</small>
@@ -573,7 +641,7 @@ export function AgentPanel() {
         {entries.length === 0 ? <p className="muted">Nothing said yet.</p> : null}
         {entries.map((e) => (
           <div key={e.id} className={`log log-${e.kind}`}>
-            <span>{ICON[e.kind] ?? '•'}</span>
+            <span className="log-icon"><Icon name={ICON[e.kind] ?? 'dot'} size={14} /></span>
             <p>{e.text}</p>
           </div>
         ))}
@@ -588,19 +656,23 @@ export function EmptyState() {
   const setDemo = useStore((s) => s.setDemo);
   const sources = useStore((s) => s.sources);
   if (!empty) return null;
+  const offline = connection === 'offline';
   return (
     <div className="empty">
       <div className="empty-card">
-        <div className="empty-emoji">🏢💤</div>
-        <h2>The office is empty</h2>
+        <div className="empty-emoji" aria-hidden="true"><Icon name={offline ? 'wifi-off' : 'building'} size={44} /></div>
+        <h2>{offline ? "Can't reach the monitor" : connection === 'connecting' ? 'Connecting…' : 'The office is empty'}</h2>
         <p>
-          {connection === 'live'
-            ? <>Watching {watchedSources(sources).map((w, i) => <span key={w.provider}>{i ? ', ' : ''}<b>{PROVIDER_NAME[w.provider]}</b></span>)}. Start a session in any of them and a room will appear here.</>
-            : connection === 'connecting'
-              ? 'Connecting to the transcript monitor…'
-              : 'The monitor is not reachable (run with npm run dev or npm start).'}
+          {connection === 'live' ? (
+            <>Watching {watchedSources(sources).map((w, i) => <span key={w.provider}>{i ? ', ' : ''}<b>{PROVIDER_NAME[w.provider]}</b></span>)}. Start a session in any of them and a room will appear here.</>
+          ) : connection === 'connecting' ? (
+            'Connecting to the transcript monitor…'
+          ) : (
+            <>The page keeps trying to reconnect by itself. If the monitor was stopped, start it again with <code>npx @thnonline/agent-workspace</code> (from a checkout: <code>npm start</code>).</>
+          )}
         </p>
-        {SHOW_DEMO_BUTTON ? <button className="btn btn-big" onClick={() => setDemo(true)}>▶ Watch a demo</button> : null}
+        {offline ? <button className="btn btn-big" onClick={retryConnection}>Try again now</button> : null}
+        {SHOW_DEMO_BUTTON ? <button className="btn btn-big" onClick={() => setDemo(true)}><Icon name="play" size={14} /> Watch a demo</button> : null}
       </div>
     </div>
   );
@@ -621,33 +693,33 @@ export function NamesDialog() {
     apply(parsed);
     setShow(false);
   };
+  const close = () => setShow(false);
   return (
-    <div className="modal" onClick={() => setShow(false)}>
-      <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-        <button className="panel-close" onClick={() => setShow(false)}>×</button>
-        <h2>👥 Names</h2>
-        <p className="muted">
-          One name per line (or separated by commas). The director and every staff member get a random name from this list – no two people in a room share a name.
-          The list is saved in this browser and reused for every room and every run. When it runs out, common English names such as {FALLBACK_NAMES.slice(0, 4).join(', ')}… are used.
-        </p>
-        <textarea
-          className="names-input"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder={'Mai\nLinh\nNam\nHuy\nTrang'}
-          rows={9}
-          spellCheck={false}
-          autoFocus
-        />
-        <div className="names-row">
-          <span className="muted">{parsed.length} name{parsed.length === 1 ? '' : 's'}</span>
-          <span className="names-actions">
-            <button className="btn" onClick={() => setText('')}>Clear</button>
-            <button className="btn btn-big" onClick={save}>Save</button>
-          </span>
-        </div>
+    <Dialog backdrop="modal" card="modal-card" label="Names" onClose={close}>
+      <button className="panel-close" onClick={close} aria-label="Close" title="Close (Esc)"><Icon name="x" size={16} /></button>
+      <h2><Icon name="users" size={22} /> Names</h2>
+      <p className="muted">
+        One name per line (or separated by commas). The director and every staff member get a random name from this list – no two people in a room share a name.
+        The list is saved in this browser and reused for every room and every run. When it runs out, common English names such as {FALLBACK_NAMES.slice(0, 4).join(', ')}… are used.
+      </p>
+      <textarea
+        className="names-input"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        aria-label="Names, one per line"
+        placeholder={'Mai\nLinh\nNam\nHuy\nTrang'}
+        rows={9}
+        spellCheck={false}
+        data-autofocus
+      />
+      <div className="names-row">
+        <span className="muted">{parsed.length} name{parsed.length === 1 ? '' : 's'}</span>
+        <span className="names-actions">
+          <button className="btn" onClick={() => setText('')}>Clear</button>
+          <button className="btn btn-big" onClick={save}>Save</button>
+        </span>
       </div>
-    </div>
+    </Dialog>
   );
 }
 
@@ -655,36 +727,52 @@ export function Help() {
   const show = useStore((s) => s.showHelp);
   const setHelp = useStore((s) => s.setHelp);
   if (!show) return null;
+  const close = () => setHelp(false);
   return (
-    <div className="modal" onClick={() => setHelp(false)}>
-      <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-        <button className="panel-close" onClick={() => setHelp(false)}>×</button>
-        <h2>How the office works</h2>
-        <ul>
-          <li>🏢 Every <b>session</b> of Claude Code, Codex or OpenCode gets its own <b>room</b>; the round logo on the room button says which one. Rooms appear when a session is active and disappear after it has been quiet for a while.</li>
-          <li>👑 The <b>director</b> is in the office for as long as the session works. They voice the main agent (prompt, thoughts, delegating) and walk out last, when everything is finished.</li>
-          <li>🧩 Characters are not agents any more: every <b>task</b> is done by one <b>staff member</b> – a sub-agent run, or one tool call (of the main agent or of a sub-agent). Staff walk in, unpack their laptop, type, and show what they are doing in speech bubbles. A bubble stays until they do something else – on a break a thought cloud says what they are up to (which book they read, that they get a drink…).</li>
-          <li>🔁 The staff <b>take turns</b>: whoever has rested longest gets the next task. When a sub-agent&apos;s task is done they hand the report to the director, then stay at their desk, sit on the sofa or pet a cat until the next task comes round.</li>
-          <li>🚪 When the session has no work left, the staff and the director go home one after another.</li>
-          <li>🔊 Soft sound effects (a door, key clicks, a pop for every speech bubble, a chime when a session is finished, sizzling noodles…) only for the room on screen – no music. The speaker button (or <kbd>M</kbd>) mutes them; the choice is saved in this browser.</li>
-          <li>💼 A new task never sends anybody back to their desk: whoever is on a break works on it right where they stand (or sit) and goes on with the break afterwards – after a report to the director they walk back to what they were doing. Somebody with nothing to do shows no speech bubble, only their name tag. Chats and greetings are spoken (round speech bubbles), what they plan to do is a thought cloud.</li>
-          <li>👋 Everybody who walks in greets the room first; the job they came for shows up five seconds later.</li>
-          <li>☕ Whoever has nothing to do takes a break: strolls around, sits on the sofa, watches a colleague work, looks out of the window, pets a cat, gets a drink, reads a book, watches the fish, washes their face, waters the plants, cooks noodles at the stove and eats them on the spot, boxes a punching dummy, lifts dumbbells, or chats with a colleague at their desk. Now and then a delivery rings the bell and somebody fetches the parcel from the porch; some take a nap or smoke a cigarette at the window. Breaks are long and far apart, so nobody is busy with one thing after another. The thought bubble goes away the moment the break is over.</li>
-          <li>🧩 The header buttons Tasks / Reports / Activity open the full list – the Activity tab is open by default (the activity feed is everything that happened, newest first), click again to close it. 📜 Summary always shows the last summary of the session on a sheet of paper.</li>
-          <li>🗂️ The room buttons in the column on the right (working sessions first, then the most recently updated; it scrolls when there are many) keep every session until you <b>release</b> it (from the summary paper: Release room, or when you close the paper). Releasing only takes the room off the list – continue the session in its agent and the room opens again. A session that has stood still for an hour is released automatically.</li>
-          <li>🔵 When a session has finished all its work the director reads the summary aloud in their speech bubble (two lines at a time) and only goes home after the last line. A blinking blue dot in the top-left corner of the room button means the summary is still unread. Whenever you step into a room whose session is done, its summary lies on the screen as a sheet of paper (📜 Summary in the header brings it back). The dot keeps blinking until you release the room or the session starts working again.</li>
-          <li>🐱 Every room has 1–2 cats. They hop in through the open sash of a window, wander, nap on the sofa or the director&apos;s desk and hop out again whenever they like.</li>
-          <li>👥 Use the <b>Names</b> button to give the director and the staff real names (saved in this browser, unique inside a room, common English names are used when the list runs out).</li>
-          <li>🌙 Light follows your system clock: the sky darkens in the evening and every room switches its lights on.</li>
-        </ul>
-        <h3>Controls</h3>
-        <ul className="keys">
-          <li><kbd>←</kbd> <kbd>→</kbd> or <kbd>1</kbd>–<kbd>9</kbd> switch room</li>
-          <li>Drag = rotate · Wheel = zoom · <kbd>R</kbd> = reset camera</li>
-          <li>Click a character to see its log · <kbd>Esc</kbd> to close</li>
-          <li><kbd>D</kbd> toggles the demo · <kbd>N</kbd> previews day / dusk / night</li>
-        </ul>
-      </div>
-    </div>
+    <Dialog backdrop="modal" card="modal-card modal-help" label="How the office works" onClose={close}>
+      <button className="panel-close" onClick={close} aria-label="Close" title="Close (Esc)"><Icon name="x" size={16} /></button>
+      <h2>How the office works</h2>
+      <h3>Controls</h3>
+      <ul className="keys">
+        <li><kbd>←</kbd> <kbd>→</kbd> or <kbd>1</kbd>–<kbd>9</kbd> switch room</li>
+        <li>Drag = rotate · Wheel = zoom · <kbd>R</kbd> = reset camera</li>
+        <li>Click a character to follow it and see its log · <kbd>Esc</kbd> to close</li>
+        <li><kbd>N</kbd> previews day / dusk / night · <kbd>M</kbd> mutes sound · <kbd>?</kbd> opens this help</li>
+      </ul>
+      <h3>The office</h3>
+      <ul className="help-list">
+        <li><Icon name="building" size={16} /><span>Every <b>session</b> of Claude Code, Codex or OpenCode gets its own <b>room</b>; the round logo on its button says which one.</span></li>
+        <li><Icon name="crown" size={16} /><span>The <b>director</b> voices the main agent (prompt, thoughts, delegating) and walks out last, when everything is finished.</span></li>
+        <li><Icon name="list-checks" size={16} /><span>Every <b>task</b> is done by one <b>staff member</b> – a sub-agent run, or one tool call. Staff walk in, unpack their laptop, type, and show what they are doing in speech bubbles; the staff take turns.</span></li>
+        <li><Icon name="coffee" size={16} /><span>Whoever has nothing to do takes a break – a stroll, the sofa, a book, a drink, noodles, the punching dummy, a cat… A new task never sends anybody back to their desk: they work on it where they are.</span></li>
+        <li><Icon name="cat" size={16} /><span>Every room has 1–2 cats that hop in through the windows, wander, nap and leave when they like.</span></li>
+        <li><Icon name="moon" size={16} /><span>Light follows your system clock: the sky darkens in the evening and every room switches its lights on.</span></li>
+      </ul>
+      <h3>Sessions and summaries</h3>
+      <ul className="help-list">
+        <li><Icon name="archive" size={16} /><span>The green <b>Live</b> pill in the top bar shows or hides the session list. The room buttons keep the order in which the sessions showed up. A room stays until you <b>release</b> it (Release room on the summary paper, or Release idle rooms under the list) or until its session has stood still for an hour. Releasing only takes it off the list – continue the session in its agent and it comes back.</span></li>
+        <li><i className="help-dot" aria-hidden="true" /><span>When a session is done the director announces it and a blue dot blinks on its button until you have read the summary. Stepping into a finished room lays its summary on the screen as a sheet of paper; <b>Summary</b> in the header brings it back.</span></li>
+        <li><Icon name="help" size={16} /><span>When the agent waits for your answer, its room shows an amber badge and the director waves a question bubble.</span></li>
+        <li><Icon name="users" size={16} /><span><b>Names</b> gives the director and the staff real names (saved in this browser). Sound effects only play for the room on screen; the browser allows them after your first click.</span></li>
+      </ul>
+    </Dialog>
   );
+}
+
+/** Says out loud (to screen readers) what the eyes see happen in another room: a question is waiting, a session is done. */
+export function Announcer() {
+  const [msg, setMsg] = useState('');
+  useEffect(
+    () =>
+      useStore.subscribe((s, prev) => {
+        for (const id of Object.keys(s.asks)) {
+          if (!prev.asks[id]) setMsg(`${s.rooms[id]?.project ?? 'A session'} needs your input`);
+        }
+        for (const id of Object.keys(s.unseen)) {
+          if (s.unseen[id] && !prev.unseen[id]) setMsg(`${s.rooms[id]?.project ?? 'A session'} is done`);
+        }
+      }),
+    [],
+  );
+  return <div className="sr-only" role="status" aria-live="polite">{msg}</div>;
 }

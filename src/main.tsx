@@ -1,6 +1,8 @@
 import { StrictMode, Suspense, lazy } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
+import '@fontsource-variable/nunito';
+import '@fontsource-variable/jetbrains-mono';
 import './styles.css';
 import { useStore } from './store';
 import * as registry from './sim/registry';

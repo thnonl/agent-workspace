@@ -92,7 +92,7 @@ export interface RoomRuntime {
   lastText: string;
   /** the last closing message the monitor knows about (also from before this page was opened) */
   knownFinal: string;
-  /** the director reads the summary aloud until then (Date.now()); a safety net for when nobody watches */
+  /** the director announces the end of the work until then (Date.now()); a safety net for when nobody watches */
   talkDeadline: number;
   /** delivery at the door: 'waiting' = a box stands on the porch, 'carried' = somebody has it in their arms */
   parcel: 'none' | 'waiting' | 'carried';

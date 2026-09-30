@@ -7,7 +7,7 @@ import { HOUR_PRESETS } from './env';
 import { loadNames, pickName, saveNames } from './names';
 import { getLayout } from './world/layout';
 import { isMuted, setMuted as setAudioMuted, sfx } from './audio';
-import { pickAck } from './sim/phrases';
+import { doneLines, pickAck } from './sim/phrases';
 import { bufferTaskSpeech, clearTalk, debugFlags, dropRoomRuntime, dropRuntime, dropTaskSpeech, enqueueSpeech, hasQueuedTool, runtimeFor, takeTaskSpeech, talkPending } from './sim/registry';
 
 export type Connection = 'connecting' | 'live' | 'offline';
@@ -33,7 +33,7 @@ interface State {
   finished: Record<string, TaskLogEntry[]>;
   /** everything that happened in a room, newest first */
   activity: Record<string, ActivityEntry[]>;
-  /** which list is open under the room header (the activity feed is open from the start) */
+  /** which list is open under the room header (none from the start: the lists cover a good part of the room) */
   listTab: 'tasks' | 'reports' | 'activity' | null;
   /** the last finished run of every room */
   summaries: Record<string, RunSummary>;
@@ -43,10 +43,14 @@ interface State {
   asks: Record<string, AskRec>;
   /** rooms whose summary nobody has closed yet: the paper opens when they are visited */
   unread: Record<string, boolean>;
+  /** rooms whose summary paper the user has closed since the last run: stepping into them does not lay the paper down again */
+  dismissed: Record<string, boolean>;
   /** rooms the user released: hidden from the list until the session is continued (session id → when) */
   released: Record<string, number>;
   /** the release confirmation that is on screen */
-  releaseAsk: { roomId: string; via: 'button' | 'close' } | null;
+  releaseAsk: { roomId: string } | null;
+  /** the "release every idle room" confirmation is on screen */
+  releaseAllAsk: boolean;
   /** the room whose summary paper is open */
   summaryOpen: string | null;
   activeRoomId: string | null;
@@ -79,11 +83,12 @@ interface State {
   /** the report of the person's task lands on the director's desk */
   reportTask: (personKey: string) => void;
   openSummary: (roomId: string) => void;
-  /** the paper's close button: asks whether to release a finished room first */
+  /** Esc / close button / backdrop of the paper: answers a pending question first, otherwise closes the paper */
   requestCloseSummary: () => void;
   closeSummary: () => void;
   askRelease: () => void;
   cancelRelease: () => void;
+  askReleaseAll: () => void;
   /** hide the room from the list (continuing the session in its agent brings it back) */
   releaseRoom: (roomId: string) => void;
   /** release every room that is not working right now (working ones stay: they would come straight back) */
@@ -139,11 +144,8 @@ function loadShowSwitcher(): boolean {
 }
 /** once the team is complete another person is hired at most this often (the newcomer needs time to walk in) */
 const HIRE_GAP_MS = 6000;
-/** the director reads the summary aloud: this many lines per bubble, this long on screen, lines wrapped at this width, at most this many bubbles */
-const TALK_LINES = 2;
-const TALK_HOLD_MS = 5000;
-const TALK_WIDTH = 40;
-const TALK_MAX_BUBBLES = 30;
+/** the director announces the end of the work: each bubble stays this long on screen */
+const TALK_HOLD_MS = 4500;
 
 let logId = 100000;
 
@@ -194,15 +196,11 @@ function isStale(s: State, id: string, now: number): boolean {
 }
 
 /**
- * The order of the room buttons: sessions that are working come first, then the most recently updated ones.
- * (The number keys and the arrow keys follow the same order.)
+ * The order of the room buttons: the order in which the sessions showed up. It never changes when a session starts or
+ * stops working, so a card (and its number key) stays where it is. (The number keys and the arrow keys follow the same order.)
  */
-export function orderedRooms(s: Pick<State, 'visibleOrder' | 'rooms' | 'tasks'>): string[] {
-  const busy = new Set<string>();
-  for (const t of Object.values(s.tasks)) busy.add(t.sessionId);
-  const working = (id: string) => (s.rooms[id]?.mainActive || busy.has(id) ? 1 : 0);
-  const recent = (id: string) => Math.max(s.rooms[id]?.updatedAt ?? 0, s.rooms[id]?.createdAt ?? 0);
-  return [...s.visibleOrder].sort((a, b) => working(b) - working(a) || recent(b) - recent(a));
+export function orderedRooms(s: Pick<State, 'visibleOrder'>): string[] {
+  return [...s.visibleOrder];
 }
 
 /** Keep `visibleOrder` (and the active room) in line with what is going on. */
@@ -486,8 +484,9 @@ function beginRun(get: Get, set: SetFn, roomId: string, now: number) {
   if (rt.wasBusy) return;
   rt.wasBusy = true;
   rt.runStart = now;
-  clearTalk(directorKeyOf(roomId)); // the summary of the previous run is not read out any more
+  clearTalk(directorKeyOf(roomId)); // the announcement of the previous run is forgotten
   const cur = get();
+  if (cur.dismissed[roomId]) set({ dismissed: { ...cur.dismissed, [roomId]: false } });
   if (cur.unseen[roomId] || cur.unread[roomId]) {
     set({
       unseen: { ...cur.unseen, [roomId]: false },
@@ -511,46 +510,18 @@ function composeSummary(get: Get, roomId: string, now: number, partial: boolean)
   };
 }
 
-/** Plain lines of a markdown message, wrapped to the width of a summary bubble. */
-function talkLines(md: string): string[] {
-  const out: string[] = [];
-  for (const raw of md.split('\n')) {
-    const line = raw
-      .replace(/^\s*#{1,6}\s+/, '')
-      .replace(/^\s*[-*•]\s+/, '• ')
-      .replace(/\*\*([^*]+)\*\*/g, '$1')
-      .replace(/`([^`]+)`/g, '$1')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (!line || /^[-|:\s]+$/.test(line)) continue;
-    let cur = '';
-    for (const word of line.split(' ')) {
-      if (cur && cur.length + 1 + word.length > TALK_WIDTH) {
-        out.push(cur);
-        cur = '';
-      }
-      cur = cur ? `${cur} ${word}` : word;
-    }
-    if (cur) out.push(cur);
-  }
-  return out;
-}
-
-/** The director reads the summary out loud, a couple of lines at a time; nobody goes home before the end. Returns whether there is anything to read. */
+/** The director announces that the work is finished (a couple of short phrases, not the closing message – that is on the summary paper). Returns whether they will say anything. */
 function startSummaryTalk(get: Get, roomId: string, summary: RunSummary): boolean {
   const director = get().people[directorKeyOf(roomId)];
-  const lines = talkLines(summary.final);
-  if (!director || !lines.length) return false;
+  if (!director) return false;
   clearTalk(director.key);
-  let bubbles = 0;
-  for (let i = 0; i < lines.length && bubbles < TALK_MAX_BUBBLES; i += TALK_LINES, bubbles++) {
-    enqueueSpeech(director.key, { kind: 'text', text: lines.slice(i, i + TALK_LINES).join('\n'), hold: TALK_HOLD_MS });
-  }
-  runtimeFor(roomId).talkDeadline = Date.now() + bubbles * (TALK_HOLD_MS + 1500) + 45_000;
+  const lines = doneLines(summary.tasks.filter((t) => t.failed).length, summary.tasks.length);
+  for (const text of lines) enqueueSpeech(director.key, { kind: 'text', text, hold: TALK_HOLD_MS });
+  runtimeFor(roomId).talkDeadline = Date.now() + lines.length * (TALK_HOLD_MS + 1500) + 45_000;
   return true;
 }
 
-/** The director is still reading the summary (a talk nobody could watch is dropped after a while). */
+/** The director is still announcing the end of the work (a talk nobody could watch is dropped after a while). */
 function directorTalking(get: Get, roomId: string, now: number): boolean {
   const director = get().people[directorKeyOf(roomId)];
   if (!director || !talkPending(director.key)) return false;
@@ -568,7 +539,7 @@ function finishRun(get: Get, set: SetFn, roomId: string, now: number) {
   rt.lastText = '';
   logActivity(get, set, roomId, { kind: 'system', who: 'Office', text: 'All work is done – the summary is ready' });
   sfx('chime'); // the session is done (also when another room is on screen)
-  // the director reads it out loud; only when there is nothing to read does the paper open by itself (not in the demo: it would keep interrupting)
+  // the director announces it; only when there is nobody to say it does the paper open by itself (not in the demo: it would keep interrupting)
   const talking = startSummaryTalk(get, roomId, summary);
   const readNow = s.activeRoomId === roomId && !room.demo && !talking;
   const cur = get();
@@ -591,7 +562,7 @@ function enterRoom(get: Get, set: SetFn, id: string | null) {
     const known = st.summaries[id];
     const rt = runtimeFor(id);
     if (known && st.unread[id]) summaryOpen = id;
-    else if (!busy && !room.demo && (known || rt.prompt || rt.knownFinal || rt.lastText)) {
+    else if (!busy && !room.demo && !st.dismissed[id] && (known || rt.prompt || rt.knownFinal || rt.lastText)) {
       if (!known || known.partial) summaries = { ...summaries, [id]: composeSummary(get, id, Date.now(), true) };
       summaryOpen = id;
     }
@@ -647,7 +618,7 @@ function tickRoom(get: Get, set: SetFn, roomId: string, now: number) {
     patchPeople(get, set, patches);
   }
   if (rt.leaving && !busy) {
-    // the director locks up last – and only after the whole summary has been read out
+    // the director locks up last – and only after the announcement has been made
     const boss = get().people[directorKeyOf(roomId)];
     if (boss?.present && !boss.leaveAt && !directorTalking(get, roomId, now)) {
       const lastStaff = peopleOf(get(), roomId).reduce((m, p) => (p.role === 'staff' ? Math.max(m, p.leaveAt) : m), 0);
@@ -721,6 +692,8 @@ function handleEvent(get: Get, set: SetFn, ev: MonitorEvent, demo: boolean) {
       delete asks[room.id];
       const unread = { ...s.unread };
       delete unread[room.id];
+      const dismissed = { ...s.dismissed };
+      delete dismissed[room.id];
       const roomOrder = s.roomOrder.filter((id) => id !== room.id);
       // keep grid slots stable: re-index remaining rooms
       roomOrder.forEach((id, i) => (rooms[id] = { ...rooms[id], index: i }));
@@ -730,7 +703,7 @@ function handleEvent(get: Get, set: SetFn, ev: MonitorEvent, demo: boolean) {
         activeRoomId = roomOrder[Math.min(at, roomOrder.length - 1)] ?? null;
       }
       set({
-        rooms, roomOrder, people, tasks, logs, finished, summaries, unseen, asks, unread, activity, activeRoomId,
+        rooms, roomOrder, people, tasks, logs, finished, summaries, unseen, asks, unread, dismissed, activity, activeRoomId,
         releaseAsk: s.releaseAsk?.roomId === room.id ? null : s.releaseAsk,
         summaryOpen: s.summaryOpen === room.id ? null : s.summaryOpen,
         selectedKey: s.selectedKey && people[s.selectedKey] ? s.selectedKey : null,
@@ -866,13 +839,15 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
   logs: {},
   finished: {},
   activity: {},
-  listTab: 'activity',
+  listTab: null,
   summaries: {},
   unseen: {},
   asks: {},
   unread: {},
+  dismissed: {},
   released: loadReleased(),
   releaseAsk: null,
+  releaseAllAsk: false,
   summaryOpen: null,
   muted: isMuted(),
   activeRoomId: null,
@@ -981,24 +956,28 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
     const summaries = known && !known.partial ? st.summaries : { ...st.summaries, [roomId]: composeSummary(get, roomId, Date.now(), true) };
     set({ summaries, summaryOpen: roomId });
   },
-  // closing the paper of a room that is not working asks whether to release it
+  // Esc, the close button and a click beside the paper all do the same: close it (a pending release question is answered first)
   requestCloseSummary: () => {
     const st = get();
-    const id = st.summaryOpen;
-    if (!id) return;
-    if (st.releaseAsk) {
-      set({ releaseAsk: null }); // Esc on the question: back to the paper
+    if (st.releaseAsk || st.releaseAllAsk) {
+      set({ releaseAsk: null, releaseAllAsk: false });
       return;
     }
-    const room = st.rooms[id];
-    const busy = !!room?.mainActive || Object.values(st.tasks).some((t) => t.sessionId === id);
-    if (room && !busy) set({ releaseAsk: { roomId: id, via: 'close' } });
-    else get().closeSummary();
+    if (st.summaryOpen) get().closeSummary();
   },
+  // the paper is read: the blue dot stops blinking and the paper does not come back until the session has worked again
   closeSummary: () =>
-    set((st) => (st.summaryOpen ? { summaryOpen: null, releaseAsk: null, unread: { ...st.unread, [st.summaryOpen]: false } } : { releaseAsk: null })),
-  askRelease: () => set((st) => (st.summaryOpen ? { releaseAsk: { roomId: st.summaryOpen, via: 'button' } } : {})),
-  cancelRelease: () => set({ releaseAsk: null }),
+    set((st) => {
+      const id = st.summaryOpen;
+      if (!id) return { releaseAsk: null };
+      return {
+        summaryOpen: null, releaseAsk: null,
+        unread: { ...st.unread, [id]: false }, unseen: { ...st.unseen, [id]: false }, dismissed: { ...st.dismissed, [id]: true },
+      };
+    }),
+  askRelease: () => set((st) => (st.summaryOpen ? { releaseAsk: { roomId: st.summaryOpen } } : {})),
+  askReleaseAll: () => set({ releaseAllAsk: true }),
+  cancelRelease: () => set({ releaseAsk: null, releaseAllAsk: false }),
   releaseRoom: (roomId) => {
     const st = get();
     const released = { ...st.released, [roomId]: Date.now() };
@@ -1007,6 +986,7 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
       released,
       unseen: { ...st.unseen, [roomId]: false },
       unread: { ...st.unread, [roomId]: false },
+      dismissed: { ...st.dismissed, [roomId]: false },
       summaryOpen: st.summaryOpen === roomId ? null : st.summaryOpen,
       releaseAsk: null,
       selectedKey: st.selectedKey && st.people[st.selectedKey]?.sessionId === roomId ? null : st.selectedKey,
@@ -1027,7 +1007,7 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
       unread[id] = false;
     }
     saveReleased(released);
-    set({ released, unseen, unread, summaryOpen: null, releaseAsk: null, selectedKey: null });
+    set({ released, unseen, unread, summaryOpen: null, releaseAsk: null, releaseAllAsk: false, selectedKey: null });
     refreshVisible(get, set);
   },
   toggleList: (tab) => set((st) => ({ listTab: st.listTab === tab ? null : tab })),
