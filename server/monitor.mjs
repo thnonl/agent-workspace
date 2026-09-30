@@ -382,7 +382,7 @@ export function createMonitor({
         s.subFiles.set(file, sf);
       }
       if (!sf.key) {
-        if (sf.staleAt !== undefined && hint !== true && !hint?.has(name.slice(0, -6)) && now - sf.staleAt < recheckMs()) continue;
+        if (sf.staleAt !== undefined && hint !== true && !(hint && hint.has(name.slice(0, -6))) && now - sf.staleAt < recheckMs()) continue;
         let meta = null;
         try {
           meta = JSON.parse(fs.readFileSync(path.join(dir, name.replace(/\.jsonl$/, '.meta.json')), 'utf8'));

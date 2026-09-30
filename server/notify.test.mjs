@@ -58,3 +58,36 @@ test('a notice with a <task-id> (the background agent id) ends the agent, comple
   ctx.monitor.stop();
   fs.rmSync(ctx.root, { recursive: true, force: true });
 });
+
+test('a hot session with old sub-agent files keeps polling without errors (and still follows a new main line)', async () => {
+  const ctx = setup();
+  const errors = [];
+  const orig = console.error;
+  console.error = (...a) => errors.push(a.map(String).join(' '));
+  try {
+    const { root, monitor, write, base, events } = ctx;
+    const dir = path.join(root, 'E--demo', '88888888-2222-3333-4444-555555555555', 'subagents');
+    fs.mkdirSync(dir, { recursive: true });
+    const old = new Date(Date.now() - 60 * 60_000);
+    for (let i = 0; i < 5; i++) {
+      const f = path.join(dir, `agent-old${i}.jsonl`);
+      fs.writeFileSync(f, `${JSON.stringify({ type: 'user', message: { role: 'user', content: 'x' } })}\n`);
+      fs.writeFileSync(path.join(dir, `agent-old${i}.meta.json`), JSON.stringify({ toolUseId: `toolu_old${i}`, description: 'old' }));
+      fs.utimesSync(f, old, old);
+    }
+    monitor.start();
+    write(user(base, 'Do the job'));
+    await sleep(200);
+    for (let i = 0; i < 6; i++) {
+      write(assistant(base, [{ type: 'text', text: `step ${i}` }]));
+      await sleep(120);
+    }
+    assert.deepEqual(errors.filter((e) => e.includes('[monitor]')), []);
+    assert.ok(events.some((e) => e.type === 'agent_say' && /step 5/.test(e.text ?? '')), 'the last main line was still delivered');
+    assert.equal(events.filter((e) => e.type === 'agent_start' && /^toolu_old/.test(e.agentId)).length, 0, 'old agents are not adopted');
+    monitor.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  } finally {
+    console.error = orig;
+  }
+});
