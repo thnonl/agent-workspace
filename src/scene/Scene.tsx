@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
@@ -17,7 +17,7 @@ const IDLE_FPS = 20;
 /** the render resolution is lowered when the busy scene cannot hold this frame rate */
 const LOW_FPS = 40;
 const HIGH_FPS = 57;
-const MIN_DPR = 0.8;
+const MIN_DPR = 1.25;
 
 const tmpA = new THREE.Vector3();
 const tmpB = new THREE.Vector3();
@@ -237,7 +237,7 @@ function ViewSync() {
     view.camera = state.camera;
     view.width = state.size.width;
     view.height = state.size.height;
-    if (import.meta.env.DEV) (window as unknown as { __gl?: unknown }).__gl = state.gl;
+    if (import.meta.env.DEV) Object.assign(window, { __gl: state.gl, __scene: state.scene });
   });
   return null;
 }
@@ -316,18 +316,10 @@ function RoomLights() {
   );
 }
 
-/** the shadow map is redrawn at most this often while people move, and once a second otherwise */
-const SHADOW_STEP = 1 / 30;
-const SHADOW_IDLE_STEP = 1;
-/** how far (world units) the sun may drift before the shadow map is redrawn */
-const SHADOW_DRIFT = 0.02;
-
 function Lights() {
   const light = useRef<THREE.DirectionalLight>(null);
   const hemi = useRef<THREE.HemisphereLight>(null);
   const scene = useThree((s) => s.scene);
-  const gl = useThree((s) => s.gl);
-  const shadow = useRef({ since: 99, pos: new THREE.Vector3(1e9, 0, 0), target: new THREE.Vector3(), was: false });
   useEffect(() => {
     const l = light.current;
     if (!l) return;
@@ -336,14 +328,6 @@ function Lights() {
       scene.remove(l.target);
     };
   }, [scene]);
-  // the shadow map is only redrawn when something in it can have changed (see useFrame below)
-  useEffect(() => {
-    gl.shadowMap.autoUpdate = false;
-    gl.shadowMap.needsUpdate = true;
-    return () => {
-      gl.shadowMap.autoUpdate = true;
-    };
-  }, [gl]);
   useFrame((_, dt) => {
     const l = light.current;
     if (!l || !frame.hasActive) return;
@@ -359,40 +343,15 @@ function Lights() {
       hemi.current.groundColor.copy(p.hemiGround);
       hemi.current.intensity = p.hemiIntensity;
     }
-
-    const s = shadow.current;
-    s.since += dt;
-    const moved = l.position.distanceToSquared(s.pos) > SHADOW_DRIFT * SHADOW_DRIFT || l.target.position.distanceToSquared(s.target) > SHADOW_DRIFT * SHADOW_DRIFT;
-    // somebody started moving: draw at once, then at a steady pace
-    const woke = frame.dynamic && !s.was;
-    s.was = frame.dynamic;
-    if (frame.shadowDirty || moved || woke || s.since >= (frame.dynamic ? SHADOW_STEP : SHADOW_IDLE_STEP)) {
-      gl.shadowMap.needsUpdate = true;
-      frame.shadowDirty = false;
-      s.since = 0;
-      s.pos.copy(l.position);
-      s.target.copy(l.target.position);
-    }
   });
   return (
     <>
       <hemisphereLight ref={hemi} args={['#ffffff', '#ffd9c4', 1.05]} />
       <directionalLight
         ref={light}
-        castShadow
         color="#fff3e2"
         intensity={1.9}
         position={[7, 17, 9]}
-        shadow-mapSize={[1536, 1536]}
-        shadow-camera-left={-13}
-        shadow-camera-right={13}
-        shadow-camera-top={13}
-        shadow-camera-bottom={-13}
-        shadow-camera-near={1}
-        shadow-camera-far={45}
-        shadow-bias={-0.0004}
-        shadow-normalBias={0.035}
-        shadow-radius={3}
       />
     </>
   );
@@ -400,16 +359,15 @@ function Lights() {
 
 export function Scene() {
   const roomOrder = useStore((s) => s.visibleOrder);
-  // a room appears or disappears: its furniture has to cast (or stop casting) shadows
-  useEffect(() => {
-    frame.shadowDirty = true;
-  }, [roomOrder]);
+  // rooms are built lazily: a room is put into the scene the first time it becomes the active one, and stays after that
+  const activeRoomId = useStore((s) => s.activeRoomId);
+  const [visited, setVisited] = useState<ReadonlySet<string>>(() => new Set());
+  if (activeRoomId && !visited.has(activeRoomId)) setVisited(new Set(visited).add(activeRoomId));
   return (
     <Canvas
       frameloop="demand"
-      shadows="percentage"
       flat
-      dpr={[1, 1.5]}
+      dpr={[1.5, 2]}
       camera={{ fov: 30, near: 1, far: 400, position: [16, 17, 18] }}
       gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
       onPointerMissed={() => useStore.getState().select(null)}
@@ -421,9 +379,7 @@ export function Scene() {
       <Lights />
       <RoomLights />
       <CameraRig />
-      {roomOrder.map((id) => (
-        <RoomView key={id} roomId={id} />
-      ))}
+      {roomOrder.map((id) => (visited.has(id) ? <RoomView key={id} roomId={id} /> : null))}
     </Canvas>
   );
 }

@@ -1,12 +1,14 @@
+/** which coding agent a session belongs to */
+export type Provider = 'claude' | 'codex' | 'opencode';
 export type AgentRole = 'main' | 'sub';
 /** `idle` = what a character is up to when there is no task (reading, getting a drink, waiting…); `Speech.tool` then names the icon */
 export type SpeechKind = 'thinking' | 'text' | 'tool' | 'task' | 'done' | 'error' | 'idle';
 
 /** Events produced by the transcript monitor (server) or the demo simulator (browser). */
 export type MonitorEvent =
-  | { type: 'hello'; claudeDir: string; windowMin: number }
+  | { type: 'hello'; claudeDir: string; sources?: Record<string, string | null>; windowMin: number }
   | { type: 'ready' }
-  | { type: 'session'; sessionId: string; title: string; cwd: string; project: string; updatedAt: number; lastPrompt?: string; lastFinal?: string }
+  | { type: 'session'; sessionId: string; title: string; cwd: string; project: string; provider?: Provider; updatedAt: number; lastPrompt?: string; lastFinal?: string }
   | { type: 'session_end'; sessionId: string; reason?: 'idle' | 'gone' }
   | { type: 'agent_start'; sessionId: string; agentId: string; role: AgentRole; label: string; agentType?: string }
   | { type: 'agent_say'; sessionId: string; agentId: string; kind: SpeechKind; text: string; tool?: string; full?: string }
@@ -18,6 +20,8 @@ export interface Speech {
   text: string;
   tool?: string;
   at: number;
+  /** a bubble of the summary talk: it stays up this long (ms), is never dropped and never preempted */
+  hold?: number;
 }
 
 export type PersonRole = 'director' | 'staff';
@@ -134,6 +138,7 @@ export interface RoomRec {
   id: string;
   title: string;
   project: string;
+  provider: Provider;
   cwd: string;
   seed: number;
   themeIndex: number;

@@ -15,7 +15,7 @@ function setup() {
   const sid = '11111111-2222-3333-4444-555555555555';
   const file = path.join(project, `${sid}.jsonl`);
   const events = [];
-  const monitor = createMonitor({ claudeDir: root, windowMs: 60_000, hotPollMs: 30, scanMs: 60 });
+  const monitor = createMonitor({ claudeDir: root, codexDir: null, opencodeDb: null, windowMs: 60_000, hotPollMs: 30, scanMs: 60 });
   monitor.on((e) => events.push(e));
   const write = (obj) => fs.appendFileSync(file, `${JSON.stringify(obj)}\n`);
   const base = { cwd: 'E:\\demo', sessionId: sid, isSidechain: false };
@@ -77,7 +77,7 @@ test('project is the launch dir, not the latest cwd', async () => {
   const sid = '99999999-2222-3333-4444-555555555555';
   const file = path.join(dir, `${sid}.jsonl`);
   const events = [];
-  const monitor = createMonitor({ claudeDir: root, windowMs: 60_000, hotPollMs: 30, scanMs: 60 });
+  const monitor = createMonitor({ claudeDir: root, codexDir: null, opencodeDb: null, windowMs: 60_000, hotPollMs: 30, scanMs: 60 });
   monitor.on((e) => events.push(e));
   const write = (obj) => fs.appendFileSync(file, `${JSON.stringify(obj)}\n`);
   monitor.start();
@@ -155,5 +155,100 @@ test('a session that has been quiet for a while still wakes up when its transcri
   await sleep(400);
   monitor.stop();
   assert.ok(events.some((e) => e.type === 'agent_say' && e.kind === 'task'), 'the new prompt is picked up quickly');
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('Codex rollouts become a room: prompt, commentary, tools and the closing message', async () => {
+  const codexHome = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-office-'));
+  const dir = path.join(codexHome, 'sessions', '2026', '09', '30');
+  fs.mkdirSync(dir, { recursive: true });
+  const tid = '01a08f56-3f63-7090-bef6-652a7ee7d9e5';
+  fs.writeFileSync(path.join(codexHome, 'session_index.jsonl'), `${JSON.stringify({ id: tid, thread_name: 'Redo the diagram' })}\n`);
+  const file = path.join(dir, `rollout-2026-09-30T10-00-00-${tid}.jsonl`);
+  const line = (type, payload) => fs.appendFileSync(file, `${JSON.stringify({ timestamp: new Date().toISOString(), type, payload })}\n`);
+  const events = [];
+  const monitor = createMonitor({ claudeDir: path.join(codexHome, 'none'), codexDir: path.join(codexHome, 'sessions'), opencodeDb: null, windowMs: 60_000, hotPollMs: 30, scanMs: 60 });
+  monitor.on((e) => events.push(e));
+  monitor.start();
+  line('session_meta', { id: tid, cwd: 'C:\\work\\hay' });
+  line('event_msg', { type: 'task_started', turn_id: 't1' });
+  await sleep(300); // the room opens, the rest happens live
+  line('event_msg', { type: 'item_completed', item: { type: 'UserMessage', content: [{ type: 'text', text: '# Files mentioned\n\n## My request:\nRedo the diagram please' }] } });
+  line('event_msg', { type: 'item_completed', item: { type: 'CommandExecution', command: ['pwsh', '-Command', 'ls'], parsed_cmd: [{ type: 'read', cmd: 'cat a.md', name: 'a.md', path: 'C:/work/hay/a.md' }] } });
+  line('event_msg', { type: 'item_completed', item: { type: 'FileChange', changes: { 'C:\\work\\hay\\out.py': { type: 'add', content: 'x' } } } });
+  line('event_msg', { type: 'task_complete', last_agent_message: 'Diagram redone.\n\n- four charts' });
+  await sleep(500);
+  monitor.stop();
+  const session = events.find((e) => e.type === 'session');
+  assert.equal(session.provider, 'codex');
+  assert.equal(session.project, 'hay');
+  const last = events.filter((e) => e.type === 'session').pop();
+  assert.equal(last.title, 'Redo the diagram', 'thread name from session_index.jsonl');
+  const says = events.filter((e) => e.type === 'agent_say');
+  assert.equal(says.find((e) => e.kind === 'task').text, 'Redo the diagram please');
+  assert.deepEqual(says.filter((e) => e.kind === 'tool').map((e) => e.text), ['Reading a.md', 'Writing out.py']);
+  assert.equal(says.find((e) => e.kind === 'text').full, 'Diagram redone.\n\n- four charts');
+  assert.ok(events.some((e) => e.type === 'agent_done' && e.agentId === 'main'), 'task_complete releases the director');
+  fs.rmSync(codexHome, { recursive: true, force: true });
+});
+
+test('OpenCode sessions are read from its database, sub-agents included', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-office-'));
+  const dbFile = path.join(root, 'opencode.db');
+  const db = new DatabaseSync(dbFile);
+  db.exec(`create table session_v2 (id text primary key, parent_id text, directory text, title text, time_created integer, time_updated integer);
+    create table session_message (id text primary key, session_id text, type text, seq integer, time_created integer, time_updated integer, data text);
+    create unique index m_seq on session_message (session_id, seq);
+    create index m_time on session_message (time_created);`);
+  let seq = 0;
+  const put = (sid, type, data) => {
+    const now = Date.now();
+    db.prepare('insert into session_message values (?,?,?,?,?,?,?)').run(`msg_${seq}`, sid, type, seq++, now, now, JSON.stringify(data));
+  };
+  const now = Date.now();
+  db.prepare('insert into session_v2 values (?,?,?,?,?,?)').run('ses_main', null, 'E:/RAMOpt', 'Plan the cleaner', now, now);
+  put('ses_main', 'user', { text: 'Plan a RAM cleaner' });
+  const events = [];
+  const monitor = createMonitor({ claudeDir: path.join(root, 'none'), codexDir: null, opencodeDb: dbFile, windowMs: 60_000, hotPollMs: 30, scanMs: 60 });
+  monitor.on((e) => events.push(e));
+  monitor.start();
+  await sleep(300);
+  const t = Date.now();
+  put('ses_main', 'assistant', {
+    time: { created: t, completed: t },
+    content: [
+      { type: 'reasoning', text: '**Looking around**', time: { created: t, completed: t } },
+      { type: 'tool', id: 'call_read', name: 'read', state: { status: 'completed', input: { path: 'src/main.rs' } } },
+      { type: 'tool', id: 'call_sub', name: 'subagent', state: { status: 'running', input: { agent: 'general', description: 'Inspect architecture' } } },
+    ],
+  });
+  await sleep(300);
+  db.prepare('insert into session_v2 values (?,?,?,?,?,?)').run('ses_kid', 'ses_main', 'E:/RAMOpt', 'Inspect architecture', Date.now(), Date.now());
+  put('ses_kid', 'assistant', { time: { created: t, completed: t }, content: [{ type: 'tool', id: 'k1', name: 'grep', state: { status: 'completed', input: { pattern: 'memory' } } }] });
+  await sleep(300);
+  put('ses_main', 'assistant', {
+    time: { created: t, completed: t },
+    content: [
+      { type: 'tool', id: 'call_sub', name: 'subagent', state: { status: 'completed', input: { agent: 'general', description: 'Inspect architecture' }, content: [{ type: 'text', text: '<subagent sessionID="ses_kid" state="completed">\nFound it.\n</subagent>' }] } },
+      { type: 'text', text: 'Plan ready.', time: { created: t, completed: t } },
+    ],
+  });
+  put('ses_main', 'idle', { outcome: 'succeeded' });
+  await sleep(400);
+  monitor.stop();
+  db.close();
+  const session = events.find((e) => e.type === 'session');
+  assert.equal(session.provider, 'opencode');
+  assert.equal(session.project, 'RAMOpt');
+  const says = events.filter((e) => e.type === 'agent_say');
+  assert.equal(says.find((e) => e.kind === 'task').text, 'Plan a RAM cleaner');
+  assert.ok(says.some((e) => e.agentId === 'main' && e.kind === 'tool' && e.text === 'Reading main.rs'));
+  assert.ok(events.some((e) => e.type === 'agent_start' && e.agentId === 'call_sub'), 'subagent tool call spawns an agent');
+  assert.ok(says.some((e) => e.agentId === 'call_sub' && e.kind === 'tool'), "the child session's work is shown by that agent");
+  assert.equal(events.find((e) => e.type === 'agent_done' && e.agentId === 'call_sub')?.summary, 'Found it.');
+  assert.equal(says.find((e) => e.kind === 'text')?.text, 'Plan ready.');
+  assert.ok(events.some((e) => e.type === 'agent_done' && e.agentId === 'main'), 'idle releases the director');
+  assert.equal(events.filter((e) => e.type === 'session').every((e) => e.sessionId === 'ses_main'), true, 'sub-agent sessions are not rooms');
   fs.rmSync(root, { recursive: true, force: true });
 });

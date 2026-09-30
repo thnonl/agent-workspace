@@ -24,7 +24,7 @@ export const G = {
   torus: (r: number, tube: number, arc = Math.PI * 2, rs = 8, ts = 24) =>
     cached(`t${r}|${tube}|${arc}|${rs}|${ts}`, () => new THREE.TorusGeometry(r, tube, rs, ts, arc)),
   box: (w: number, h: number, d: number) => cached(`b${w}|${h}|${d}`, () => new THREE.BoxGeometry(w, h, d)),
-  rbox: (w: number, h: number, d: number, r = 0.04, seg = 2) =>
+  rbox: (w: number, h: number, d: number, r = 0.04, seg = 4) =>
     cached(`r${w}|${h}|${d}|${r}|${seg}`, () => new RoundedBoxGeometry(w, h, d, seg, Math.min(r, w / 2 - 0.001, h / 2 - 0.001, d / 2 - 0.001))),
   plane: (w: number, h: number) => cached(`l${w}|${h}`, () => new THREE.PlaneGeometry(w, h)),
   ico: (r: number, detail = 0) => cached(`i${r}|${detail}`, () => new THREE.IcosahedronGeometry(r, detail)),

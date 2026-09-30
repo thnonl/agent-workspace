@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, type ReactNode } from 'react';
 import * as THREE from 'three';
 import { frame } from '../sim/frame';
+import { walkMatrices } from './matrixWalk';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 /**
@@ -14,14 +15,19 @@ export function StaticBake({ children }: { children: ReactNode }) {
   useLayoutEffect(() => {
     const root = ref.current;
     if (!root) return;
-    root.updateMatrixWorld(true);
+    // (the parents too: frozen nodes keep the world matrix they have now)
+    root.updateWorldMatrix(true, true);
     const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
     const tmp = new THREE.Matrix4();
     const buckets = new Map<string, { mat: THREE.Material; cast: boolean; recv: boolean; geos: THREE.BufferGeometry[] }>();
     const sources: THREE.Mesh[] = [];
 
-    const visit = (o: THREE.Object3D) => {
-      if (o.userData.dynamic || !o.visible || o.userData.baked) return;
+    /** static subtrees whose matrices are never recomputed again (the merged meshes carry them now) */
+    const frozen: THREE.Object3D[] = [];
+
+    /** Returns true when the node or anything below it is left alone (dynamic, hidden, already baked). */
+    const visit = (o: THREE.Object3D): boolean => {
+      if (o.userData.dynamic || !o.visible || o.userData.baked) return true;
       const m = o as THREE.Mesh;
       if (m.isMesh && !Array.isArray(m.material) && m.geometry) {
         const mat = m.material as THREE.Material;
@@ -39,7 +45,14 @@ export function StaticBake({ children }: { children: ReactNode }) {
           sources.push(m);
         }
       }
-      for (const c of o.children) visit(c);
+      let untouched = false;
+      for (const c of o.children) untouched = visit(c) || untouched;
+      // a subtree that was baked away (and holds nothing that moves) is not walked again
+      if (!untouched) {
+        frozen.push(o);
+        walkMatrices(o, false);
+      }
+      return untouched;
     };
     for (const c of [...root.children]) visit(c);
 
@@ -64,6 +77,7 @@ export function StaticBake({ children }: { children: ReactNode }) {
         m.geometry.dispose();
       });
       sources.forEach((s) => (s.visible = true));
+      frozen.forEach((o) => walkMatrices(o, true));
     };
   }, []);
 

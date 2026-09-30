@@ -1,7 +1,9 @@
 import type { PersonRec, SpeechKind, TaskRec } from '../types';
 import { rot2, type RoomLayout, type Station, type StationKind } from '../world/layout';
 import type { V2 } from '../world/nav';
-import { debugFlags, spotOwners, type CatSim, type Phase, type RoomRuntime, type SimState } from './registry';
+import { sfx, type Sfx } from '../audio';
+import { CHAT_SCRIPTS, eatLine, goodbyeLine, greetingLine, reportLine, serveLine, thoughts } from './phrases';
+import { debugFlags, dismissIdle, enqueueSpeech, greet, sims, spotOwners, type CatSim, type Phase, type RoomRuntime, type SimState } from './registry';
 
 export interface Pose {
   bob: number;
@@ -50,17 +52,19 @@ export interface ActorCtx {
   cats: readonly CatSim[];
   /** colleagues currently typing at their desks (worth watching over their shoulder) */
   workers: readonly SimState[];
+  /** colleagues sitting at their desks with nothing to do (good for a chat) */
+  idlers: readonly SimState[];
   onReport: () => void;
   /** the task is handed over for good: free for the next one */
   onRelease: () => void;
   onDoneSpeech: (text: string, failed: boolean) => void;
-  /** a "what I am doing" bubble (icon names: read, drink, coffee, fish, wash, water, sofa, pet, window, walk, watch, wait, home) */
+  /** a "what I am doing" bubble (icon names: read, drink, coffee, fish, wash, water, cook, eat, chat, sofa, pet, window, walk, watch, wait, home, wave) */
   say: (text: string, icon: string) => void;
   /** name of the character with this sim key */
   nameOf: (simKey: string) => string;
 }
 
-type ActivityKind = 'wander' | 'sofa' | 'watch' | 'window' | 'pet' | 'stay' | StationKind;
+type ActivityKind = 'wander' | 'sofa' | 'watch' | 'window' | 'pet' | 'stay' | 'chat' | StationKind;
 
 const pickOne = <T,>(list: readonly T[]): T => list[Math.floor(Math.random() * list.length)];
 
@@ -70,7 +74,11 @@ const BOOKS = [
   'Structure and Interpretation of Computer Programs', 'The Little Prince', 'The Hitchhiker’s Guide to the Galaxy', 'Where the Wild Things Are',
   'Sherlock Holmes', 'The Cat Who Walked by Herself', 'Alice in Wonderland', 'Kitchen', 'The Alchemist',
 ];
-const WAITING = ['Waiting for the next task', 'Anything new for me?', 'Ready for the next task', 'Tidying up my desk while I wait'];
+/** seconds per line of a chat */
+const CHAT_LINE_S = 3.6;
+
+/** how long the greeting at the door stays up before the task is shown */
+const GREET_MS = 5000;
 
 /**
  * What a character thinks the moment it decides on a break – shown at once, while it is still at its
@@ -78,22 +86,24 @@ const WAITING = ['Waiting for the next task', 'Anything new for me?', 'Ready for
  */
 function thoughtOf(a: Activity, name: string): [string, string] | null {
   switch (a.kind) {
-    case 'wander': return [pickOne(['Time to stretch my legs', 'Let me walk around a bit']), 'walk'];
-    case 'sofa': return [pickOne(['Going to rest on the sofa for a bit', 'Just five minutes on the sofa…']), 'sofa'];
-    case 'watch': return [`Let me see how ${name} is doing`, 'watch'];
-    case 'window': return [pickOne(['Some fresh air by the window', 'I’ll enjoy the view for a moment']), 'window'];
-    case 'pet': return [pickOne(['Aww, a kitty! Time for a cuddle', 'Who’s a good cat? I’m coming!']), 'pet'];
-    case 'drink': return a.station?.prop === 'coffee' ? ['Time for a fresh coffee', 'coffee'] : ['Getting a cold glass of water', 'drink'];
-    case 'read': return [`Time to read “${a.detail ?? pickOne(BOOKS)}”`, 'read'];
-    case 'fish': return [pickOne(['Let’s watch the fish swim', 'I wonder what the fish are up to']), 'fish'];
-    case 'wash': return ['Off to wash my face', 'wash'];
-    case 'water': return ['The plants look thirsty – time to water them', 'water'];
+    case 'wander': return [thoughts.wander(), 'walk'];
+    case 'sofa': return [thoughts.sofa(), 'sofa'];
+    case 'watch': return [thoughts.watch(name), 'watch'];
+    case 'window': return [thoughts.window(), 'window'];
+    case 'pet': return [thoughts.pet(), 'pet'];
+    case 'drink': return a.station?.prop === 'coffee' ? [thoughts.coffee(), 'coffee'] : [thoughts.water(), 'drink'];
+    case 'read': return [thoughts.read(a.detail ?? pickOne(BOOKS)), 'read'];
+    case 'fish': return [thoughts.fish(), 'fish'];
+    case 'wash': return [thoughts.wash(), 'wash'];
+    case 'water': return [thoughts.plants(), 'water'];
+    case 'cook': return [thoughts.cook(), 'cook'];
+    case 'chat': return [thoughts.chat(name), 'chat'];
     default: return null;
   }
 }
 
 /** what a character holds in the right hand */
-export type HeldKind = 'none' | 'cup' | 'book' | 'can';
+export type HeldKind = 'none' | 'cup' | 'book' | 'can' | 'bowl';
 
 /** arm/body key pose of a station activity (missing values fall back to the relaxed pose) */
 interface Key {
@@ -126,6 +136,9 @@ interface Activity {
   detail?: string;
   /** petting a cat that sleeps on the desk – the director stays in the chair */
   atDesk?: boolean;
+  /** chat: the colleague at the desk and what is said */
+  partnerKey?: string;
+  script?: readonly string[];
 }
 
 /** height of the hip above the floor for an appearance scale of 1 (model hip * rig scale) */
@@ -177,7 +190,10 @@ export class Actor {
   private failed = false;
   // --- director breaks
   private restT = 0;
-  private nextIdleAt = 4 + Math.random() * 3;
+  private nextIdleAt = 8 + Math.random() * 5;
+  /** a task came in while they were on a break: the task they work on where they stand, and the break they pick up afterwards */
+  private awayTask = '';
+  private resumeAct: Activity | null = null;
   private act: Activity | null = null;
   private actStage = 0;
   /** away from the desk with the laptop left open (break or report) */
@@ -195,6 +211,15 @@ export class Actor {
   /** running water at a sink tap: room position and strength 0..1 */
   tap: V2 | null = null;
   tapFlow = 0;
+  /** steam over the pan of the stove: room position and strength 0..1 */
+  steamAt: V2 | null = null;
+  steam = 0;
+  /** previous value of `t` (a sound cue fires when `t` passes its time) */
+  private prevT = -1;
+  private chatLine = -1;
+  private bites = 0;
+  private ate = false;
+  private served = false;
   /** key of the task the current work timers belong to */
   private curTask = '';
   /** the last "what I am doing" bubble, so the same words are not said twice in a row */
@@ -207,7 +232,7 @@ export class Actor {
   constructor(key: string, roomId: string, isDirector: boolean, layout: RoomLayout, desk: number, scale: number) {
     this.isDirector = isDirector;
     this.hip = HIP * scale;
-    this.sim = { key, roomId, x: layout.door.outside.x, z: layout.door.outside.z, yaw: 0, phase: 'waiting', sitT: 0, y: 0, onStage: false, desk, busy: false, slot: -1, walking: false };
+    this.sim = { key, roomId, x: layout.door.outside.x, z: layout.door.outside.z, yaw: 0, phase: 'waiting', sitT: 0, y: 0, onStage: false, desk, busy: false, slot: -1, walking: false, chatBy: null, quiet: false };
   }
 
   get phase(): Phase {
@@ -234,6 +259,18 @@ export class Actor {
   private setPhase(p: Phase) {
     this.sim.phase = p;
     this.t = 0;
+    this.prevT = -1;
+    if (p === 'activity') {
+      this.chatLine = -1;
+      this.bites = 0;
+      this.ate = false;
+      this.served = false;
+    }
+  }
+
+  /** Plays a sound once, when the running scene passes `at` seconds. */
+  private cue(name: Sfx, at: number) {
+    if (this.prevT < at && this.t >= at) sfx(name, this.sim.roomId);
   }
 
   private startPath(points: V2[]) {
@@ -359,7 +396,10 @@ export class Actor {
         this.lastSaid = '';
         this.restT = 0;
         this.deskPetT = -1;
-        this.nextIdleAt = debugFlags.activity ? 1.5 : 7 + Math.random() * 6;
+        this.nextIdleAt = debugFlags.activity ? 1.5 : 12 + Math.random() * 8;
+        // at the door: a greeting first, the job they came for follows five seconds later
+        greet(s.key, greetingLine(this.isDirector, new Date().getHours()), 'wave', GREET_MS);
+        sfx('door', s.roomId);
         s.onStage = true;
         s.yaw = Math.atan2(layout.door.dir.x, layout.door.dir.z);
         this.setPhase('entering');
@@ -392,9 +432,8 @@ export class Actor {
             // back from a break: the laptop is still open on the desk
             this.resume = false;
             this.restT = 0;
-            this.nextIdleAt = debugFlags.activity ? 1.5 : 8 + Math.random() * 8;
+            this.nextIdleAt = debugFlags.activity ? 1.5 : 20 + Math.random() * 16;
             this.setPhase('working');
-            if (!this.isDirector && !ctx.task) this.announce(ctx, [pickOne(WAITING), 'wait']);
           } else this.setPhase('unpacking');
         }
         break;
@@ -436,10 +475,11 @@ export class Actor {
         this.faceYaw(this.seatYaw(ctx), dt);
         this.seatedPose(pose, 1);
         const task = ctx.task;
+        s.quiet = person.present && (this.isDirector ? this.isResting(ctx) : !task);
         if (!person.present) {
           // the office is closing: pack the laptop and go home
           this.workPose(pose, ctx);
-          this.announce(ctx, [this.isDirector ? pickOne(['Locking up the office. Good night!', 'That’s all for today. See you!']) : pickOne(['Time to go home. Bye!', 'Done for today. See you!']), 'home']);
+          this.announce(ctx, [goodbyeLine(this.isDirector), 'home']);
           this.setPhase('packing');
         } else if (this.isDirector) {
           this.workPose(pose, ctx);
@@ -468,9 +508,13 @@ export class Actor {
           }
         } else {
           // nothing to do until the next task comes round: sit tight, or take a little break
-          if (this.curTask) this.announce(ctx, [pickOne(WAITING), 'wait']);
           this.curTask = '';
           this.workPose(pose, ctx);
+          if (s.chatBy) {
+            // a colleague is chatting with them: nod along
+            pose.headX = Math.sin(this.clock * 3.1) * 0.07;
+            pose.happy = 0.5;
+          }
           this.idleBehaviour(dt, ctx);
         }
         break;
@@ -531,6 +575,7 @@ export class Actor {
       }
 
       case 'stroll': {
+        if (this.awayWork(dt, ctx, pose)) break;
         this.walkPose(pose, 1);
         s.y = 0;
         if (this.shouldReturn(ctx)) this.goHome(ctx);
@@ -595,7 +640,7 @@ export class Actor {
         } else {
           if (this.folderP === 1) {
             this.folderP = 2;
-            ctx.onDoneSpeech(ctx.task?.summary || (this.failed ? 'Sorry, I could not finish this one.' : 'All done! Here is my report.'), this.failed);
+            ctx.onDoneSpeech(ctx.task?.summary || reportLine(this.failed), this.failed);
           }
           const h = t - 1.0;
           if (h > 0.55 && this.folderP === 2) {
@@ -620,9 +665,20 @@ export class Actor {
           s.slot = -1;
           this.folderP = 0;
           this.reporting = false;
-          // the task is done for good; back to the desk to wait for the next one
+          // the task is done for good
           ctx.onRelease();
           this.curTask = '';
+          if (this.resumeAct && ctx.person.present) {
+            // they were on a break when the task came in: go back to it
+            const back = this.resumeAct;
+            this.resumeAct = null;
+            this.act = back;
+            this.startPath(layout.nav.findPath({ x: s.x, z: s.z }, back.target) ?? [back.target]);
+            this.setPhase('stroll');
+            break;
+          }
+          this.resumeAct = null;
+          // back to the desk to wait for the next one
           const app = this.approachOf(ctx);
           this.startPath(layout.nav.findPath({ x: s.x, z: s.z }, app) ?? [app]);
           this.setPhase('returning');
@@ -635,6 +691,7 @@ export class Actor {
         if (this.waveT <= 0 && this.walk(dt, ctx)) {
           s.onStage = false;
           s.walking = false;
+          sfx('door', s.roomId);
           this.setPhase('waiting');
         }
         this.walkPose(pose, 1);
@@ -650,7 +707,13 @@ export class Actor {
   // ------------------------------------------------------------ breaks
   /** The director has nothing to say (the staff carry out the work) and staff have no task: sit tight, walk around, sit on the sofa, watch a colleague, look out of the window, pet a cat. */
   private idleBehaviour(dt: number, ctx: ActorCtx) {
+    if (this.sim.chatBy) {
+      // somebody came over for a chat: no break of their own now
+      this.restT = 0;
+      return;
+    }
     if (!this.isResting(ctx)) {
+      if (this.deskPetT >= 0) dismissIdle(this.sim.key);
       this.restT = 0;
       this.deskPetT = -1;
       return;
@@ -660,9 +723,10 @@ export class Actor {
       const cat = this.act?.catKey ? ctx.cats.find((c) => c.key === this.act!.catKey) : undefined;
       if (cat) cat.petUntil = ctx.now + 0.6;
       if (this.deskPetT > (this.act?.dur ?? 6) || !cat || !cat.onStage) {
+        dismissIdle(this.sim.key);
         this.deskPetT = -1;
         this.restT = 0;
-        this.nextIdleAt = 9 + Math.random() * 8;
+        this.nextIdleAt = 20 + Math.random() * 14;
         this.act = null;
       }
       return;
@@ -677,7 +741,7 @@ export class Actor {
     if (a.kind === 'stay') {
       // stay in the chair a while longer
       this.restT = 0;
-      this.nextIdleAt = 9 + Math.random() * 10;
+      this.nextIdleAt = 18 + Math.random() * 16;
       return;
     }
     this.act = a;
@@ -696,11 +760,71 @@ export class Actor {
     return this.isDirector ? ctx.lastSayAge > 8 : !ctx.task;
   }
 
-  /** Something needs attention (a task, a report to receive, closing time): cut the break short. */
+  /** Something needs attention (a report to receive, closing time): cut the break short. Staff with a new task do not walk back: they work where they are (see awayWork). */
   private shouldReturn(ctx: ActorCtx): boolean {
     if (!ctx.person.present) return true;
     if (this.isDirector) return ctx.rt.visitors.some((v) => v !== null);
-    return !!ctx.task;
+    return false;
+  }
+
+  /**
+   * A task arrives while somebody is away from the desk: they do it right there (the break is paused) and go on with
+   * the break afterwards. A finished sub-agent task still needs a report to the director – after that they come back
+   * to what they were doing. Returns true while they are busy with the task.
+   */
+  private awayWork(dt: number, ctx: ActorCtx, pose: Pose): boolean {
+    const task = ctx.task;
+    if (this.isDirector || !task || !ctx.person.present) {
+      this.awayTask = '';
+      return false;
+    }
+    const s = this.sim;
+    if (task.key !== this.awayTask) {
+      this.awayTask = task.key;
+      this.workTime = 0;
+      this.drain = 0;
+    }
+    this.t -= dt; // the paused break does not run on
+    s.walking = false;
+    this.workTime += dt;
+    this.held = 'none';
+    this.pour = 0;
+    this.tapFlow = 0;
+    this.steam = 0;
+    this.heldTilt = 0;
+    this.bookOpen = 0;
+    this.awayPose(pose);
+    if (task.done && this.workTime >= (task.source === 'sub' ? MIN_WORK : MIN_CALL)) {
+      if (ctx.queueLen > 0 && this.drain < 4) this.drain += dt; // let the last bubbles finish first
+      else if (task.source === 'sub') {
+        // off to the director with the report, then back to the break
+        this.failed = task.failed;
+        this.reporting = true;
+        this.resumeAct = this.act;
+        this.awayTask = '';
+        s.y = 0;
+        s.sitT = 0;
+        this.setPhase('toBoss');
+      } else {
+        ctx.onRelease();
+        this.awayTask = '';
+      }
+    }
+    return true;
+  }
+
+  /** working on a task standing up (or sitting on the sofa): head down over a tablet-sized nothing */
+  private awayPose(p: Pose) {
+    const c = this.clock;
+    this.idlePose(p);
+    if (this.sim.sitT > 0.5) this.seatedPose(p, this.sim.sitT);
+    p.lean = 0.1;
+    p.headX = 0.32 + Math.sin(c * 1.3) * 0.04;
+    p.headY = Math.sin(c * 0.5) * 0.1;
+    p.armRx = -1.0 + Math.sin(c * 17) * 0.05;
+    p.armLx = -1.0 + Math.sin(c * 15 + 1) * 0.05;
+    p.armRz = p.armLz = -0.2;
+    p.foreRx = p.foreLx = -1.3;
   }
 
   private announce(ctx: ActorCtx, line: [string, string] | null) {
@@ -724,6 +848,15 @@ export class Actor {
   }
 
   private goHome(ctx: ActorCtx) {
+    dismissIdle(this.sim.key); // the break is over: the thought about it goes away
+    this.resumeAct = null;
+    if (this.act?.partnerKey) {
+      const friend = sims.get(this.act.partnerKey);
+      if (friend?.chatBy === this.sim.key) friend.chatBy = null;
+      dismissIdle(this.act.partnerKey);
+    }
+    this.steam = 0;
+    this.steamAt = null;
     this.releaseSpot();
     const s = this.sim;
     s.y = 0;
@@ -755,12 +888,14 @@ export class Actor {
     const petCats = cats.filter((c) => c.onStage && c.still && c.petUntil < ctx.now && (this.isDirector || layout.spots[c.spot]?.kind !== 'desk'));
     const watchable = workers.filter((w) => w.desk >= 0 && w.busy && w.key !== s.key);
     const staff = !this.isDirector;
+    const chatters = ctx.idlers.filter((w) => w.key !== s.key && !w.chatBy && w.onStage && w.phase === 'working' && !w.busy && w.desk >= 0);
     const stationsOf = (k: StationKind) => layout.stations.map((st, i) => ({ st, i })).filter(({ st, i }) => st.kind === k && !spotOwners.has(`${s.roomId}@${i}`));
     const options: [ActivityKind, number][] = [
       ['wander', staff ? 1.5 : 3], ['sofa', seats.length ? (staff ? 4 : 3) : 0], ['watch', watchable.length ? (staff ? 1.5 : 4) : 0],
       ['window', layout.catWindows.length ? (staff ? 1.5 : 2.5) : 0], ['pet', petCats.length ? (staff ? 4.5 : 5) : 0], ['stay', staff ? 5 : 0],
       ['drink', stationsOf('drink').length ? 4 : 0], ['read', stationsOf('read').length ? 3.5 : 0], ['fish', stationsOf('fish').length ? 3.5 : 0],
       ['wash', stationsOf('wash').length ? 2.5 : 0], ['water', stationsOf('water').length ? 3.5 : 0],
+      ['cook', stationsOf('cook').length ? 3.5 : 0], ['chat', chatters.length ? (staff ? 4 : 2.5) : 0],
     ];
     let roll = Math.random() * options.reduce((a, [, w]) => a + w, 0);
     let kind: ActivityKind = 'wander';
@@ -784,17 +919,18 @@ export class Actor {
       case 'read':
       case 'fish':
       case 'wash':
-      case 'water': {
+      case 'water':
+      case 'cook': {
         const { st, i } = pick(stationsOf(kind));
         const stationKey = `${s.roomId}@${i}`;
         spotOwners.set(stationKey, s.key);
-        const dur = kind === 'drink' ? 9.2 : kind === 'read' ? 14 + Math.random() * 6 : kind === 'fish' ? 11 + Math.random() * 6 : kind === 'wash' ? 9 : 11 + Math.random() * 3;
+        const dur = kind === 'drink' ? 15 : kind === 'read' ? 26 + Math.random() * 10 : kind === 'fish' ? 22 + Math.random() * 10 : kind === 'wash' ? 14 : kind === 'cook' ? 34 + Math.random() * 6 : 20 + Math.random() * 6;
         return { kind, target: st.stand, yaw: st.yaw, dur, station: st, stationKey, detail: kind === 'read' ? pickOne(BOOKS) : undefined };
       }
       case 'sofa': {
         const { sp, i } = pick(seats);
         spotOwners.set(`${s.roomId}#${i}`, s.key);
-        return { kind, target: sp.approach, yaw: sp.yaw, dur: 12 + Math.random() * 14, spot: i };
+        return { kind, target: sp.approach, yaw: sp.yaw, dur: 24 + Math.random() * 24, spot: i };
       }
       case 'watch': {
         const w = pick(watchable);
@@ -803,18 +939,32 @@ export class Actor {
         const lat = rot2(1, 0, d.rot);
         for (const off of [0.45, -0.45, 0]) {
           const target = { x: d.seat.x - f.x * 0.95 + lat.x * off, z: d.seat.z - f.z * 0.95 + lat.z * off };
-          if (free(target)) return { kind, target, yaw: d.rot, dur: 7 + Math.random() * 7, watchKey: w.key, detail: ctx.nameOf(w.key) };
+          if (free(target)) return { kind, target, yaw: d.rot, dur: 13 + Math.random() * 11, watchKey: w.key, detail: ctx.nameOf(w.key) };
+        }
+        return null;
+      }
+      case 'chat': {
+        const w = pick(chatters);
+        const d = layout.desks[w.desk];
+        const f = rot2(0, 1, d.rot);
+        const lat = rot2(1, 0, d.rot);
+        for (const off of [0.95, -0.95]) {
+          const target = { x: d.seat.x + lat.x * off - f.x * 0.25, z: d.seat.z + lat.z * off - f.z * 0.25 };
+          if (!free(target)) continue;
+          const script = pick(CHAT_SCRIPTS);
+          w.chatBy = s.key; // the colleague stays put until the chat is over
+          return { kind, target, yaw: Math.atan2(d.seat.x - target.x, d.seat.z - target.z), dur: script.length * CHAT_LINE_S + 2.5, partnerKey: w.key, script, detail: ctx.nameOf(w.key) };
         }
         return null;
       }
       case 'window': {
         const cw = pick(layout.catWindows);
-        return { kind, target: cw.land, yaw: cw.yaw + Math.PI, dur: 8 + Math.random() * 8 };
+        return { kind, target: cw.land, yaw: cw.yaw + Math.PI, dur: 15 + Math.random() * 13 };
       }
       case 'pet': {
         const c = pick(petCats);
         const spot = c.spot >= 0 ? layout.spots[c.spot] : null;
-        if (spot?.kind === 'desk') return { kind, target: from, yaw: 0, dur: 6 + Math.random() * 3, catKey: c.key, atDesk: true };
+        if (spot?.kind === 'desk') return { kind, target: from, yaw: 0, dur: 11 + Math.random() * 5, catKey: c.key, atDesk: true };
         let target: V2 | null = null;
         if (spot && (spot.kind === 'sofa' || spot.kind === 'armchair' || spot.kind === 'beanbag')) target = spot.approach;
         else {
@@ -829,7 +979,7 @@ export class Actor {
           }
         }
         if (!target) return null;
-        return { kind, target, yaw: Math.atan2(c.x - target.x, c.z - target.z), dur: 6 + Math.random() * 4, catKey: c.key };
+        return { kind, target, yaw: Math.atan2(c.x - target.x, c.z - target.z), dur: 11 + Math.random() * 6, catKey: c.key };
       }
       default: {
         const pts: V2[] = [];
@@ -850,6 +1000,8 @@ export class Actor {
       this.goHome(ctx);
       return;
     }
+    // (getting up from / sitting down on the sofa is finished first)
+    if ((a.kind !== 'sofa' || this.actStage === 1) && this.awayWork(dt, ctx, pose)) return;
     const t = this.t;
     const back = this.shouldReturn(ctx);
     switch (a.kind) {
@@ -919,6 +1071,7 @@ export class Actor {
           this.faceYaw(Math.atan2(cat.x - s.x, cat.z - s.z), dt, 8);
         }
         this.petPose(pose);
+        this.cue('meow', 1.4);
         if (back || t > a.dur || !cat || !cat.onStage || !cat.still) this.goHome(ctx);
         break;
       }
@@ -926,13 +1079,51 @@ export class Actor {
       case 'read':
       case 'fish':
       case 'wash':
-      case 'water': {
+      case 'water':
+      case 'cook': {
         this.faceYaw(a.yaw, dt, 7);
         this.idlePose(pose);
-        this.stationPose(a, pose);
+        this.stationPose(a, pose, ctx);
         if (back || t > a.dur) this.goHome(ctx);
         break;
       }
+      case 'chat': {
+        const friend = a.partnerKey ? sims.get(a.partnerKey) : undefined;
+        const ok = !!friend && friend.onStage && friend.phase === 'working' && !friend.busy;
+        if (friend) this.faceYaw(Math.atan2(friend.x - s.x, friend.z - s.z), dt, 7);
+        // one line at a time: mine first, then theirs
+        const line = Math.floor((t - 0.9) / CHAT_LINE_S);
+        const script = a.script ?? [];
+        if (line !== this.chatLine && line >= 0 && line < script.length && ok && a.partnerKey) {
+          this.chatLine = line;
+          enqueueSpeech(line % 2 === 0 ? s.key : a.partnerKey, { kind: 'idle', text: script[line], tool: 'talk' }, true);
+          sfx('talk', s.roomId);
+        }
+        this.chatPose(pose, line >= 0 && line < script.length && line % 2 === 0);
+        if (back || !ok || t > a.dur) this.goHome(ctx);
+        break;
+      }
+    }
+    this.prevT = t;
+  }
+
+  /** talking with a colleague: gestures while speaking, a little nod while listening */
+  private chatPose(p: Pose, speaking: boolean) {
+    const c = this.clock;
+    this.idlePose(p);
+    if (speaking) {
+      p.armRx = -0.55 + Math.sin(c * 4.2) * 0.22;
+      p.armRz = -0.25;
+      p.foreRx = -1.0 + Math.sin(c * 4.2 + 1) * 0.3;
+      p.armLx = -0.25 + Math.sin(c * 3.1) * 0.12;
+      p.headX = Math.sin(c * 5) * 0.06;
+      p.headY = Math.sin(c * 1.3) * 0.15;
+      p.happy = 0.5;
+      p.lean = 0.04;
+    } else {
+      p.headX = 0.05 + Math.sin(c * 3.1) * 0.07;
+      p.armLx = p.armRx = 0.05;
+      p.happy = 0.3;
     }
   }
 
@@ -956,7 +1147,7 @@ export class Actor {
   }
 
   /** the little scenes: getting a drink, reading, watching the fish, washing up, watering a plant */
-  private stationPose(a: Activity, pose: Pose) {
+  private stationPose(a: Activity, pose: Pose, ctx: ActorCtx) {
     const t = this.t;
     const d = a.dur;
     const c = this.clock;
@@ -965,6 +1156,8 @@ export class Actor {
     this.tapFlow = 0;
     this.heldTilt = 0;
     this.bookOpen = 0;
+    this.steam = 0;
+    this.steamAt = null;
     switch (a.kind) {
       case 'drink': {
         this.keyed(pose, [
@@ -972,15 +1165,16 @@ export class Actor {
           { t: 1.5, rx: -1.25, rz: -0.05, fr: -0.45, lean: 0.05 },
           { t: 3.4, rx: -1.25, rz: -0.05, fr: -0.45, lean: 0.08, hx: 0.12 },
           { t: 4.4, rx: -0.85, rz: -0.55, fr: -2.05, hx: -0.08 },
-          { t: 7.3, rx: -0.85, rz: -0.55, fr: -2.05, hx: -0.08 },
-          { t: 8.3, rx: -0.1, rz: 0.1, fr: -0.15 },
-          { t: 9.2 },
+          { t: d - 1.9, rx: -0.85, rz: -0.55, fr: -2.05, hx: -0.08 },
+          { t: d - 0.9, rx: -0.1, rz: 0.1, fr: -0.15 },
+          { t: d },
         ], t);
-        if (t > 1.0 && t < 8.2) this.held = 'cup';
-        const sip = t > 4.4 && t < 7.3 ? Math.max(0, Math.sin(c * 2.3)) : 0;
+        if (t > 1.0 && t < d - 1.0) this.held = 'cup';
+        const sip = t > 4.4 && t < d - 1.9 ? Math.max(0, Math.sin(c * 2.3)) : 0;
         pose.headX -= 0.14 * sip;
         this.heldTilt = -0.55 * sip;
-        if (t > 8.2) pose.happy = 1;
+        if (t > d - 1.0) pose.happy = 1;
+        for (let at = 4.8; at < d - 2.4; at += 2.9) this.cue('sip', at);
         break;
       }
       case 'read': {
@@ -995,6 +1189,7 @@ export class Actor {
         if (t > 2.0 && t < d - 0.7) this.held = 'book';
         this.heldTilt = -0.95 * seg(t, 2.2, 3.6) * (1 - seg(t, d - 2.6, d - 1.6));
         this.bookOpen = seg(t, 3.2, 3.8) * (1 - seg(t, d - 2.4, d - 1.8));
+        for (let at = 4.6; at < d - 3; at += 5.5) this.cue('page', at);
         if (t > 3.6 && t < d - 2.6) {
           pose.headY = Math.sin(c * 0.5) * 0.12;
           // now and then a page is turned
@@ -1014,28 +1209,31 @@ export class Actor {
         pose.foreRx = lerp(pose.foreRx, -0.25, point);
         pose.headY = Math.sin(c * 0.8) * 0.4;
         pose.happy = 0.6;
+        for (let at = 2; at < d - 1; at += 3.1) this.cue('blip', at);
         break;
       }
       case 'wash': {
         const rub = Math.sin(c * 13) * 0.12;
         this.keyed(pose, [
           { t: 0 }, { t: 0.8, rx: -0.9, rz: -0.25, fr: -0.7, lx: -0.9, lz: -0.25, fl: -0.7, lean: 0.3, hx: 0.25 },
-          { t: 4.4, rx: -0.9, rz: -0.25, fr: -0.7, lx: -0.9, lz: -0.25, fl: -0.7, lean: 0.3, hx: 0.25 },
-          { t: 5.2, rx: -1.05, rz: -0.3, fr: -2.2, lx: -1.05, lz: -0.3, fl: -2.2, lean: 0.25, hx: 0.2 },
-          { t: 6.6, rx: -1.05, rz: -0.3, fr: -2.2, lx: -1.05, lz: -0.3, fl: -2.2, lean: 0.25, hx: 0.2 },
-          { t: 7.5, rx: -0.85, rz: -0.55, fr: -2.05, lean: 0.05, hx: -0.05 },
-          { t: 8.6 }, { t: 9 },
+          { t: d - 4.6, rx: -0.9, rz: -0.25, fr: -0.7, lx: -0.9, lz: -0.25, fl: -0.7, lean: 0.3, hx: 0.25 },
+          { t: d - 3.8, rx: -1.05, rz: -0.3, fr: -2.2, lx: -1.05, lz: -0.3, fl: -2.2, lean: 0.25, hx: 0.2 },
+          { t: d - 2.4, rx: -1.05, rz: -0.3, fr: -2.2, lx: -1.05, lz: -0.3, fl: -2.2, lean: 0.25, hx: 0.2 },
+          { t: d - 1.5, rx: -0.85, rz: -0.55, fr: -2.05, lean: 0.05, hx: -0.05 },
+          { t: d - 0.4 }, { t: d },
         ], t);
-        if (t > 0.8 && t < 4.4) {
+        this.cue('water', 0.8);
+        this.cue('water', d - 3.8);
+        if (t > 0.8 && t < d - 4.6) {
           pose.foreRx += rub;
           pose.foreLx -= rub;
-        } else if (t > 5.2 && t < 6.6) {
+        } else if (t > d - 3.8 && t < d - 2.4) {
           pose.foreRx += rub * 0.8;
           pose.foreLx -= rub * 0.8;
         }
         this.tap = a.station?.tap ?? null;
-        this.tapFlow = seg(t, 0.8, 1.1) * (1 - seg(t, 5.4, 5.7));
-        if (t > 7.4) pose.happy = 1;
+        this.tapFlow = seg(t, 0.8, 1.1) * (1 - seg(t, d - 3.6, d - 3.3));
+        if (t > d - 1.6) pose.happy = 1;
         break;
       }
       case 'water': {
@@ -1048,9 +1246,61 @@ export class Actor {
           { t: d - 0.2, lean: 0.2 }, { t: d },
         ], t);
         if (t > 0.45 && t < d - 0.5) this.held = 'can';
+        this.cue('pour', 2.2);
         this.pour = seg(t, 2.0, 2.8) * (1 - seg(t, d - 3.0, d - 2.2));
         this.heldTilt = 0.9 * this.pour;
         pose.happy = 0.5;
+        break;
+      }
+      case 'cook': {
+        // stir the pan, serve the noodles into a bowl and eat them right there
+        const cookEnd = d * 0.4;
+        const eatAt = cookEnd + 2.6;
+        const chest = { rx: -1.15, rz: -0.1, fr: -0.7 };
+        this.keyed(pose, [
+          { t: 0 }, { t: 1.2, rx: -1.1, rz: -0.15, fr: -0.5, lz: 0.3, lean: 0.1, hx: 0.25 },
+          { t: cookEnd, rx: -1.1, rz: -0.15, fr: -0.5, lz: 0.3, lean: 0.1, hx: 0.25 },
+          { t: cookEnd + 1.3, rx: -0.5, rz: 0.1, fr: -0.4, lean: 0.06, hx: 0.15 },
+          { t: eatAt, ...chest, lean: 0.03 },
+          { t: d - 1.6, ...chest, lean: 0.03 },
+          { t: d - 0.6 }, { t: d },
+        ], t);
+        this.steamAt = a.station?.pan ?? null;
+        this.steam = seg(t, 1.0, 2.2) * (1 - seg(t, cookEnd + 0.8, cookEnd + 2.2));
+        if (t > 1.2 && t < cookEnd) {
+          // stirring: the forearm circles over the pan
+          pose.foreRx = -0.5 + Math.sin(c * 5.5) * 0.3;
+          pose.armRz = -0.15 + Math.cos(c * 5.5) * 0.12;
+          pose.headY = Math.sin(c * 0.6) * 0.1;
+        }
+        this.cue('sizzle', 1.2);
+        this.cue('sizzle', cookEnd * 0.55);
+        this.cue('clink', cookEnd + 1.3);
+        if (t > cookEnd + 1.0 && t < d - 0.6) this.held = 'bowl';
+        if (t > cookEnd + 0.3 && !this.served) {
+          this.served = true;
+          this.announce(ctx, [serveLine(), 'eat']);
+        }
+        if (t > eatAt && t < d - 1.6) {
+          if (!this.ate) {
+            this.ate = true;
+            this.announce(ctx, [eatLine(), 'eat']);
+          }
+          // a bite every few seconds: the bowl comes up to the mouth, a little chewing, then it goes back down
+          const u = ((t - eatAt) / 3.2) % 1;
+          const raise = seg(u, 0, 0.22) * (1 - seg(u, 0.5, 0.72));
+          const bite = Math.floor((t - eatAt) / 3.2);
+          if (u > 0.25 && bite >= this.bites) {
+            this.bites = bite + 1;
+            sfx('bite', this.sim.roomId);
+          }
+          pose.armRx = lerp(chest.rx, -0.85, raise);
+          pose.armRz = lerp(chest.rz, -0.55, raise);
+          pose.foreRx = lerp(chest.fr, -2.05, raise);
+          pose.headX = -0.1 * raise + (u > 0.3 && u < 0.72 ? Math.sin(c * 14) * 0.05 : 0);
+          pose.happy = 0.4 + 0.6 * raise;
+          this.heldTilt = -0.5 * raise;
+        }
         break;
       }
       default:

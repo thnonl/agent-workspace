@@ -1,11 +1,12 @@
 import { lazy, Suspense, useEffect, useMemo } from 'react';
 import { BubbleLayer } from './ui/BubbleLayer';
 import { AgentPanel, EmptyState, Help, NamesDialog, RoomHeader, ReleaseConfirm, RoomSwitcher, SummaryPaper, TopBar } from './ui/Overlay';
-import { localHour, useStore } from './store';
+import { localHour, orderedRooms, useStore } from './store';
 import { celestial, envForHour, skyColors } from './env';
 import { connectLive } from './live/connection';
 import { startDemo } from './demo/simulator';
 import { themeFor } from './world/palettes';
+import { sfx, setAudioRoom } from './audio';
 
 function useLiveConnection() {
   useEffect(() => connectLive(), []);
@@ -68,6 +69,19 @@ function useClock() {
   }, []);
 }
 
+/** Sound effects: only the room on screen is heard; a sheet of paper rustles when it is laid down. */
+function useSounds() {
+  useEffect(() => {
+    setAudioRoom(useStore.getState().activeRoomId);
+    let paper = useStore.getState().summaryOpen;
+    return useStore.subscribe((s) => {
+      setAudioRoom(s.activeRoomId);
+      if (s.summaryOpen && s.summaryOpen !== paper) sfx('paper');
+      paper = s.summaryOpen;
+    });
+  }, []);
+}
+
 /** Office housekeeping: hands out waiting tasks, closes finished bursts, sends everybody home when the work is over. */
 function useOfficeClock() {
   useEffect(() => {
@@ -90,7 +104,7 @@ function useHotkeys() {
       if (e.key === 'ArrowRight' || e.key === ']') s.stepRoom(1);
       else if (e.key === 'ArrowLeft' || e.key === '[') s.stepRoom(-1);
       else if (e.key >= '1' && e.key <= '9') {
-        const id = s.visibleOrder[Number(e.key) - 1];
+        const id = orderedRooms(s)[Number(e.key) - 1];
         if (id) s.setActiveRoom(id);
       } else if (e.key === 'Escape') {
         s.select(null);
@@ -100,6 +114,7 @@ function useHotkeys() {
       } else if (e.key === 'r' || e.key === 'R') s.resetView();
       else if (e.key === 'd' || e.key === 'D') s.setDemo(!s.demoOn);
       else if (e.key === 'n' || e.key === 'N') s.setTimeMode(TIME_ORDER[(TIME_ORDER.indexOf(s.timeMode) + 1) % TIME_ORDER.length]);
+      else if (e.key === 'm' || e.key === 'M') s.setMuted(!s.muted);
       else if (e.key === '?') s.setHelp(!s.showHelp);
     };
     window.addEventListener('keydown', onKey);
@@ -113,6 +128,7 @@ export default function App() {
   useHotkeys();
   useClock();
   useOfficeClock();
+  useSounds();
   const themeIndex = useStore((s) => (s.activeRoomId ? s.rooms[s.activeRoomId]?.themeIndex : 0) ?? 0);
   const hour = useStore((s) => s.hour);
   const e = useMemo(() => envForHour(hour), [hour]);

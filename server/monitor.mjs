@@ -6,128 +6,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { EventEmitter } from 'node:events';
+import { createCodexParser, createTitleIndex, defaultCodexHome, listCodexFiles } from './codex.mjs';
+import { createOpenCodeSource, defaultOpenCodeDb } from './opencode.mjs';
+import { MIN, MUSINGS, pick, clip, base, toolSummary, cleanPrompt, resultText, readNewLines, parseJson } from './util.mjs';
 
 const SPAWN_TOOLS = new Set(['Agent', 'Task']);
-const MIN = 60_000;
-
-// Claude often stores thinking blocks without readable text; show something cute instead.
-const MUSINGS = ['Hmm, let me think…', 'Let me figure this out…', 'Thinking hard…', 'Working out the next step…', 'One moment, pondering…', 'Let me look at this carefully…'];
-let musing = 0;
-const pick = (list) => list[musing++ % list.length];
-
-const clip = (s, n = 240) => {
-  const t = String(s ?? '').replace(/\s+/g, ' ').trim();
-  return t.length > n ? t.slice(0, n - 1).trimEnd() + '…' : t;
-};
-
-const base = (p) => (p ? String(p).split(/[\\/]/).filter(Boolean).pop() : '');
-
-function toolSummary(name, input = {}) {
-  const i = input || {};
-  switch (name) {
-    case 'Read':
-      return `Reading ${base(i.file_path) || 'a file'}`;
-    case 'Edit':
-    case 'MultiEdit':
-    case 'NotebookEdit':
-      return `Editing ${base(i.file_path || i.notebook_path) || 'a file'}`;
-    case 'Write':
-      return `Writing ${base(i.file_path) || 'a file'}`;
-    case 'Bash':
-    case 'PowerShell':
-      return i.description ? clip(i.description, 90) : `$ ${clip(i.command, 90)}`;
-    case 'Grep':
-      return `Searching “${clip(i.pattern, 50)}”`;
-    case 'Glob':
-      return `Finding ${clip(i.pattern, 60)}`;
-    case 'WebFetch':
-      return `Fetching ${clip(i.url, 70)}`;
-    case 'WebSearch':
-      return `Searching the web: ${clip(i.query, 70)}`;
-    case 'TodoWrite':
-    case 'TaskCreate':
-    case 'TaskUpdate':
-      return 'Updating the todo list';
-    case 'Agent':
-    case 'Task':
-      return `Delegating: ${clip(i.description || i.subagent_type || 'a task', 80)}`;
-    default:
-      if (name?.startsWith('mcp__')) {
-        const [, server, ...rest] = name.split('__');
-        return `Using ${server}: ${rest.join('_')}`;
-      }
-      return `Using ${name}`;
-  }
-}
-
-function cleanPrompt(raw) {
-  let t = String(raw ?? '');
-  t = t.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, ' ');
-  t = t.replace(/<(ide_[a-z_]+|local-command-[a-z]+|command-[a-z]+)>[\s\S]*?<\/\1>/g, ' ');
-  t = t.replace(/<[^>]+>/g, ' ');
-  t = t.replace(/\s+/g, ' ').trim();
-  if (!t || t.startsWith('Caveat:') || t.startsWith('[Request interrupted')) return '';
-  return t;
-}
-
-function resultText(content) {
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) return content.map((b) => (b?.type === 'text' ? b.text : '')).join(' ');
-  return '';
-}
-
-/** Read every full line appended to `file` after `state.offset`. Keeps partial tail in `state.rest`. */
-function readNewLines(file, state, maxBytes = Infinity) {
-  let st;
-  try {
-    st = fs.statSync(file);
-  } catch {
-    return [];
-  }
-  if (st.size < state.offset) {
-    state.offset = 0;
-    state.rest = Buffer.alloc(0);
-  }
-  if (st.size === state.offset) return [];
-  let start = state.offset;
-  let skipFirst = false;
-  if (state.offset === 0 && st.size > maxBytes) {
-    start = st.size - maxBytes; // very large log: only look at its tail
-    skipFirst = true;
-  }
-  const len = st.size - start;
-  const buf = Buffer.allocUnsafe(len);
-  let fd;
-  try {
-    fd = fs.openSync(file, 'r');
-    fs.readSync(fd, buf, 0, len, start);
-  } catch {
-    return [];
-  } finally {
-    if (fd !== undefined) fs.closeSync(fd);
-  }
-  state.offset = st.size;
-  let data = state.rest.length ? Buffer.concat([state.rest, buf]) : buf;
-  const lines = [];
-  let from = 0;
-  for (;;) {
-    const nl = data.indexOf(10, from);
-    if (nl === -1) break;
-    if (nl > from) lines.push(data.toString('utf8', from, nl));
-    from = nl + 1;
-  }
-  state.rest = Buffer.from(data.subarray(from));
-  if (skipFirst) lines.shift();
-  return lines;
-}
-
-function parseJson(line) {
-  try {
-    return JSON.parse(line);
-  } catch {
-    return null;
-  }
-}
 
 const encodeDir = (p) => String(p).replace(/[^a-zA-Z0-9]/g, '-');
 
@@ -150,8 +33,9 @@ export function projectRoot(cwd, dirName) {
 }
 
 class Session {
-  constructor(id, file, dirName) {
+  constructor(id, file, dirName, provider = 'claude') {
     this.id = id;
+    this.provider = provider;
     this.file = file;
     this.dirName = dirName;
     this.state = { offset: 0, rest: Buffer.alloc(0) };
@@ -171,6 +55,9 @@ class Session {
     this.lastActivity = 0;
     this.announcedTitle = '';
     this.silent = true;
+    this.lastAgentText = '';
+    /** OpenCode only: cursor and sub-agent conversations */
+    this.oc = null;
   }
 
   get title() {
@@ -197,6 +84,9 @@ export function createMonitor({
   windowMs = (Number(process.env.SESSION_WINDOW_MIN) || 30) * MIN,
   hotPollMs = 500,
   scanMs = 3000,
+  // null switches a source off (tests do that to stay away from the real ones)
+  codexDir = path.join(defaultCodexHome(), 'sessions'),
+  opencodeDb = defaultOpenCodeDb(),
 } = {}) {
   const emitter = new EventEmitter();
   emitter.setMaxListeners(100);
@@ -216,6 +106,7 @@ export function createMonitor({
     title: s.title,
     cwd: s.root,
     project: s.project,
+    provider: s.provider,
     updatedAt: s.lastActivity,
     ...(s.lastPrompt ? { lastPrompt: s.lastPrompt } : {}),
     ...(s.lastFinal ? { lastFinal: s.lastFinal } : {}),
@@ -397,13 +288,16 @@ export function createMonitor({
     }
   };
 
+  const codexLine = createCodexParser({ say, mainStart, mainEnd });
+  const codexTitle = codexDir ? createTitleIndex(path.dirname(codexDir)) : () => '';
+
   // ------------------------------------------------------------------ files
   const pollMain = (s, mtimeMs, now) => {
     const lines = readNewLines(s.file, s.state, 24 * 1024 * 1024);
     if (lines.length) s.lastLineAt = s.silent ? mtimeMs : now;
     for (const l of lines) {
       const o = parseJson(l);
-      if (o) handleMainLine(s, o);
+      if (o) (s.provider === 'codex' ? codexLine : handleMainLine)(s, o);
     }
     return lines.length > 0;
   };
@@ -482,20 +376,26 @@ export function createMonitor({
     }
   };
 
-  const openSession = (id, file, dirName, mtimeMs, now) => {
-    const s = new Session(id, file, dirName);
+  /** Catches a session up silently with load(), then announces it exactly like a late-joining browser would see it. */
+  const register = (s, mtimeMs, now, load) => {
     s.lastActivity = mtimeMs;
     s.lastLineAt = mtimeMs;
-    sessions.set(id, s);
-    pollMain(s, mtimeMs, now);
-    pollSubFiles(s, now);
+    sessions.set(s.id, s);
+    load(s);
     s.lastLineAt = Math.max(s.lastLineAt, mtimeMs);
     settle(s, now);
     s.silent = false;
     s.announcedTitle = `${s.title}\u0000${s.root}`;
-    // announce the caught-up state exactly like a late-joining browser would see it
     for (const ev of snapshotSession(s)) emitter.emit('event', ev);
     return s;
+  };
+
+  const openSession = (id, file, dirName, mtimeMs, now, provider = 'claude') => {
+    const s = new Session(id, file, dirName, provider);
+    return register(s, mtimeMs, now, () => {
+      pollMain(s, mtimeMs, now);
+      if (provider === 'claude') pollSubFiles(s, now);
+    });
   };
 
   const snapshotSession = (s) => {
@@ -522,40 +422,58 @@ export function createMonitor({
   /** transcripts that were too old (or empty) when last looked at: file -> time of that look */
   const ignored = new Map();
   let watcher = null;
+  let codexWatcher = null;
   let scanSoon = null;
+  const CODEX_ID = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
   const hotWindowMs = hotPollMs * 40;
   const idlePollMs = () => hotPollMs * (watcher ? 8 : 4);
   const recheckMs = () => (watcher ? 10 * MIN : 30_000);
 
-  const startWatcher = () => {
+  const rescanSoon = () => {
+    if (!scanSoon) scanSoon = setTimeout(() => { scanSoon = null; guard(coldScan)(); }, 50);
+  };
+
+  const watchDir = (dir, onChange) => {
     try {
-      watcher = fs.watch(claudeDir, { recursive: true, persistent: false }, (_evt, name) => {
-        if (!name) return;
-        const parts = String(name).split(/[\\/]/);
-        if (parts.length < 2) return;
-        const id = parts[1].endsWith('.jsonl') ? parts[1].slice(0, -6) : parts[1];
-        dirty.add(id);
-        if (parts.length === 2 && parts[1].endsWith('.jsonl')) {
-          ignored.delete(path.join(claudeDir, String(name)));
-          if (!sessions.has(id) && !scanSoon) scanSoon = setTimeout(() => { scanSoon = null; guard(coldScan)(); }, 50);
-        }
+      const w = fs.watch(dir, { recursive: true, persistent: false }, (_evt, name) => {
+        if (name) onChange(String(name));
       });
-      watcher.on('error', () => {
-        watcher?.close();
-        watcher = null;
-      });
+      w.on('error', () => w.close());
+      return w;
     } catch {
-      watcher = null; // no recursive watching here: the slower polling below still works
+      return null; // no recursive watching here (or no such folder): the slower polling below still works
     }
+  };
+
+  const startWatchers = () => {
+    watcher = watchDir(claudeDir, (name) => {
+      const parts = name.split(/[\\/]/);
+      if (parts.length < 2) return;
+      const id = parts[1].endsWith('.jsonl') ? parts[1].slice(0, -6) : parts[1];
+      dirty.add(id);
+      if (parts.length === 2 && parts[1].endsWith('.jsonl')) {
+        ignored.delete(path.join(claudeDir, name));
+        if (!sessions.has(id)) rescanSoon();
+      }
+    });
+    codexWatcher = codexDir
+      ? watchDir(codexDir, (name) => {
+          const id = CODEX_ID.exec(name)?.[1];
+          if (!id) return;
+          dirty.add(id);
+          ignored.delete(path.join(codexDir, name));
+          if (!sessions.has(id)) rescanSoon();
+        })
+      : null;
   };
 
   const listSessionFiles = () => {
     const found = [];
-    let dirs;
+    let dirs = [];
     try {
       dirs = fs.readdirSync(claudeDir, { withFileTypes: true });
     } catch {
-      return found;
+      /* no Claude Code folder: the other sources may still be there */
     }
     for (const d of dirs) {
       if (!d.isDirectory()) continue;
@@ -566,14 +484,15 @@ export function createMonitor({
       } catch {
         continue;
       }
-      for (const f of files) if (f.endsWith('.jsonl')) found.push({ dirName: d.name, file: path.join(dirPath, f), id: f.slice(0, -6) });
+      for (const f of files) if (f.endsWith('.jsonl')) found.push({ dirName: d.name, file: path.join(dirPath, f), id: f.slice(0, -6), provider: 'claude' });
     }
+    if (codexDir) for (const { file, id } of listCodexFiles(codexDir)) found.push({ dirName: '', file, id, provider: 'codex' });
     return found;
   };
 
   const coldScan = () => {
     const now = Date.now();
-    for (const { dirName, file, id } of listSessionFiles()) {
+    for (const { dirName, file, id, provider } of listSessionFiles()) {
       if (sessions.has(id)) continue;
       const seen = ignored.get(file);
       if (seen !== undefined && now - seen < recheckMs()) continue;
@@ -588,13 +507,38 @@ export function createMonitor({
         continue;
       }
       ignored.delete(file);
-      openSession(id, file, dirName, st.mtimeMs, now);
+      openSession(id, file, dirName, st.mtimeMs, now, provider);
+    }
+    oc?.scan(now);
+  };
+
+  /** What every session needs after its source was read: title, stale checks, retirement of a long quiet session. */
+  const afterPoll = (s, now, changed = false) => {
+    if (changed) s.lastActivity = now;
+    if (s.provider === 'codex') {
+      const name = codexTitle(s.id);
+      if (name) s.aiTitle = clip(name, 60);
+    }
+    announceTitle(s);
+    settle(s, now);
+    if (now - s.lastActivity > windowMs && !s.mainActive && runningAgents(s).length === 0) {
+      emitter.emit('event', { type: 'session_end', sessionId: s.id, reason: 'idle' });
+      sessions.delete(s.id);
+      nextPoll.delete(s.id);
     }
   };
+
+  const oc = opencodeDb
+    ? createOpenCodeSource(
+        { sessions, newSession: (id, file, provider) => new Session(id, file, '', provider), register, say, mainStart, mainEnd, spawnAgent, finishAgent, runningAgents, afterPoll },
+        { dbFile: opencodeDb, windowMs },
+      )
+    : null;
 
   const hotPoll = () => {
     const now = Date.now();
     for (const s of [...sessions.values()]) {
+      if (s.oc) continue; // OpenCode sessions live in a database: oc.poll() below
       const hot = s.mainActive || s.pendingTools.size > 0 || now - s.lastActivity < hotWindowMs || runningAgents(s).length > 0;
       if (!hot && !dirty.has(s.id) && now < (nextPoll.get(s.id) ?? 0)) continue;
       dirty.delete(s.id);
@@ -610,17 +554,11 @@ export function createMonitor({
       }
       let changed = false;
       if (st.size !== s.state.offset) changed = pollMain(s, st.mtimeMs, now);
-      if (pollSubFiles(s, now)) changed = true;
-      if (changed) s.lastActivity = now;
-      else s.lastActivity = Math.max(s.lastActivity, st.mtimeMs);
-      announceTitle(s);
-      settle(s, now);
-      if (now - s.lastActivity > windowMs && !s.mainActive && runningAgents(s).length === 0) {
-        emitter.emit('event', { type: 'session_end', sessionId: s.id, reason: 'idle' });
-        sessions.delete(s.id);
-        nextPoll.delete(s.id);
-      }
+      if (s.provider === 'claude' && pollSubFiles(s, now)) changed = true;
+      if (!changed) s.lastActivity = Math.max(s.lastActivity, st.mtimeMs);
+      afterPoll(s, now, changed);
     }
+    oc?.poll(now);
   };
 
   const guard = (fn) => () => {
@@ -634,6 +572,7 @@ export function createMonitor({
   return {
     claudeDir,
     windowMs,
+    sources: { claude: claudeDir, codex: codexDir, opencode: opencodeDb },
     on: (fn) => {
       emitter.on('event', fn);
       return () => emitter.off('event', fn);
@@ -642,7 +581,7 @@ export function createMonitor({
     sessionCount: () => sessions.size,
     start() {
       if (hotTimer) return;
-      startWatcher();
+      startWatchers();
       guard(coldScan)();
       hotTimer = setInterval(guard(hotPoll), hotPollMs);
       // with a watcher the periodic scan is only a safety net
@@ -654,7 +593,9 @@ export function createMonitor({
       clearTimeout(scanSoon);
       scanSoon = null;
       watcher?.close();
-      watcher = null;
+      codexWatcher?.close();
+      watcher = codexWatcher = null;
+      oc?.close();
       hotTimer = scanTimer = null;
     },
   };

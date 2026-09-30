@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { useStore } from '../store';
+import { orderedRooms, useStore } from '../store';
 import { themeFor } from '../world/palettes';
 import { cats, sims } from '../sim/registry';
 import type { Phase } from '../sim/registry';
 import type { ActivityEntry, Speech, TaskLogEntry, TaskRec } from '../types';
 import { FALLBACK_NAMES, parseNames } from '../names';
+import { sfx } from '../audio';
+import { PROVIDER_NAME, ProviderLogo } from './ProviderLogo';
 
 const ICON: Record<string, string> = { thinking: '💭', text: '💬', tool: '🔧', task: '📥', done: '✅', error: '⚠️' };
 
@@ -33,29 +35,21 @@ const CAT_TEXT: Record<string, string> = {
 
 interface RoomStatus {
   working: boolean;
-  /** sub-agents that are still running */
-  subs: number;
-  /** tasks in progress (waiting, being worked on or being handed over) */
-  tasks: number;
-  /** tasks finished so far */
-  done: number;
   /** people inside the office */
   people: number;
 }
 
-const NO_STATUS: RoomStatus = { working: false, subs: 0, tasks: 0, done: 0, people: 0 };
+const NO_STATUS: RoomStatus = { working: false, people: 0 };
 
 export function useRoomStatus() {
   return useStore(
     useShallow((s) => {
       const out: Record<string, RoomStatus> = {};
-      for (const id of s.visibleOrder) out[id] = { ...NO_STATUS, working: !!s.rooms[id]?.mainActive, done: s.rooms[id]?.tasksDone ?? 0 };
+      for (const id of s.visibleOrder) out[id] = { ...NO_STATUS, working: !!s.rooms[id]?.mainActive };
       for (const t of Object.values(s.tasks)) {
         const r = out[t.sessionId];
         if (!r) continue;
-        r.tasks++;
         r.working = true;
-        if (t.source === 'sub' && !t.done) r.subs++;
       }
       for (const p of Object.values(s.people)) {
         const r = out[p.sessionId];
@@ -84,6 +78,8 @@ export function TopBar() {
   const hour = useStore((s) => s.hour);
   const setTimeMode = useStore((s) => s.setTimeMode);
   const setShowNames = useStore((s) => s.setShowNames);
+  const muted = useStore((s) => s.muted);
+  const setMuted = useStore((s) => s.setMuted);
   const nameCount = useStore((s) => s.names.length);
   const dir = claudeDir.replace(/\\/g, '/').replace(/^.*\/(\.claude\/.*)$/, '~/$1');
 
@@ -115,6 +111,17 @@ export function TopBar() {
         </button>
         <button className="btn" onClick={() => setShowNames(true)} title="Names for the director and the staff">
           👥 Names{nameCount ? <em>{nameCount}</em> : null}
+        </button>
+        <button
+          className="btn btn-icon"
+          onClick={() => {
+            setMuted(!muted);
+            if (muted) window.setTimeout(() => sfx('ding'), 60);
+          }}
+          aria-pressed={muted}
+          title={muted ? 'Sound effects are off – click to turn them on (M)' : 'Sound effects are on – click to mute (M)'}
+        >
+          {muted ? '🔇' : '🔊'}
         </button>
         <button className="btn btn-icon" onClick={resetView} title="Reset camera (R)">⌖</button>
         <button className="btn btn-icon" onClick={() => setHelp(true)} title="Help (?)">?</button>
@@ -196,8 +203,6 @@ function TaskList({ roomId }: { roomId: string }) {
   const finished = useStore((s) => s.finished[roomId]);
   const tasks = useStore((s) => s.tasks);
   const people = useStore((s) => s.people);
-  const reports = useStore((s) => s.rooms[roomId]?.reports ?? 0);
-  const nActivity = useStore((s) => s.activity[roomId]?.length ?? 0);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
@@ -217,9 +222,9 @@ function TaskList({ roomId }: { roomId: string }) {
   return (
     <div className="tasklist">
       <div className="tasklist-tabs">
-        <button className={tab === 'tasks' ? 'on' : ''} onClick={() => setTab('tasks')}>🧩 Tasks <em>{done.length + open.length}</em></button>
-        <button className={tab === 'reports' ? 'on' : ''} onClick={() => setTab('reports')}>📄 Reports <em>{reports}</em></button>
-        <button className={tab === 'activity' ? 'on' : ''} onClick={() => setTab('activity')}>🕘 Activity <em>{nActivity}</em></button>
+        <button className={tab === 'tasks' ? 'on' : ''} onClick={() => setTab('tasks')}>🧩 Tasks</button>
+        <button className={tab === 'reports' ? 'on' : ''} onClick={() => setTab('reports')}>📄 Reports</button>
+        <button className={tab === 'activity' ? 'on' : ''} onClick={() => setTab('activity')}>🕘 Activity</button>
       </div>
       <div className="tasklist-body">
         {tab === 'activity' ? (
@@ -276,7 +281,6 @@ export function RoomHeader() {
   const room = useStore((s) => (s.activeRoomId ? s.rooms[s.activeRoomId] : null));
   const listTab = useStore((s) => s.listTab);
   const toggleList = useStore((s) => s.toggleList);
-  const nActivity = useStore((s) => (s.activeRoomId ? s.activity[s.activeRoomId]?.length ?? 0 : 0));
   const openSummary = useStore((s) => s.openSummary);
   const status = JSON.parse(useRoomStatus()) as Record<string, RoomStatus>;
   if (!room) return null;
@@ -293,14 +297,14 @@ export function RoomHeader() {
       <div className="room-header-stats">
         <span className={st.working ? 'on' : ''}>{st.working ? '💼 Working' : '☕ Idle'}</span>
         <span>👥 {st.people} in the office</span>
-        <button className={`stat-btn${listTab === 'tasks' ? ' open' : ''}`} onClick={() => toggleList('tasks')} aria-pressed={listTab === 'tasks'} title="Tasks finished in this session (sub-agent runs and the main agent's own work) – click for the full list">
-          🧩 {st.done} task{st.done === 1 ? '' : 's'} done{st.tasks ? ` · ${st.tasks} running` : ''}
+        <button className={`stat-btn${listTab === 'tasks' ? ' open' : ''}`} onClick={() => toggleList('tasks')} aria-pressed={listTab === 'tasks'} title="Tasks of this session (sub-agent runs and the main agent's own work) – click for the full list">
+          🧩 Tasks
         </button>
         <button className={`stat-btn${listTab === 'reports' ? ' open' : ''}`} onClick={() => toggleList('reports')} aria-pressed={listTab === 'reports'} title="Reports handed over to the director – click for the full list">
-          📄 {room.reports} report{room.reports === 1 ? '' : 's'}
+          📄 Reports
         </button>
         <button className={`stat-btn${listTab === 'activity' ? ' open' : ''}`} onClick={() => toggleList('activity')} aria-pressed={listTab === 'activity'} title="Everything that happened in this session, newest first – click again to close">
-          🕘 {nActivity} activit{nActivity === 1 ? 'y' : 'ies'}
+          🕘 Activity
         </button>
         <button className="stat-btn" onClick={() => openSummary(room.id)} title="The last summary of this session on a sheet of paper (made from what is known so far if no run has finished yet)">📜 Summary</button>
       </div>
@@ -310,42 +314,52 @@ export function RoomHeader() {
 }
 
 export function RoomSwitcher() {
-  const order = useStore((s) => s.visibleOrder);
+  const order = useStore(useShallow(orderedRooms));
   const rooms = useStore((s) => s.rooms);
   const active = useStore((s) => s.activeRoomId);
   const setActive = useStore((s) => s.setActiveRoom);
-  const step = useStore((s) => s.stepRoom);
+  const releaseAll = useStore((s) => s.releaseAllRooms);
   const unseen = useStore((s) => s.unseen);
   const status = JSON.parse(useRoomStatus()) as Record<string, RoomStatus>;
+  const listRef = useRef<HTMLDivElement>(null);
+  // the room that is opened stays in view when the list scrolls
+  useEffect(() => {
+    listRef.current?.querySelector('.room-card.active')?.scrollIntoView({ block: 'nearest' });
+  }, [active]);
   if (!order.length) return null;
   return (
     <nav className="switcher">
-      <button className="btn btn-icon" onClick={() => step(-1)} title="Previous room (←)">‹</button>
-      <div className="switcher-list">
+      <div className="switcher-list" ref={listRef}>
         {order.map((id, i) => {
           const r = rooms[id];
           if (!r) return null;
           const st = status[id] ?? NO_STATUS;
           const theme = themeFor(r.themeIndex);
           return (
-            <button key={id} className={`room-card${id === active ? ' active' : ''}`} style={{ ['--accent' as string]: theme.accent, ['--wall' as string]: theme.wall }} onClick={() => setActive(id)} title={r.title}>
-              <span className="room-card-swatch">
-                <i style={{ background: theme.wall }} />
-                <i style={{ background: theme.floor }} />
-                <i style={{ background: theme.accent }} />
+            <button key={id} className={`room-card${id === active ? ' active' : ''}`} style={{ ['--accent' as string]: theme.accent, ['--wall' as string]: theme.wall }} onClick={() => setActive(id)} title={`${r.title} · ${PROVIDER_NAME[r.provider]}${i < 9 ? ` (${i + 1})` : ''}`}>
+              <span className="room-card-logo" title={PROVIDER_NAME[r.provider]}>
+                <ProviderLogo provider={r.provider} />
               </span>
               <span className="room-card-text">
                 <b>{i + 1}. {r.project}</b>
                 {shortTitle(r) ? <small className="room-card-name">{shortTitle(r)}</small> : null}
-                <small>{st.working ? (st.tasks ? `working · ${st.tasks} running` : 'working') : 'idle'}</small>
+                <small>{st.working ? 'working' : 'idle'}</small>
               </span>
               <span className={`room-card-status${st.working ? ' on' : ''}`} />
               {unseen[id] ? <i className="room-card-alert" title="This session is done – click to read its summary" /> : null}
             </button>
           );
         })}
+        <button
+          className="room-clear"
+          onClick={() => {
+            if (window.confirm('Clear all rooms? Rooms that are working stay; the others come back when their session is continued.')) releaseAll();
+          }}
+          title="Release every room that is not working right now"
+        >
+          🧹 Clear all rooms
+        </button>
       </div>
-      <button className="btn btn-icon" onClick={() => step(1)} title="Next room (→)">›</button>
     </nav>
   );
 }
@@ -391,6 +405,7 @@ export function SummaryPaper() {
   const summary = useStore((s) => (s.summaryOpen ? s.summaries[s.summaryOpen] : undefined));
   const room = useStore((s) => (s.summaryOpen ? s.rooms[s.summaryOpen] : undefined));
   const close = useStore((s) => s.requestCloseSummary);
+  const dismiss = useStore((s) => s.closeSummary);
   const askRelease = useStore((s) => s.askRelease);
   const working = useStore((s) => !!(s.summaryOpen && s.rooms[s.summaryOpen]?.mainActive));
   // a room can only be released while nothing is going on in it
@@ -452,7 +467,7 @@ export function SummaryPaper() {
         </div>
         <div className="paper-foot">
           {idle ? <button className="btn" onClick={askRelease} title="Take this room off the list – continue the session in Claude Code to bring it back">Release room</button> : null}
-          <button className="btn btn-big" onClick={close}>Got it</button>
+          <button className="btn btn-big" onClick={dismiss}>Got it</button>
         </div>
       </article>
     </div>
@@ -630,10 +645,13 @@ export function Help() {
           <li>🧩 Characters are not agents any more: every <b>task</b> is done by one <b>staff member</b> – a sub-agent run, or one tool call (of the main agent or of a sub-agent). Staff walk in, unpack their laptop, type, and show what they are doing in speech bubbles. A bubble stays until they do something else – on a break a thought cloud says what they are up to (which book they read, that they get a drink…).</li>
           <li>🔁 The staff <b>take turns</b>: whoever has rested longest gets the next task. When a sub-agent&apos;s task is done they hand the report to the director, then stay at their desk, sit on the sofa or pet a cat until the next task comes round.</li>
           <li>🚪 When the session has no work left, the staff and the director go home one after another.</li>
-          <li>☕ Whoever has nothing to do takes a break: strolls around, sits on the sofa, watches a colleague work, looks out of the window, pets a cat, gets a drink, reads a book, watches the fish, washes their face or waters the plants.</li>
-          <li>🧩 The header counts the tasks the session has finished and the reports handed to the director – click a number to open the full list (tabs: Tasks / Reports / Activity – the activity feed is everything that happened, newest first), click again to close it. 📜 Summary always shows the last summary of the session on a sheet of paper.</li>
-          <li>🗂️ The room buttons at the bottom keep every session until you <b>release</b> it (from the summary paper: Release room, or when you close the paper). Releasing only takes the room off the list – continue the session in Claude Code and the room opens again. A session that has stood still for an hour is released automatically.</li>
-          <li>🔵 A blinking blue dot on a room button means that session has finished all its work: open the room to read its summary on a sheet of paper (📜 Summary in the header brings it back). The dot keeps blinking until you release the room or the session starts working again.</li>
+          <li>🔊 Soft sound effects (a door, key clicks, a pop for every speech bubble, a chime when a session is finished, sizzling noodles…) only for the room on screen – no music. The speaker button (or <kbd>M</kbd>) mutes them; the choice is saved in this browser.</li>
+          <li>💼 A new task never sends anybody back to their desk: whoever is on a break works on it right where they stand (or sit) and goes on with the break afterwards – after a report to the director they walk back to what they were doing. Somebody with nothing to do shows no speech bubble, only their name tag. Chats and greetings are spoken (round speech bubbles), what they plan to do is a thought cloud.</li>
+          <li>👋 Everybody who walks in greets the room first; the job they came for shows up five seconds later.</li>
+          <li>☕ Whoever has nothing to do takes a break: strolls around, sits on the sofa, watches a colleague work, looks out of the window, pets a cat, gets a drink, reads a book, watches the fish, washes their face, waters the plants, cooks noodles at the stove and eats them on the spot, or chats with a colleague at their desk. Breaks are long and far apart, so nobody is busy with one thing after another. The thought bubble goes away the moment the break is over.</li>
+          <li>🧩 The header buttons Tasks / Reports / Activity open the full list – the Activity tab is open by default (the activity feed is everything that happened, newest first), click again to close it. 📜 Summary always shows the last summary of the session on a sheet of paper.</li>
+          <li>🗂️ The room buttons in the column on the right (working sessions first, then the most recently updated; it scrolls when there are many) keep every session until you <b>release</b> it (from the summary paper: Release room, or when you close the paper). Releasing only takes the room off the list – continue the session in Claude Code and the room opens again. A session that has stood still for an hour is released automatically.</li>
+          <li>🔵 When a session has finished all its work the director reads the summary aloud in their speech bubble (two lines at a time) and only goes home after the last line. A blinking blue dot in the top-left corner of the room button means the summary is still unread. Whenever you step into a room whose session is done, its summary lies on the screen as a sheet of paper (📜 Summary in the header brings it back). The dot keeps blinking until you release the room or the session starts working again.</li>
           <li>🐱 Every room has 1–2 cats. They hop in through the open sash of a window, wander, nap on the sofa or the director&apos;s desk and hop out again whenever they like.</li>
           <li>👥 Use the <b>Names</b> button to give the director and the staff real names (saved in this browser, unique inside a room, common English names are used when the list runs out).</li>
           <li>🌙 Light follows your system clock: the sky darkens in the evening and every room switches its lights on.</li>

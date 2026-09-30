@@ -30,7 +30,7 @@ function Plant({ p, tall }: { p: Prop; tall?: boolean }) {
     <group>
       <Ms geo={G.cyl(tall ? 0.3 : 0.27, tall ? 0.21 : 0.19, potH, 20)} mat={M(p.color, { rough: 0.55 })} pos={[0, potH / 2, 0]} />
       <Ms geo={G.torus(tall ? 0.3 : 0.27, 0.025, Math.PI * 2, 8, 24)} mat={M(p.color, { rough: 0.55 })} pos={[0, potH, 0]} rot={[Math.PI / 2, 0, 0]} />
-      <Ms geo={G.cyl(0.24, 0.24, 0.02, 16)} mat={M('#6b4a35')} pos={[0, potH - 0.01, 0]} cast={false} />
+      <Ms geo={G.cyl(0.24, 0.24, 0.02, 16)} mat={MB('#000000')} pos={[0, potH - 0.006, 0]} cast={false} />
       {tall ? <Ms geo={G.cyl(0.035, 0.05, 0.75, 8)} mat={M('#8a6a4a')} pos={[0, 0.75, 0]} /> : null}
       {leaves.map((l, i) => (
         <Ms key={i} geo={G.sphere(l.s, 12, 10)} mat={M(l.c, { rough: 0.6 })} pos={[Math.sin(l.a) * l.r, l.y, Math.cos(l.a) * l.r]} scale={[1, tall ? 1.35 : 1.05, 1]} />
@@ -263,6 +263,51 @@ function Sink({ p, theme }: { p: Prop; theme: RoomTheme }) {
   );
 }
 
+/** Kitchenette hob with a pan of noodles on the left burner (the pan is at local x = -0.2, see `Station.pan`). */
+function Stove({ p, theme }: { p: Prop; theme: RoomTheme }) {
+  const steel = M('#c9d3df', { metal: 0.7, rough: 0.3 });
+  const dark = M('#2f3244', { rough: 0.5 });
+  return (
+    <group>
+      <RB size={[0.96, 0.8, 0.54]} pos={[0, 0.4, 0]} color={shade(theme.desk, -0.04)} r={0.04} />
+      {/* oven door */}
+      <RB size={[0.7, 0.4, 0.02]} pos={[0, 0.36, 0.28]} color="#3a3d50" r={0.02} cast={false} />
+      <RB size={[0.5, 0.2, 0.01]} pos={[0, 0.36, 0.295]} color="#7fa6c8" r={0.01} rough={0.1} cast={false} />
+      <Ms geo={G.cyl(0.012, 0.012, 0.6, 6)} mat={steel} pos={[0, 0.62, 0.3]} rot={[0, 0, Math.PI / 2]} cast={false} />
+      <RB size={[1.0, 0.05, 0.58]} pos={[0, 0.825, 0]} color={theme.deskTop} r={0.02} />
+      {/* hob */}
+      <RB size={[0.84, 0.02, 0.46]} pos={[0, 0.86, 0]} color="#3a3d50" r={0.01} cast={false} />
+      {[-0.2, 0.22].map((x) => (
+        <Ms key={x} geo={G.cyl(0.12, 0.12, 0.012, 20)} mat={dark} pos={[x, 0.876, 0.02]} cast={false} />
+      ))}
+      {/* knobs */}
+      {[-0.3, -0.1, 0.1, 0.3].map((x, i) => (
+        <Ms key={x} geo={G.cyl(0.028, 0.028, 0.03, 10)} mat={M(i % 2 ? theme.accent : '#e8edf5', { rough: 0.4 })} pos={[x, 0.72, 0.29]} rot={[Math.PI / 2, 0, 0]} cast={false} />
+      ))}
+      {/* the pan */}
+      <group position={[-0.2, 0.882, 0.02]}>
+        <Ms geo={G.cyl(0.13, 0.1, 0.06, 20)} mat={M('#454a62', { metal: 0.5, rough: 0.35 })} pos={[0, 0.03, 0]} />
+        <Ms geo={G.cyl(0.115, 0.115, 0.012, 20)} mat={M('#f3d27a', { rough: 0.8 })} pos={[0, 0.056, 0]} cast={false} />
+        <Ms geo={G.sphere(0.03, 6, 5)} mat={M('#79c56b', { rough: 0.8 })} pos={[0.04, 0.066, 0.02]} scale={[1, 0.5, 1]} cast={false} />
+        <Ms geo={G.sphere(0.028, 6, 5)} mat={M('#ff8a65', { rough: 0.8 })} pos={[-0.05, 0.066, -0.03]} scale={[1, 0.5, 1]} cast={false} />
+        <Ms geo={G.cyl(0.014, 0.014, 0.22, 8)} mat={dark} pos={[0.2, 0.06, 0]} rot={[0, 0, Math.PI / 2]} />
+      </group>
+      {/* a pot on the other burner, a jar of spice and a towel */}
+      <group position={[0.22, 0.882, 0.02]}>
+        <Ms geo={G.cyl(0.1, 0.1, 0.12, 18)} mat={M(theme.accent2, { rough: 0.4, metal: 0.2 })} pos={[0, 0.06, 0]} />
+        <Ms geo={G.cyl(0.104, 0.104, 0.014, 18)} mat={M(shade(theme.accent2, -0.12), { rough: 0.4 })} pos={[0, 0.127, 0]} />
+        <Ms geo={G.sphere(0.02, 6, 5)} mat={dark} pos={[0, 0.15, 0]} />
+      </group>
+      <Ms geo={G.cyl(0.028, 0.028, 0.09, 10)} mat={M('#ffffff', { rough: 0.5 })} pos={[0.38, 0.9, -0.16]} />
+      <Ms geo={G.cyl(0.03, 0.03, 0.025, 10)} mat={M('#ff7a7a', { rough: 0.5 })} pos={[0.38, 0.96, -0.16]} />
+      <RB size={[0.16, 0.3, 0.02]} pos={[-0.52, 0.66, 0.1]} color={p.color2} r={0.01} rough={0.9} cast={false} />
+      {/* range hood on the wall */}
+      <RB size={[0.9, 0.08, 0.42]} pos={[0, 1.85, -0.05]} color="#dfe6ef" r={0.03} rough={0.3} />
+      <RB size={[0.34, 0.5, 0.26]} pos={[0, 2.15, -0.12]} color="#c9d3df" r={0.03} rough={0.35} />
+    </group>
+  );
+}
+
 function CoatRack({ p }: { p: Prop }) {
   return (
     <group>
@@ -327,6 +372,7 @@ export function PropView({ p, theme }: { p: Prop; theme: RoomTheme }) {
     case 'recycle': body = <Recycle p={p} theme={theme} />; break;
     case 'credenza': body = <Credenza p={p} theme={theme} />; break;
     case 'sink': body = <Sink p={p} theme={theme} />; break;
+    case 'stove': body = <Stove p={p} theme={theme} />; break;
     case 'loungeSet': body = <LoungeSet p={p} theme={theme} />; break;
     default: body = null;
   }

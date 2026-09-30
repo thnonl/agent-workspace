@@ -11,7 +11,7 @@ export function createApi(monitor) {
       });
       const send = (ev) => res.write(`data: ${JSON.stringify(ev)}\n\n`);
       res.write('retry: 2000\n\n');
-      send({ type: 'hello', claudeDir: monitor.claudeDir, windowMin: Math.round(monitor.windowMs / 60000) });
+      send({ type: 'hello', claudeDir: monitor.claudeDir, sources: monitor.sources, windowMin: Math.round(monitor.windowMs / 60000) });
       for (const ev of monitor.snapshot()) send(ev);
       send({ type: 'ready' });
       const off = monitor.on(send);

@@ -39,6 +39,10 @@ export interface SimState {
   /** boss desk visitor slot currently claimed */
   slot: number;
   walking: boolean;
+  /** key of the colleague who came over for a chat (they stay at their desk until it is over) */
+  chatBy: string | null;
+  /** sitting at the desk with nothing to do: a bubble that is still up goes away */
+  quiet: boolean;
 }
 
 export const sims = new Map<string, SimState>();
@@ -73,6 +77,8 @@ export interface RoomRuntime {
   lastText: string;
   /** the last closing message the monitor knows about (also from before this page was opened) */
   knownFinal: string;
+  /** the director reads the summary aloud until then (Date.now()); a safety net for when nobody watches */
+  talkDeadline: number;
 }
 
 export const roomRuntime = new Map<string, RoomRuntime>();
@@ -82,7 +88,7 @@ export function runtimeFor(roomId: string): RoomRuntime {
   if (!rt) {
     rt = {
       doorFreeAt: 0, visitors: [null, null, null], directorSeated: false, directorKey: null, receivedAt: -99,
-      burstKey: null, burstStart: 0, lastToolAt: 0, burstSeq: 0, prompt: '', idleSince: 0, leaving: false, wasBusy: false, lastHire: 0, runStart: 0, lastText: '', knownFinal: '',
+      burstKey: null, burstStart: 0, lastToolAt: 0, burstSeq: 0, prompt: '', idleSince: 0, leaving: false, wasBusy: false, lastHire: 0, runStart: 0, lastText: '', knownFinal: '', talkDeadline: 0,
     };
     roomRuntime.set(roomId, rt);
   }
@@ -115,14 +121,15 @@ export function enqueueSpeech(key: string, s: Omit<Speech, 'id' | 'at'>, priorit
     q = [];
     queues.set(key, q);
   }
-  if (priority) q.length = 0;
+  // (the summary talk is never wiped: whatever the character wants to say waits behind it)
+  if (priority) q.splice(0, q.length, ...q.filter((x) => x.hold));
   q.push(speech);
   // small talk about breaks must not change how the character behaves (the director rests when he has nothing to say)
   if (s.kind !== 'idle') lastSaid.set(key, { at: performance.now() / 1000, kind: s.kind });
   // keep bubbles fresh: drop the oldest when a burst arrives
-  while (q.length > 4) {
-    const i = q.findIndex((x) => x.kind === 'tool');
-    q.splice(i === -1 ? 0 : i, 1);
+  while (q.filter((x) => !x.hold).length > 4) {
+    const i = q.findIndex((x) => !x.hold && x.kind === 'tool');
+    q.splice(i === -1 ? q.findIndex((x) => !x.hold) : i, 1);
   }
   return speech;
 }
@@ -137,6 +144,49 @@ export function nextSpeech(key: string): Speech | undefined {
 
 export function peekSpeech(key: string): Speech | undefined {
   return queues.get(key)?.[0];
+}
+
+/** performance.now() ms until which the summary bubble on screen is held */
+const talkUntil = new Map<string, number>();
+
+export function holdTalk(key: string, until: number) {
+  talkUntil.set(key, until);
+}
+
+/** The character still has summary bubbles to show (queued, or the last one is still held). */
+export function talkPending(key: string): boolean {
+  return !!queues.get(key)?.some((x) => x.hold) || (talkUntil.get(key) ?? 0) > performance.now();
+}
+
+/** Forget the summary talk (new work arrived, or it took too long). */
+export function clearTalk(key: string) {
+  const q = queues.get(key);
+  if (q) queues.set(key, q.filter((x) => !x.hold));
+  talkUntil.delete(key);
+}
+
+/** performance.now() ms of the last time a break ended (its thought bubble is switched off) */
+const idleDismissed = new Map<string, number>();
+
+export function idleDismissedAt(key: string): number {
+  return idleDismissed.get(key) ?? 0;
+}
+
+/** A break is over: the thought about it goes away at once (also when it is still waiting in the queue). */
+export function dismissIdle(key: string) {
+  idleDismissed.set(key, performance.now());
+  const q = queues.get(key);
+  if (q) queues.set(key, q.filter((x) => x.kind !== 'idle' || x.hold));
+}
+
+/** A greeting at the door: shown first, for `hold` ms, before whatever else the character has to say. */
+export function greet(key: string, text: string, icon: string, hold: number) {
+  let q = queues.get(key);
+  if (!q) {
+    q = [];
+    queues.set(key, q);
+  }
+  q.unshift({ id: speechId++, kind: 'idle', text, tool: icon, at: Date.now(), hold });
 }
 
 export function lastSpeech(key: string) {
@@ -169,6 +219,8 @@ export function dropTaskSpeech(taskKey: string) {
 export function dropRuntime(key: string) {
   sims.delete(key);
   queues.delete(key);
+  talkUntil.delete(key);
+  idleDismissed.delete(key);
   lastSaid.delete(key);
   anchors.delete(key);
 }
