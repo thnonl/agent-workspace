@@ -37,11 +37,11 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && node server/compress-dist.mjs",
     "preview": "vite preview",
     "start": "node server/index.mjs --no-open",
     "typecheck": "tsc --noEmit",
-    "test": "node --test server/monitor.test.mjs",
+    "test": "node --test server/*.test.mjs",
     "prepack": "npm run build",
     "licenses": "node scripts/third-party-licenses.mjs"
   },

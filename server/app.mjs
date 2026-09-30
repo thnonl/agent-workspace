@@ -27,21 +27,61 @@ function resolveFile(root, pathname) {
   return path.join(root, 'index.html');
 }
 
+/** Does the Accept-Encoding header allow this coding (listed with q > 0)? */
+function accepts(accept, enc) {
+  for (const part of accept.split(',')) {
+    const [name, ...params] = part.trim().split(';');
+    if (name.trim().toLowerCase() !== enc) continue;
+    const q = params.map((p) => /^\s*q\s*=\s*([\d.]+)\s*$/i.exec(p)).find(Boolean);
+    return !q || Number(q[1]) > 0;
+  }
+  return false;
+}
+
+/** The precompressed sibling (written by compress-dist.mjs) the client accepts, if there is one. */
+function encoded(file, accept) {
+  for (const [enc, ext] of [['br', '.br'], ['gzip', '.gz']]) {
+    if (!accepts(accept, enc)) continue;
+    try {
+      if (fs.statSync(file + ext).isFile()) return { file: file + ext, enc };
+    } catch {
+      /* not precompressed */
+    }
+  }
+  return null;
+}
+
 export function createAppServer({ root, monitor }) {
   const api = createApi(monitor);
   return http.createServer((req, res) => {
     api(req, res, () => {
-      const pathname = decodeURIComponent(new URL(req.url || '/', 'http://x').pathname);
-      const file = resolveFile(root, pathname);
-      if (!fs.existsSync(file)) {
-        res.writeHead(404).end('Run `npm run build` first.');
+      let pathname;
+      try {
+        pathname = decodeURIComponent(new URL(req.url || '/', 'http://x').pathname);
+      } catch {
+        res.writeHead(400).end('Bad request'); // malformed %-escape: must not take the server down
         return;
       }
-      const headers = { 'Content-Type': types[path.extname(file)] || 'application/octet-stream' };
-      // file names under /assets carry a content hash: they never change
+      const file = resolveFile(root, pathname);
+      const headers = { 'Content-Type': types[path.extname(file)] || 'application/octet-stream', Vary: 'Accept-Encoding' };
+      // file names under /assets carry a content hash: they never change; index.html must always be revalidated
       if (pathname.startsWith('/assets/')) headers['Cache-Control'] = 'public, max-age=31536000, immutable';
-      res.writeHead(200, headers);
-      fs.createReadStream(file).pipe(res);
+      else if (file.endsWith('index.html')) headers['Cache-Control'] = 'no-cache';
+      const pre = encoded(file, String(req.headers['accept-encoding'] || ''));
+      let send = file;
+      if (pre) {
+        send = pre.file;
+        headers['Content-Encoding'] = pre.enc;
+      }
+      const stream = fs.createReadStream(send);
+      stream.on('error', () => {
+        if (!res.headersSent) res.writeHead(404).end('Run `npm run build` first.');
+        else res.destroy();
+      });
+      stream.on('open', () => {
+        res.writeHead(200, headers);
+        stream.pipe(res);
+      });
     });
   });
 }

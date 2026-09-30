@@ -52,6 +52,29 @@ export function toolSummary(name, input = {}) {
   }
 }
 
+/**
+ * Interactive tool calls: the agent stops and waits for the user. Claude Code's AskUserQuestion / ExitPlanMode and OpenCode's
+ * question tool share the input shape { questions: [{ question, header, options: [{ label }] }] } (plan: string for ExitPlanMode).
+ * Returns { text, full } to show, or null when the call is not an ask.
+ */
+export function askOf(name, input) {
+  const n = String(name ?? '').toLowerCase();
+  const i = input && typeof input === 'object' ? input : {};
+  if (n === 'exitplanmode') {
+    const first = String(i.plan ?? '').replace(/^[#\s*-]+/, '').split('\n')[0];
+    return { text: clip(`Plan ready for approval${first ? `: ${first}` : ''}`, 260), full: clip(i.plan, 1500) || undefined };
+  }
+  if (n !== 'askuserquestion' && n !== 'question') return null;
+  const qs = (Array.isArray(i.questions) ? i.questions : [i]).filter((q) => q && typeof q === 'object');
+  const label = (o) => (typeof o === 'string' ? o : o?.label);
+  const line = (q) => {
+    const opts = (Array.isArray(q.options) ? q.options : []).map(label).filter(Boolean);
+    return `${clip(q.question || q.header, 200)}${opts.length ? ` — ${opts.join(' / ')}` : ''}`;
+  };
+  if (!qs.length || !(qs[0].question || qs[0].header)) return { text: 'Waiting for your answer', full: undefined };
+  return { text: clip(line(qs[0]), 260), full: qs.length > 1 ? clip(qs.map(line).join('  |  '), 1500) : undefined };
+}
+
 export function cleanPrompt(raw) {
   let t = String(raw ?? '');
   t = t.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, ' ');

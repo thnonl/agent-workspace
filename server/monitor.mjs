@@ -9,9 +9,13 @@ import os from 'node:os';
 import { EventEmitter } from 'node:events';
 import { createCodexParser, createTitleIndex, defaultCodexHome, listCodexFiles } from './codex.mjs';
 import { createOpenCodeSource, defaultOpenCodeDb } from './opencode.mjs';
-import { MIN, MUSINGS, pick, clip, base, toolSummary, cleanPrompt, resultText, readNewLines, parseJson } from './util.mjs';
+import { MIN, MUSINGS, pick, clip, base, toolSummary, askOf, cleanPrompt, resultText, readNewLines, parseJson } from './util.mjs';
 
 const SPAWN_TOOLS = new Set(['Agent', 'Task']);
+/** with a file watcher, a session's sub-agent folder is listed again at most this often unless the watcher fires */
+const SUBDIR_RESCAN_MS = 5000;
+// a silent first load reads at most this much of a transcript tail (a live poll reads far more)
+const COLD_TAIL_BYTES = 4 * 1024 * 1024;
 
 const encodeDir = (p) => String(p).replace(/[^a-zA-Z0-9]/g, '-');
 
@@ -50,6 +54,8 @@ class Session {
     this.lastPrompt = '';
     this.lastFinal = '';
     this.pendingTools = new Set();
+    /** the main agent waits for the user: { id of the interactive tool call, text, full } */
+    this.ask = null;
     this.agents = new Map(); // toolUseId -> { id,label,agentType,status,lastSay,asyncId,lastAt }
     this.subFiles = new Map(); // file -> { state, key, metaTried }
     this.lastLineAt = 0;
@@ -138,6 +144,21 @@ export function createMonitor({
       if (ag) ag.lastSay = rec;
     }
     out(s, { type: 'agent_say', sessionId: s.id, agentId: agentKey, kind, text, tool, ...(full ? { full } : {}) });
+    if (agentKey === 'main' && kind === 'task') askEnd(s); // the user moved on
+  };
+
+  /** The main agent made an interactive call (question / plan approval) and waits: shown until it is answered. */
+  const askStart = (s, id, ask) => {
+    if (!ask || s.ask?.id === id) return;
+    s.ask = { id, text: ask.text, ...(ask.full ? { full: ask.full } : {}) };
+    out(s, { type: 'agent_ask', sessionId: s.id, text: s.ask.text, ...(s.ask.full ? { full: s.ask.full } : {}) });
+  };
+
+  /** id given: only that call's answer ends it; without: the turn is over or the user continued. */
+  const askEnd = (s, id) => {
+    if (!s.ask || (id && s.ask.id !== id)) return;
+    s.ask = null;
+    out(s, { type: 'agent_ask_end', sessionId: s.id });
   };
 
   const mainStart = (s) => {
@@ -147,6 +168,7 @@ export function createMonitor({
   };
 
   const mainEnd = (s) => {
+    askEnd(s);
     if (!s.mainActive) return;
     s.mainActive = false;
     out(s, { type: 'agent_done', sessionId: s.id, agentId: 'main' });
@@ -175,16 +197,23 @@ export function createMonitor({
     while ((m = re.exec(text))) {
       any = true;
       const body = m[1];
-      const id = (body.match(/<tool-use-id>([\s\S]*?)<\/tool-use-id>/) || [])[1]?.trim();
       const status = (body.match(/<status>([\s\S]*?)<\/status>/) || [])[1]?.trim() || 'completed';
       const result = (body.match(/<result>([\s\S]*?)<\/result>/) || [])[1] || (body.match(/<summary>([\s\S]*?)<\/summary>/) || [])[1] || '';
-      if (id) finishAgent(s, id, result, status !== 'completed');
+      // a notice can name the agent by its tool-use id, by its task id (the id of the background agent) or only inside the text
+      // ("... was restarted before background work reported back: "<title>" (task <id>)"): all three end the right agent
+      const id = (body.match(/<tool-use-id>([\s\S]*?)<\/tool-use-id>/) || [])[1]?.trim()
+        || (body.match(/<task-id>([\s\S]*?)<\/task-id>/) || [])[1]?.trim()
+        || (result.match(/\(task ([0-9a-z]{8,})\)/) || [])[1];
+      if (!id) continue;
+      const ag = s.agents.has(id) ? s.agents.get(id) : [...s.agents.values()].find((a) => a.asyncId === id);
+      if (ag) finishAgent(s, ag.id, status === 'stopped' ? 'Stopped before it finished' : result, status !== 'completed');
     }
     return any;
   };
 
   const handleToolResult = (s, block, toolUseResult) => {
     const id = block.tool_use_id;
+    askEnd(s, id);
     const ag = s.agents.get(id);
     if (!ag) {
       s.pendingTools.delete(id);
@@ -214,6 +243,7 @@ export function createMonitor({
           s.pendingTools.add(b.id);
         }
         say(s, ownerKey, 'tool', toolSummary(b.name, b.input), b.name);
+        if (ownerKey === 'main') askStart(s, b.id, askOf(b.name, b.input));
       }
     }
     void stopReason;
@@ -293,8 +323,27 @@ export function createMonitor({
   const codexTitle = codexDir ? createTitleIndex(path.dirname(codexDir)) : () => '';
 
   // ------------------------------------------------------------------ files
+  /** Does this raw transcript line hold a real user prompt (not a tool result or notification)? */
+  const hasPrompt = (l) => {
+    if (!l.includes('"type":"user"')) return false;
+    const o = parseJson(l);
+    if (!o || o.type !== 'user' || o.isMeta || o.isSidechain) return false;
+    const c = o.message?.content;
+    if (typeof c === 'string') return !c.includes('<task-notification>') && !!cleanPrompt(c);
+    if (!Array.isArray(c) || o.toolUseResult) return false;
+    return !!cleanPrompt(c.map((b) => (b?.type === 'text' ? ` ${b.text}` : '')).join(''));
+  };
+
   const pollMain = (s, mtimeMs, now) => {
-    const lines = readNewLines(s.file, s.state, 24 * 1024 * 1024);
+    // the silent first load only needs the last prompt, final message and pending tools: a short tail is enough (live reads keep the big cap)
+    const first = s.state.offset === 0;
+    let lines = readNewLines(s.file, s.state, s.silent ? COLD_TAIL_BYTES : 24 * 1024 * 1024);
+    // the short tail held no prompt (a huge tool output sits in between): read again with the big cap so the prompt and pending tools are not lost
+    if (s.silent && first && s.state.offset > COLD_TAIL_BYTES && !lines.some(hasPrompt)) {
+      s.state.offset = 0;
+      s.state.rest = Buffer.alloc(0);
+      lines = readNewLines(s.file, s.state, 24 * 1024 * 1024);
+    }
     if (lines.length) s.lastLineAt = s.silent ? mtimeMs : now;
     for (const l of lines) {
       const o = parseJson(l);
@@ -303,13 +352,25 @@ export function createMonitor({
     return lines.length > 0;
   };
 
-  const pollSubFiles = (s, now) => {
+  /**
+   * `touched`: true (no hint, as on first load) or the set of `agent-…` file stems the watcher reported in this
+   * session's sub-agent folder; empty/undefined when only the main transcript changed.
+   * Without a hint the folder is listed at most every SUBDIR_RESCAN_MS and sub-agent files that were too old to adopt
+   * are not looked at again until the watcher names them or `recheckMs()` passes.
+   */
+  const pollSubFiles = (s, now, touched = true) => {
+    const hint = touched === true ? true : touched instanceof Set && touched.size ? touched : false;
     const dir = path.join(path.dirname(s.file), s.id, 'subagents');
     let names;
-    try {
-      names = fs.readdirSync(dir);
-    } catch {
-      return false;
+    if (watcher && !hint && s.subDirAt && now - s.subDirAt < SUBDIR_RESCAN_MS) {
+      names = [...s.subFiles.keys()].map((f) => path.basename(f));
+    } else {
+      try {
+        names = fs.readdirSync(dir);
+      } catch {
+        return false;
+      }
+      s.subDirAt = now;
     }
     let changed = false;
     for (const name of names) {
@@ -321,6 +382,7 @@ export function createMonitor({
         s.subFiles.set(file, sf);
       }
       if (!sf.key) {
+        if (sf.staleAt !== undefined && hint !== true && !hint?.has(name.slice(0, -6)) && now - sf.staleAt < recheckMs()) continue;
         let meta = null;
         try {
           meta = JSON.parse(fs.readFileSync(path.join(dir, name.replace(/\.jsonl$/, '.meta.json')), 'utf8'));
@@ -340,10 +402,16 @@ export function createMonitor({
           if (fresh) {
             const a = spawnAgent(s, sf.key, meta?.description || meta?.agentType, meta?.agentType, s.silent);
             if (s.silent) a.lastAt = now;
-          } else sf.key = null;
+          } else {
+            sf.key = null;
+            sf.staleAt = now;
+          }
         }
+        if (sf.key) sf.staleAt = undefined;
         if (!sf.key) continue;
       }
+      const followed = s.agents.get(sf.key);
+      if (followed) followed.followed = true;
       const lines = readNewLines(file, sf.state, 8 * 1024 * 1024);
       if (lines.length) {
         changed = true;
@@ -373,7 +441,9 @@ export function createMonitor({
     const limit = busy ? 15 * MIN : 2 * MIN;
     if (s.mainActive && now - s.lastLineAt > limit) mainEnd(s);
     for (const ag of runningAgents(s)) {
-      if (now - Math.max(ag.lastAt, s.lastLineAt - 1) > 10 * MIN) finishAgent(s, ag.id, 'Timed out', false);
+      // (an agent whose own transcript is followed is judged by its own silence: a busy main agent must not keep a dead one alive)
+      const last = ag.followed ? ag.lastAt : Math.max(ag.lastAt, s.lastLineAt - 1);
+      if (now - last > 10 * MIN) finishAgent(s, ag.id, 'Timed out', false);
     }
   };
 
@@ -404,6 +474,7 @@ export function createMonitor({
     if (s.mainActive) {
       evs.push({ type: 'agent_start', sessionId: s.id, agentId: 'main', role: 'main', label: 'Director' });
       if (s.mainLastSay) evs.push({ type: 'agent_say', sessionId: s.id, agentId: 'main', ...s.mainLastSay });
+      if (s.ask) evs.push({ type: 'agent_ask', sessionId: s.id, text: s.ask.text, ...(s.ask.full ? { full: s.ask.full } : {}) });
     }
     for (const ag of runningAgents(s)) {
       evs.push({ type: 'agent_start', sessionId: s.id, agentId: ag.id, role: 'sub', label: ag.label, agentType: ag.agentType });
@@ -418,6 +489,8 @@ export function createMonitor({
   // wakes the affected session / triggers a scan the moment a transcript changes.
   /** session ids whose files changed according to the watcher */
   const dirty = new Set();
+  /** session id -> stems of the sub-agent files the watcher saw change since the last poll */
+  const subTouched = new Map();
   /** session id -> earliest time of the next poll of an idle session */
   const nextPoll = new Map();
   /** transcripts that were too old (or empty) when last looked at: file -> time of that look */
@@ -452,6 +525,11 @@ export function createMonitor({
       if (parts.length < 2) return;
       const id = parts[1].endsWith('.jsonl') ? parts[1].slice(0, -6) : parts[1];
       dirty.add(id);
+      if (parts.length >= 4 && parts[2] === 'subagents') {
+        let set = subTouched.get(id);
+        if (!set) subTouched.set(id, (set = new Set()));
+        set.add(parts[3].replace(/(.meta)?.jsonl?$/, ''));
+      }
       if (parts.length === 2 && parts[1].endsWith('.jsonl')) {
         ignored.delete(path.join(claudeDir, name));
         if (!sessions.has(id)) rescanSoon();
@@ -531,7 +609,7 @@ export function createMonitor({
 
   const oc = opencodeDb
     ? createOpenCodeSource(
-        { sessions, newSession: (id, file, provider) => new Session(id, file, '', provider), register, say, mainStart, mainEnd, spawnAgent, finishAgent, runningAgents, afterPoll },
+        { sessions, newSession: (id, file, provider) => new Session(id, file, '', provider), register, say, askStart, askEnd, mainStart, mainEnd, spawnAgent, finishAgent, runningAgents, afterPoll },
         { dbFile: opencodeDb, windowMs },
       )
     : null;
@@ -541,8 +619,11 @@ export function createMonitor({
     for (const s of [...sessions.values()]) {
       if (s.oc) continue; // OpenCode sessions live in a database: oc.poll() below
       const hot = s.mainActive || s.pendingTools.size > 0 || now - s.lastActivity < hotWindowMs || runningAgents(s).length > 0;
-      if (!hot && !dirty.has(s.id) && now < (nextPoll.get(s.id) ?? 0)) continue;
+      const touched = dirty.has(s.id);
+      if (!hot && !touched && now < (nextPoll.get(s.id) ?? 0)) continue;
       dirty.delete(s.id);
+      const subHint = subTouched.get(s.id);
+      subTouched.delete(s.id);
       nextPoll.set(s.id, now + idlePollMs());
       let st;
       try {
@@ -555,7 +636,7 @@ export function createMonitor({
       }
       let changed = false;
       if (st.size !== s.state.offset) changed = pollMain(s, st.mtimeMs, now);
-      if (s.provider === 'claude' && pollSubFiles(s, now)) changed = true;
+      if (s.provider === 'claude' && pollSubFiles(s, now, subHint ?? false)) changed = true;
       if (!changed) s.lastActivity = Math.max(s.lastActivity, st.mtimeMs);
       afterPoll(s, now, changed);
     }

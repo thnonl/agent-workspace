@@ -1,5 +1,12 @@
 // Tiny connect-style middleware exposing the monitor over Server-Sent Events.
 export function createApi(monitor) {
+  // one subscription for all clients: each event is stringified once and the same frame goes to every stream
+  const clients = new Set();
+  let off = null;
+  const broadcast = (ev) => {
+    const frame = `data: ${JSON.stringify(ev)}` + '\n\n';
+    for (const res of clients) res.write(frame);
+  };
   return function api(req, res, next) {
     const url = new URL(req.url || '/', 'http://localhost');
     if (url.pathname === '/api/events') {
@@ -14,11 +21,16 @@ export function createApi(monitor) {
       send({ type: 'hello', claudeDir: monitor.claudeDir, sources: monitor.sources, windowMin: Math.round(monitor.windowMs / 60000) });
       for (const ev of monitor.snapshot()) send(ev);
       send({ type: 'ready' });
-      const off = monitor.on(send);
+      clients.add(res);
+      off ??= monitor.on(broadcast);
       const heartbeat = setInterval(() => res.write(': hb\n\n'), 15000);
       req.on('close', () => {
         clearInterval(heartbeat);
-        off();
+        clients.delete(res);
+        if (!clients.size) {
+          off?.();
+          off = null;
+        }
       });
       return;
     }

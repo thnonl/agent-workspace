@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { MUSINGS, pick, clip, cleanPrompt, toolSummary } from './util.mjs';
+import { MUSINGS, pick, clip, cleanPrompt, toolSummary, askOf } from './util.mjs';
 
 export const defaultOpenCodeDb = () =>
   process.env.OPENCODE_DB ||
@@ -69,6 +69,8 @@ export function createOpenCodeSource(host, { dbFile, windowMs, log = console.war
   let db = null;
   let disabled = false;
   let lastStamp = '';
+  let scanStamp = '';
+  const topOf = new Map(); // session id -> its top-level session id (parents never change)
   const stmts = new Map();
 
   const open = () => {
@@ -171,6 +173,12 @@ export function createOpenCodeSource(host, { dbFile, windowMs, log = console.war
       for (const it of items) {
         if (it?.type === 'tool' && SPAWN_TOOLS.has(it.name) && (it.state?.status === 'completed' || it.state?.status === 'error')) {
           host.finishAgent(s, it.id, outputText(it), it.state.status === 'error');
+        }
+        // the question tool: waiting for the user until it completes (the row is re-read while the message is open)
+        const ask = it?.type === 'tool' ? askOf(it.name, it.state?.input) : null;
+        if (ask) {
+          if (it.state?.status === 'completed' || it.state?.status === 'error') host.askEnd(s, it.id);
+          else host.askStart(s, it.id, ask);
         }
       }
     }
@@ -276,11 +284,15 @@ export function createOpenCodeSource(host, { dbFile, windowMs, log = console.war
   /** Finds sessions with fresh messages that are not followed yet (a sub-agent's activity opens its top-level session). */
   const scan = (now) => {
     if (!open()) return;
+    const st = stamp();
+    if (st === scanStamp) return; // nothing was written since the last scan
+    scanStamp = st;
     const rows = q('select session_id, max(time_created) as t from session_message where time_created > ? group by session_id', now - windowMs);
     const tops = new Map();
     for (const r of rows) {
-      let id = r.session_id;
-      for (let depth = 0; depth < 6; depth++) {
+      let id = topOf.get(r.session_id);
+      if (id === undefined) id = r.session_id;
+      for (let depth = 0; id && !topOf.has(r.session_id) && depth < 6; depth++) {
         const row = q('select parent_id from session_v2 where id = ?', id)[0];
         if (!row) {
           id = null;
@@ -289,6 +301,7 @@ export function createOpenCodeSource(host, { dbFile, windowMs, log = console.war
         if (!row.parent_id) break;
         id = row.parent_id;
       }
+      if (id) topOf.set(r.session_id, id);
       if (id && !host.sessions.has(id)) tops.set(id, Math.max(tops.get(id) ?? 0, r.t));
     }
     for (const [id, t] of tops) openSession(id, t, now);
