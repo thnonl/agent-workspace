@@ -40,14 +40,15 @@ function useDemo() {
     };
   }, [demoOn]);
 
-  // No live session shortly after start-up? Show the demo so the page is never blank.
+  // Dev only: no live session shortly after start-up? Show the demo so the page is never blank.
+  // A production build never starts the demo by itself (only ?demo or the D key do).
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     if (params.has('demo')) {
       useStore.getState().setDemo(true);
       return;
     }
-    if (params.has('nodemo')) return;
+    if (!import.meta.env.DEV || params.has('nodemo')) return;
     const t = setTimeout(() => {
       const s = useStore.getState();
       if (!s.demoOn && s.visibleOrder.length === 0) {

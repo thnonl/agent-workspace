@@ -96,7 +96,7 @@ npm test             # monitor unit tests
 
 Publishing: `npm publish` (the `prepack` script builds `dist/` first; only `dist/` and `server/` are shipped, there are no runtime dependencies). Check the contents with `npm pack --dry-run`.
 
-If no session is running the app starts a **demo** with three scripted sessions so you can see everything. Force it with `?demo`, disable with `?nodemo`, or press `D`. (The ▶ Demo button is only shown by `npm run dev`; a published/production build hides it.)
+`npm run dev` starts a **demo** with three scripted sessions when no session is running, so you can see everything. Force it with `?demo`, disable with `?nodemo`, or press `D`. A published/production build never starts the demo by itself and hides the ▶ Demo button; `?demo` and `D` still work there.
 
 ### Environment variables
 
