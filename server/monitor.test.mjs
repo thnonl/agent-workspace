@@ -252,3 +252,40 @@ test('OpenCode sessions are read from its database, sub-agents included', async 
   assert.equal(events.filter((e) => e.type === 'session').every((e) => e.sessionId === 'ses_main'), true, 'sub-agent sessions are not rooms');
   fs.rmSync(root, { recursive: true, force: true });
 });
+
+/** A session whose last transcript line (a tool result: the model is now working) is `ageMs` old; `status` is what Claude Code status file says (busy / idle / dead / none). */
+async function directorAfterSilence(ageMs, status, { interrupt = false } = {}) {
+  const { root, file, sid, events, write, base } = setup();
+  const sessionsDir = path.join(root, 'sessions');
+  fs.mkdirSync(sessionsDir);
+  if (status) fs.writeFileSync(path.join(sessionsDir, '4242.json'), JSON.stringify({ pid: status === 'dead' ? 0x7ffffff0 : process.pid, sessionId: sid, status: status === 'dead' ? 'busy' : status }));
+  write(user(base, 'Think hard about this'));
+  write(assistant(base, [{ type: 'tool_use', id: 'toolu_r', name: 'Read', input: { file_path: 'C:\a.txt' } }], 'tool_use'));
+  write(user(base, [{ type: 'tool_result', tool_use_id: 'toolu_r', content: 'file body' }], { toolUseResult: {} }));
+  const past = new Date(Date.now() - ageMs);
+  fs.utimesSync(file, past, past);
+  const monitor = createMonitor({ claudeDir: root, codexDir: null, opencodeDb: null, sessionsDir, windowMs: 3 * 3_600_000, hotPollMs: 30, scanMs: 60 });
+  monitor.on((e) => events.push(e));
+  monitor.start();
+  await sleep(300);
+  if (interrupt) {
+    write(user(base, [{ type: 'text', text: '[Request interrupted by user]' }]));
+    await sleep(300);
+  }
+  const atDesk = monitor.snapshot().some((e) => e.type === 'agent_start' && e.agentId === 'main');
+  monitor.stop();
+  fs.rmSync(root, { recursive: true, force: true });
+  return atDesk;
+}
+
+test('a model that thinks for minutes keeps its director at the desk', async () => {
+  assert.equal(await directorAfterSilence(20 * 60_000, 'busy'), true, 'busy process: no timeout');
+  assert.equal(await directorAfterSilence(3 * 60_000, null), true, 'no status file: 3 quiet minutes are fine');
+});
+
+test('a director goes home when nobody works on the turn any more', async () => {
+  assert.equal(await directorAfterSilence(6 * 60_000, null), false, 'no status file: 5 quiet minutes');
+  assert.equal(await directorAfterSilence(60_000, 'idle'), false, 'the process is idle');
+  assert.equal(await directorAfterSilence(60_000, 'dead'), false, 'the process is gone');
+  assert.equal(await directorAfterSilence(2 * 60_000, 'busy', { interrupt: true }), false, 'Esc ends the turn at once');
+});

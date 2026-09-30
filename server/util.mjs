@@ -75,6 +75,9 @@ export function askOf(name, input) {
   return { text: clip(line(qs[0]), 260), full: qs.length > 1 ? clip(qs.map(line).join('  |  '), 1500) : undefined };
 }
 
+/** Claude Code writes this user line when the person presses Esc: the turn is over, nothing more will be generated. */
+export const isInterrupt = (raw) => String(raw ?? '').trim().startsWith('[Request interrupted');
+
 export function cleanPrompt(raw) {
   let t = String(raw ?? '');
   t = t.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, ' ');

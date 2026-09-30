@@ -9,13 +9,22 @@ import os from 'node:os';
 import { EventEmitter } from 'node:events';
 import { createCodexParser, createTitleIndex, defaultCodexHome, listCodexFiles } from './codex.mjs';
 import { createOpenCodeSource, defaultOpenCodeDb } from './opencode.mjs';
-import { MIN, MUSINGS, pick, clip, base, toolSummary, askOf, cleanPrompt, resultText, readNewLines, parseJson } from './util.mjs';
+import { MIN, MUSINGS, pick, clip, base, toolSummary, askOf, cleanPrompt, isInterrupt, resultText, readNewLines, parseJson } from './util.mjs';
 
 const SPAWN_TOOLS = new Set(['Agent', 'Task']);
 /** with a file watcher, a session's sub-agent folder is listed again at most this often unless the watcher fires */
 const SUBDIR_RESCAN_MS = 5000;
 // a silent first load reads at most this much of a transcript tail (a live poll reads far more)
 const COLD_TAIL_BYTES = 4 * 1024 * 1024;
+// Claude Code writes a thinking (or a long tool-input) line only when the model has finished it, so a working session can be
+// silent for minutes. Its own status file (~/.claude/sessions/<pid>.json: busy / idle) tells the truth; without one
+// (other sources, older versions) an open turn is declared dead after TURN_STALE_MS of silence.
+const TURN_STALE_MS = 5 * MIN;
+/** a live process that reports "busy" is trusted this long without any transcript line (a recycled pid must not pin the director forever) */
+const BUSY_TRUST_MS = 60 * MIN;
+/** the process says "idle" and nothing is pending: the turn is over, the grace covers the status file lagging behind a fresh prompt */
+const IDLE_GRACE_MS = 30_000;
+const LIVE_REFRESH_MS = 1000;
 
 const encodeDir = (p) => String(p).replace(/[^a-zA-Z0-9]/g, '-');
 
@@ -94,6 +103,8 @@ export function createMonitor({
   // null switches a source off (tests do that to stay away from the real ones)
   codexDir = path.join(defaultCodexHome(), 'sessions'),
   opencodeDb = defaultOpenCodeDb(),
+  // Claude Code's per-process status files; null switches the lookup off
+  sessionsDir = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'sessions'),
 } = {}) {
   const emitter = new EventEmitter();
   emitter.setMaxListeners(100);
@@ -277,7 +288,10 @@ export function createMonitor({
             break;
           }
           const p = cleanPrompt(c);
-          if (!p) break;
+          if (!p) {
+            if (isInterrupt(c)) mainEnd(s);
+            break;
+          }
           if (!s.firstPrompt) s.firstPrompt = p;
           mainStart(s);
           say(s, 'main', 'task', p);
@@ -288,7 +302,8 @@ export function createMonitor({
             else if (b?.type === 'text') text += ` ${b.text}`;
           }
           const p = cleanPrompt(text);
-          if (p && !o.toolUseResult) {
+          if (isInterrupt(text)) mainEnd(s);
+          else if (p && !o.toolUseResult) {
             if (!s.firstPrompt) s.firstPrompt = p;
             mainStart(s);
             say(s, 'main', 'task', p);
@@ -435,11 +450,61 @@ export function createMonitor({
 
   const runningAgents = (s) => [...s.agents.values()].filter((a) => a.status === 'running');
 
+  /** sessionId -> { pid, status, alive } from Claude Code's status files, re-read at most once per LIVE_REFRESH_MS */
+  let live = new Map();
+  let liveAt = 0;
+  const liveInfo = (id, now) => {
+    if (!sessionsDir) return null;
+    if (now - liveAt >= LIVE_REFRESH_MS || now < liveAt) {
+      liveAt = now;
+      const next = new Map();
+      let names = [];
+      try {
+        names = fs.readdirSync(sessionsDir);
+      } catch {
+        /* older Claude Code: no status files */
+      }
+      for (const n of names) {
+        if (!n.endsWith('.json')) continue;
+        const o = parseJson(safeRead(path.join(sessionsDir, n)));
+        if (!o?.sessionId || !o.pid) continue;
+        let alive = true;
+        try {
+          process.kill(o.pid, 0);
+        } catch (err) {
+          alive = err?.code === 'EPERM';
+        }
+        next.set(o.sessionId, { status: o.status, alive });
+      }
+      live = next;
+    }
+    return live.get(id) || null;
+  };
+
+  const safeRead = (file) => {
+    try {
+      return fs.readFileSync(file, 'utf8');
+    } catch {
+      return '';
+    }
+  };
+
+  /** Should the open turn of this session end because nobody works on it any more? */
+  const turnStale = (s, now) => {
+    const quiet = now - s.lastLineAt;
+    const info = s.provider === 'claude' ? liveInfo(s.id, now) : null;
+    if (!info) return quiet > TURN_STALE_MS;
+    if (!info.alive) return quiet > IDLE_GRACE_MS; // the process is gone: crashed or closed
+    if (info.status === 'busy') return quiet > BUSY_TRUST_MS;
+    // idle: the turn is over unless the session waits for an answer or for its helpers
+    const waiting = s.ask || s.pendingTools.size > 0 || runningAgents(s).length > 0;
+    return quiet > (waiting ? TURN_STALE_MS : IDLE_GRACE_MS);
+  };
+
   const settle = (s, now) => {
-    // stale checks – a crashed or killed session must not keep its director at the desk forever
-    const busy = s.pendingTools.size + runningAgents(s).length > 0;
-    const limit = busy ? 15 * MIN : 2 * MIN;
-    if (s.mainActive && now - s.lastLineAt > limit) mainEnd(s);
+    // stale checks – a crashed or killed session must not keep its director at the desk forever.
+    // An open turn ends by itself (end_turn, turn_duration, Esc): the model may think for minutes without writing a line.
+    if (s.mainActive && turnStale(s, now)) mainEnd(s);
     for (const ag of runningAgents(s)) {
       // (an agent whose own transcript is followed is judged by its own silence: a busy main agent must not keep a dead one alive)
       const last = ag.followed ? ag.lastAt : Math.max(ag.lastAt, s.lastLineAt - 1);
