@@ -1,6 +1,27 @@
-# 🏢 Claude Office
+# 🏢 Agent Workspace
 
 A cute, isometric 3D office that shows your **Claude Code** sessions at work, in real time.
+
+![Agent Workspace: a new request arrives, the director sits down and the staff come in to work on it](https://raw.githubusercontent.com/thnonl/agent-workspace/main/docs/demo.gif)
+
+## Quick start
+
+Needs [Node.js](https://nodejs.org) 20 or newer. Start a Claude Code (or Codex / OpenCode) session anywhere, then run:
+
+```bash
+npx @thnonline/agent-workspace
+```
+
+Your browser opens on <http://localhost:4173> and every running session shows up as a room. Stop it with <kbd>Ctrl</kbd>+<kbd>C</kbd>. Nothing has to be configured.
+
+Want it as a command that is always there?
+
+```bash
+npm i -g @thnonline/agent-workspace
+agent-workspace                    # from then on, in any terminal
+```
+
+`npx` keeps a copy after the first run; `npx @thnonline/agent-workspace@latest` fetches the newest version, `npm update -g @thnonline/agent-workspace` does it for the global install. To remove it: `npm rm -g @thnonline/agent-workspace`.
 
 * Every Claude Code **session** gets its own **room** (each with a different colour theme, layout, furniture and decorations).
 * **Characters are not agents.** Every character – random gender, hair, outfit and colours – is a person of the office; the work they do comes from the session:
@@ -36,33 +57,35 @@ Each room button shows the logo of its provider instead of a colour swatch.
 
 ## Run
 
-From npm (no checkout needed, Node 20+):
-
 ```bash
-npx @thnonline/agent-workspace              # opens http://localhost:4173
-npx @thnonline/agent-workspace --port 8080 --no-open
-npm i -g @thnonline/agent-workspace         # then just: agent-workspace
+agent-workspace                          # or: npx @thnonline/agent-workspace
+agent-workspace --port 8080              # another port
+agent-workspace --no-open                # do not open the browser
+agent-workspace --host 0.0.0.0           # also reachable from other devices on your network
 ```
 
-Options: `-p, --port <n>` (or `$PORT`), `--host <ip>` (default `127.0.0.1`; use `0.0.0.0` to open the page from another device on your network), `--no-open`, `-h, --help`. The page is served on your machine only unless you pass `--host`.
+| Option | Meaning |
+| --- | --- |
+| `-p, --port <n>` | Port to listen on (default `4173`, or `$PORT`) |
+| `--host <ip>` | Address to listen on (default `127.0.0.1`: this machine only) |
+| `--no-open` | Do not open the browser |
+| `-h, --help` | Show the options |
 
-From a checkout:
+The page is only reachable from your own machine unless you pass `--host` – it shows what your agents are doing, so share it deliberately.
+
+### From a checkout (development)
 
 ```bash
+# in a checkout of the repository
 npm install
-npm run dev          # http://localhost:5173  (Vite + transcript monitor)
-```
-
-Production:
-
-```bash
-npm run build
-npm start            # http://localhost:4173  (static files + SSE monitor)
+npm run dev          # http://localhost:5173  (Vite + transcript monitor, hot reload)
+npm run build && npm start   # production build on http://localhost:4173
+npm test             # monitor unit tests
 ```
 
 Publishing: `npm publish` (the `prepack` script builds `dist/` first; only `dist/` and `server/` are shipped, there are no runtime dependencies). Check the contents with `npm pack --dry-run`.
 
-If no session is running the app starts a **demo** with three scripted sessions so you can see everything. Force it with `?demo`, disable with `?nodemo`, or use the ▶ Demo button / `D`.
+If no session is running the app starts a **demo** with three scripted sessions so you can see everything. Force it with `?demo`, disable with `?nodemo`, or press `D`. (The ▶ Demo button is only shown by `npm run dev`; a published/production build hides it.)
 
 ### Environment variables
 
@@ -73,7 +96,7 @@ If no session is running the app starts a **demo** with three scripted sessions 
 | `CODEX_HOME` | `~/.codex` | Codex home (rollouts are read from `sessions/`) |
 | `OPENCODE_DB` | `~/.local/share/opencode/opencode.db` | OpenCode database |
 | `SESSION_WINDOW_MIN` | `30` | A session gets a room while it was active within this many minutes |
-| `PORT` | `4173` | Port of `npm start` |
+| `PORT` | `4173` | Port of the web page (same as `--port`) |
 
 ## Controls
 

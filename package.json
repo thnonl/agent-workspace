@@ -1,10 +1,18 @@
 {
   "name": "@thnonline/agent-workspace",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "description": "Cute 3D isometric office that visualises Claude Code sessions and sub-agents in real time.",
   "author": "Nam Thai <namth.onl@gmail.com>",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thnonl/agent-workspace.git"
+  },
+  "homepage": "https://github.com/thnonl/agent-workspace#readme",
+  "bugs": {
+    "url": "https://github.com/thnonl/agent-workspace/issues"
+  },
   "keywords": [
     "claude-code",
     "visualization",
