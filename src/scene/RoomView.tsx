@@ -1,8 +1,9 @@
-import { memo, useEffect, useMemo, useRef } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { useShallow } from 'zustand/react/shallow';
 import { frame } from '../sim/frame';
+import { host } from '../pipHost';
 import { walkMatrices } from './matrixWalk';
 import { useStore } from '../store';
 import { getLayout } from '../world/layout';
@@ -39,7 +40,10 @@ export function roomOrigin(index: number): [number, number, number] {
  * re-render when the room record changes (new report, new title, new timestamp...): the props
  * (layout identity, room id, sign text) decide.
  */
-const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle, season }: { roomId: string; layout: RoomLayout; signTitle: string; season: Season }) {
+const DeskItem = memo(Desk);
+const PropItem = memo(PropView);
+
+const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle, season, stage }: { roomId: string; layout: RoomLayout; signTitle: string; season: Season; stage: number }) {
   const { width: W, depth: D, theme, wallHeight: H } = layout;
   const t = WALL_T;
   const floorTex = useMemo(() => floorTexture(theme.floorKind, theme.floor, theme.floor2, theme.floorKind === 'wood' || theme.floorKind === 'carpetTile' ? W / 4 : W / 3, theme.floorKind === 'wood' || theme.floorKind === 'carpetTile' ? D / 4 : D / 3), [theme, W, D]);
@@ -48,7 +52,8 @@ const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle, season 
   const doorLocalBack = layout.door.wall === 'back' ? layout.door.pos + t / 2 : null;
   const doorLocalLeft = layout.door.wall === 'left' ? -layout.door.pos : null;
 
-  return (
+  // (every section is built once as an element and handed back unchanged, so React skips what is already mounted when a later stage arrives)
+  const floorPart = useMemo(() => (
     <>
       <StaticBake>
       {/* diorama base */}
@@ -80,8 +85,10 @@ const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle, season 
       <FloorDecals decals={layout.decals} />
       </StaticBake>
       <RoomAO layout={layout} />
+    </>
+  ), [layout, floorTex]);
 
-      {/* walls */}
+  const backPart = useMemo(() => (
       <group position={[-t / 2, 0, -D / 2]}>
         <StaticBake>
         <Wall length={W + t} height={H} openings={back} theme={theme} doorCenter={doorLocalBack} doorWidth={layout.door.width} />
@@ -98,6 +105,9 @@ const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle, season 
         {layout.signPos?.wall === 'back' ? <Sign title={signTitle} localX={layout.signPos.pos + t / 2} y={layout.signPos.y} theme={theme} /> : null}
         </StaticBake>
       </group>
+  ), [layout, back, skipDecor, signTitle, roomId]);
+
+  const leftPart = useMemo(() => (
       <group position={[-W / 2, 0, 0]} rotation={[0, Math.PI / 2, 0]}>
         <StaticBake>
         <Wall length={D} height={H} openings={left} theme={theme} doorCenter={doorLocalLeft} doorWidth={layout.door.width} />
@@ -113,18 +123,30 @@ const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle, season 
         ))}
         </StaticBake>
       </group>
+  ), [layout, left, skipDecor, roomId]);
 
+  // desks and props arrive in several parts (stages); the merge into a few meshes happens when the last part is in
+  const deskCount = Math.min(layout.desks.length, Math.ceil((layout.desks.length * (stage - STAGE.desks + 1)) / DESK_STEPS));
+  const propCount = Math.min(layout.props.length, Math.ceil((layout.props.length * (stage - STAGE.props + 1)) / PROP_STEPS));
+
+  return (
+    <>
+      {stage >= STAGE.floor ? floorPart : null}
+      {stage >= STAGE.back ? backPart : null}
+      {stage >= STAGE.left ? leftPart : null}
       {/* furniture */}
-      <StaticBake>
-        {layout.desks.map((d) => (
-          <Desk key={d.index} slot={d} theme={theme} />
-        ))}
-      </StaticBake>
-      <StaticBake>
-        {layout.props.map((p, i) => (layout.movable.includes(i) ? null : <PropView key={i} p={p} theme={theme} roomId={roomId} />))}
-      </StaticBake>
+      {stage >= STAGE.desks ? (
+        <StaticBake ready={stage >= STAGE.desks + DESK_STEPS - 1}>
+          {layout.desks.map((d, i) => (i < deskCount ? <DeskItem key={d.index} slot={d} theme={theme} /> : null))}
+        </StaticBake>
+      ) : null}
+      {stage >= STAGE.props ? (
+        <StaticBake ready={stage >= STAGE.props + PROP_STEPS - 1}>
+          {layout.props.map((p, i) => (i < propCount && !layout.movable.includes(i) ? <PropItem key={i} p={p} theme={theme} roomId={roomId} /> : null))}
+        </StaticBake>
+      ) : null}
       {/* festive decorations (Halloween, Christmas, Tết): baked again when the season changes */}
-      {season === 'none' ? null : (
+      {stage < STAGE.chairs || season === 'none' ? null : (
         <StaticBake key={season}>
           <SeasonDecor layout={layout} season={season} />
         </StaticBake>
@@ -132,6 +154,27 @@ const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle, season 
     </>
   );
 });
+
+/**
+ * A room is not built in one go (that froze the page for a few hundred milliseconds when a session appeared): its parts come one
+ * build stage at a time, each in a frame of its own, so no single frame has much to do. Stage 0 is the empty room.
+ */
+const STAGE = { floor: 1, back: 2, left: 3, desks: 4, props: 6, chairs: 10, director: 11, people: 12, toys: 20, movables: 21, board: 22, cats: 23, light: 27, party: 28 } as const;
+const BUILD_STAGES = STAGE.party;
+const BUILD_GAP_MS = 6;
+/** stages per baked group that is mounted a part at a time (the group is merged once its last part is in) */
+const DESK_STEPS = 2;
+const PROP_STEPS = 4;
+function useBuildStage() {
+  const [stage, setStage] = useState(0);
+  useEffect(() => {
+    if (stage >= BUILD_STAGES) return;
+    const w = host();
+    const t = w.setTimeout(() => setStage((n) => n + 1), BUILD_GAP_MS);
+    return () => w.clearTimeout(t);
+  }, [stage]);
+  return stage;
+}
 
 export const RoomView = memo(function RoomView({ roomId }: { roomId: string }) {
   // narrow selectors: the room record changes on every event (timestamps, counters) but only these matter here
@@ -156,6 +199,9 @@ export const RoomView = memo(function RoomView({ roomId }: { roomId: string }) {
   );
   const layout = useMemo(() => getLayout(seed, themeIndex), [seed, themeIndex]);
   const { theme } = layout;
+  const stage = useBuildStage();
+  const built = useRef(false);
+  built.current = stage >= BUILD_STAGES;
 
   // A room the camera does not see is neither drawn nor walked by three (FrameSync has already decided which
   // rooms are on screen). It is brought up to date in the frame it comes back, before that frame is drawn.
@@ -166,7 +212,7 @@ export const RoomView = memo(function RoomView({ roomId }: { roomId: string }) {
   useFrame(() => {
     const g = group.current;
     if (!g) return;
-    if (framesSeen.current < 2 && ++framesSeen.current === 2) frame.readyRooms.add(roomId);
+    if (built.current && framesSeen.current < 2 && ++framesSeen.current === 2) frame.readyRooms.add(roomId);
     const on = frame.visibleRooms.has(roomId);
     if (g.visible === on) return;
     g.visible = on;
@@ -179,34 +225,36 @@ export const RoomView = memo(function RoomView({ roomId }: { roomId: string }) {
 
   return (
     <group ref={group} position={origin}>
-      <RoomStatic roomId={roomId} layout={layout} signTitle={signTitle} season={season} />
+      <RoomStatic roomId={roomId} layout={layout} signTitle={signTitle} season={season} stage={stage} />
 
       {/* movable furniture */}
-      {layout.desks.map((d) => (
+      {stage >= STAGE.chairs && layout.desks.map((d) => (
         <Chair key={d.index} x={d.seat.x} z={d.seat.z} rot={d.rot} turn={d.chairTurn} color={d.chairColor} roomId={roomId} deskIndex={d.index} approachSide={d.approachSide} seed={d.index} />
       ))}
-      <StaticBake key={Math.min(reports, 12)}>
-        <DirectorDesk layout={layout} reports={reports} roomId={roomId} />
-      </StaticBake>
-      <Chair x={layout.director.seat.x} z={layout.director.seat.z} rot={0} turn={0} color={shade(theme.accent2, -0.05)} roomId={roomId} deskIndex={-1} big approachSide={layout.director.approachSide} seed={99} />
+      {stage >= STAGE.director ? (
+        <StaticBake key={Math.min(reports, 12)}>
+          <DirectorDesk layout={layout} reports={reports} roomId={roomId} />
+        </StaticBake>
+      ) : null}
+      {stage >= STAGE.director ? <Chair x={layout.director.seat.x} z={layout.director.seat.z} rot={0} turn={0} color={shade(theme.accent2, -0.05)} roomId={roomId} deskIndex={-1} big approachSide={layout.director.approachSide} seed={99} /> : null}
 
-      <CatToys roomId={roomId} layout={layout} />
-      <MovableProps roomId={roomId} layout={layout} />
+      {stage >= STAGE.toys ? <CatToys roomId={roomId} layout={layout} /> : null}
+      {stage >= STAGE.movables ? <MovableProps roomId={roomId} layout={layout} /> : null}
 
       {/* the office cats */}
       {Array.from({ length: layout.catCount ? layout.catCount + extraCats : 0 }, (_, i) => (
-        <CatView key={i} catKey={`${roomId}::cat${i}`} roomId={roomId} layout={layout} seed={seed + i * 977} />
+        stage >= STAGE.cats + Math.min(i, 3) ? <CatView key={i} catKey={`${roomId}::cat${i}`} roomId={roomId} layout={layout} seed={seed + i * 977} /> : null
       ))}
 
-      <StatsBoard roomId={roomId} layout={layout} />
-      <PropHits roomId={roomId} layout={layout} />
-      <Radio roomId={roomId} layout={layout} />
-      <CelebrationFx roomId={roomId} layout={layout} />
-      <RoomLightFx layout={layout} roomId={roomId} halos={quality !== 'low'} dust={quality !== 'low'} />
+      {stage >= STAGE.board ? <StatsBoard roomId={roomId} layout={layout} /> : null}
+      {stage >= STAGE.board ? <PropHits roomId={roomId} layout={layout} /> : null}
+      {stage >= STAGE.board ? <Radio roomId={roomId} layout={layout} /> : null}
+      {stage >= STAGE.party ? <CelebrationFx roomId={roomId} layout={layout} /> : null}
+      {stage >= STAGE.light ? <RoomLightFx layout={layout} roomId={roomId} halos={quality !== 'low'} dust={quality !== 'low'} /> : null}
 
       {/* people */}
-      {personKeys.map((k) => (
-        <PersonActor key={k} personKey={k} roomId={roomId} layout={layout} />
+      {personKeys.map((k, i) => (
+        stage >= STAGE.people + Math.min(i, 7) ? <PersonActor key={k} personKey={k} roomId={roomId} layout={layout} /> : null
       ))}
     </group>
   );

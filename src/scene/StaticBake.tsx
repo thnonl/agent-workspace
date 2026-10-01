@@ -10,16 +10,42 @@ function dropCpuCopy(this: THREE.BufferAttribute) {
 }
 
 /**
+ * Materials that only differ in colour share one baked mesh: the colour moves into a vertex colour attribute and the merged mesh
+ * uses one vertex-coloured twin of the material. (A room used to end up with ~300 draw calls, one per colour.)
+ * Only the fixed kit materials qualify (see `M` / `MB` in kit.ts): the lamp / glass materials of glow.ts change over the day.
+ */
+const twins = new Map<string, THREE.Material>();
+function twinOf(mat: THREE.Material): { key: string; mat: THREE.Material } | null {
+  if (!mat.userData.fixed || mat.transparent) return null;
+  let key: string;
+  let make: () => THREE.Material;
+  if ((mat as THREE.MeshStandardMaterial).isMeshStandardMaterial) {
+    const m = mat as THREE.MeshStandardMaterial;
+    if (m.map || m.normalMap || m.alphaMap || m.roughnessMap || m.metalnessMap || m.emissiveMap || m.aoMap) return null;
+    key = `s|${m.roughness}|${m.metalness}|${m.emissive.getHex()}|${m.emissiveIntensity}|${m.side}`;
+    make = () => new THREE.MeshStandardMaterial({ vertexColors: true, roughness: m.roughness, metalness: m.metalness, emissive: m.emissive.clone(), emissiveIntensity: m.emissiveIntensity, side: m.side });
+  } else if ((mat as THREE.MeshBasicMaterial).isMeshBasicMaterial) {
+    const m = mat as THREE.MeshBasicMaterial;
+    if (m.map || m.alphaMap) return null;
+    key = `b|${m.side}`;
+    make = () => new THREE.MeshBasicMaterial({ vertexColors: true, side: m.side });
+  } else return null;
+  let t = twins.get(key);
+  if (!t) twins.set(key, (t = make()));
+  return { key, mat: t };
+}
+
+/**
  * Bakes all static meshes below it into a few merged meshes (one per material).
  * A room has thousands of tiny primitives; merging turns thousands of draw calls into a few dozen.
  * Anything that moves must be flagged with `userData={{ dynamic: true }}` and is left untouched.
  */
-export function StaticBake({ children }: { children: ReactNode }) {
+export function StaticBake({ children, ready = true }: { children: ReactNode; /** false while parts are still being mounted: the merge waits for the last one */ ready?: boolean }) {
   const ref = useRef<THREE.Group>(null);
 
   useLayoutEffect(() => {
     const root = ref.current;
-    if (!root) return;
+    if (!root || !ready) return;
     // (the parents too: frozen nodes keep the world matrix they have now)
     root.updateWorldMatrix(true, true);
     const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
@@ -43,9 +69,25 @@ export function StaticBake({ children }: { children: ReactNode }) {
           tmp.multiplyMatrices(inv, m.matrixWorld);
           geo.applyMatrix4(tmp);
           if (tmp.determinant() < 0) flipWinding(geo);
-          // shadows are off, so the flags stay out of the key: one merged mesh per material
-          let b = buckets.get(mat.uuid);
-          if (!b) buckets.set(mat.uuid, (b = { mat, cast: false, recv: false, geos: [] }));
+          // (meshes of different shape share a bucket now: they all need the same set of attributes)
+          if (!geo.attributes.normal) geo.computeVertexNormals();
+          if (!geo.attributes.uv) geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(geo.attributes.position.count * 2), 2));
+          // shadows are off, so the flags stay out of the key: one merged mesh per material (per kind of material when only the colour differs)
+          const twin = twinOf(mat);
+          if (twin) {
+            const n = geo.attributes.position.count;
+            const col = new Float32Array(n * 3);
+            const c = (mat as THREE.MeshStandardMaterial).color;
+            for (let i = 0; i < n; i++) {
+              col[i * 3] = c.r;
+              col[i * 3 + 1] = c.g;
+              col[i * 3 + 2] = c.b;
+            }
+            geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+          }
+          const key = twin ? twin.key : mat.uuid;
+          let b = buckets.get(key);
+          if (!b) buckets.set(key, (b = { mat: twin ? twin.mat : mat, cast: false, recv: false, geos: [] }));
           b.cast ||= m.castShadow;
           b.recv ||= m.receiveShadow;
           b.geos.push(geo);
@@ -91,7 +133,7 @@ export function StaticBake({ children }: { children: ReactNode }) {
       sources.forEach((s) => (s.visible = true));
       frozen.forEach((o) => walkMatrices(o, true));
     };
-  }, []);
+  }, [ready]);
 
   return <group ref={ref}>{children}</group>;
 }

@@ -77,6 +77,8 @@ export function M(color: string, o: MatOpts = {}): THREE.MeshStandardMaterial {
       side: o.side ?? THREE.FrontSide,
     });
     if (o.emissive) m.emissive = new THREE.Color(o.emissive);
+    // (nothing changes these after creation: a baked room may fold their colour into vertex colours, see StaticBake)
+    m.userData.fixed = true;
     matCache.set(key, m);
   }
   return m;
@@ -88,6 +90,7 @@ export function MB(color: string, opacity = 1): THREE.MeshBasicMaterial {
   let m = matCache.get(key) as THREE.MeshBasicMaterial | undefined;
   if (!m) {
     m = new THREE.MeshBasicMaterial({ color, transparent: opacity < 1, opacity });
+    m.userData.fixed = true;
     matCache.set(key, m);
   }
   return m;
