@@ -1,0 +1,15 @@
+Cat sounds (Pixabay Content License, https://pixabay.com/service/license-summary/), cut into single meows, filtered and re-encoded.
+Original files:
+  meow-01.mp3  <-  0d2553a1-dragon-studio-cute-cat-meow-472372.mp3 (from 0.15 s)
+  meow-02.mp3  <-  4ec2fa92-dragon-studio-meow-sfx-405456.mp3 (from 0.00 s)
+  meow-03.mp3  <-  53c7c18b-dragon-studio-kitten-sfx-405457.mp3 (from 0.00 s)
+  meow-04.mp3  <-  5dce832f-dragon-studio-cat-meow-401729.mp3 (from 0.00 s)
+  meow-05.mp3  <-  a64360f3-soundreality-cat-meow-fx-461188.mp3 (from 0.00 s)
+  meow-06.mp3  <-  cad8d8fc-virtual_vibes-cute-cat-meow-400946.mp3 (from 0.16 s)
+  meow-07.mp3  <-  d2d464e3-virtual_vibes-cat-meow-sound-383823.mp3 (from 0.27 s)
+  meow-08.mp3  <-  e1a964f0-dragon-studio-meowing-cat-401728.mp3 (from 0.00 s)
+  meow-09.mp3  <-  53c7c18b-dragon-studio-kitten-sfx-405457.mp3 (from 1.52 s)
+  meow-10.mp3  <-  cad8d8fc-virtual_vibes-cute-cat-meow-400946.mp3 (from 2.41 s)
+  meow-11.mp3  <-  e1a964f0-dragon-studio-meowing-cat-401728.mp3 (from 1.03 s)
+  meow-12.mp3  <-  e1a964f0-dragon-studio-meowing-cat-401728.mp3 (from 2.72 s)
+  meow-13.mp3  <-  e1a964f0-dragon-studio-meowing-cat-401728.mp3 (from 4.50 s)

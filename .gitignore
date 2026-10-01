@@ -1,4 +1,6 @@
 node_modules
 dist
+# the cat sounds as downloaded (processed copies go to public/sfx/meow, see scripts/process-meow.mjs)
+assets-src/
 *.log
 .vite

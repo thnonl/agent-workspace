@@ -38,7 +38,10 @@ try {
     parts.push(`${'='.repeat(78)}\n${pkg.name}@${pkg.version} – ${pkg.license ?? 'see below'}\n${'='.repeat(78)}\n\n${text}\n`);
   }
   const head = 'This package bundles the following third-party software (see dist/). Their licence texts:\n\n';
-  fs.writeFileSync(path.join(root, 'THIRD_PARTY_LICENSES.txt'), head + parts.join('\n'));
+  // the cat sounds are not an npm package: their credits are written by scripts/process-meow.mjs next to the files
+  const credits = path.join(root, 'public', 'sfx', 'meow', 'CREDITS.txt');
+  const sounds = fs.existsSync(credits) ? `\n${'='.repeat(78)}\nCat sounds (public/sfx/meow)\n${'='.repeat(78)}\n\n${fs.readFileSync(credits, 'utf8').trim()}\n` : '';
+  fs.writeFileSync(path.join(root, 'THIRD_PARTY_LICENSES.txt'), head + parts.join('\n') + sounds);
   console.log(`${dirs.size} packages -> THIRD_PARTY_LICENSES.txt`);
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });

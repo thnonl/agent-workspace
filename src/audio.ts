@@ -4,6 +4,62 @@
  */
 import { playMeow } from './meow';
 
+/**
+ * Real cat recordings: public/sfx/meow/index.json lists the clips (made by scripts/process-meow.mjs). They are fetched and decoded
+ * the first time a cat meows; until then – and when there are none – the synthesised meow is used.
+ */
+const MEOW_DIR = `${import.meta.env.BASE_URL}sfx/meow/`;
+let meowClips: AudioBuffer[] = [];
+let meowLoading = false;
+/** the clips played last: a cat does not repeat itself within a few meows */
+const recentClips: number[] = [];
+
+function loadMeowClips(c: AudioContext) {
+  if (meowLoading) return;
+  meowLoading = true;
+  void (async () => {
+    try {
+      const names: unknown = await (await fetch(`${MEOW_DIR}index.json`)).json();
+      if (!Array.isArray(names)) return;
+      const clips = await Promise.all(
+        names.map(async (n) => {
+          try {
+            return await c.decodeAudioData(await (await fetch(`${MEOW_DIR}${String(n)}`)).arrayBuffer());
+          } catch {
+            return null;
+          }
+        }),
+      );
+      meowClips = clips.filter((b): b is AudioBuffer => !!b);
+    } catch {
+      /* no recordings (or no network): the synthesised meow stays */
+    }
+  })();
+}
+
+/**
+ * One of the recordings (never one of the last few), at the cat's pitch and a little different every time: its pitch is a bit
+ * off, glides up or down by a few percent while it plays, it is louder or softer – and sometimes the cat meows twice.
+ */
+function playMeowClip(c: AudioContext, out: AudioNode, t: number, pitch: number, again = true) {
+  const n = meowClips.length;
+  let i = Math.floor(Math.random() * n);
+  for (let tries = 0; tries < 8 && recentClips.includes(i); tries++) i = Math.floor(Math.random() * n);
+  recentClips.push(i);
+  if (recentClips.length > Math.min(4, n - 1)) recentClips.shift();
+  const buf = meowClips[i];
+  const rate = Math.min(1.5, Math.max(0.7, pitch)) * (0.93 + Math.random() * 0.14);
+  const src = c.createBufferSource();
+  src.buffer = buf;
+  src.playbackRate.setValueAtTime(rate, t);
+  const len = buf.duration / rate;
+  if (Math.random() < 0.55) src.playbackRate.linearRampToValueAtTime(rate * (Math.random() < 0.5 ? 0.92 + Math.random() * 0.05 : 1.03 + Math.random() * 0.07), t + len);
+  const g = c.createGain();
+  g.gain.value = 0.09 + Math.random() * 0.06;
+  src.connect(g).connect(out);
+  src.start(t);
+  if (again && n > 1 && Math.random() < 0.16) playMeowClip(c, out, t + len + 0.06 + Math.random() * 0.18, pitch * (0.9 + Math.random() * 0.2), false);
+}
 export type Sfx =
   | 'door' | 'pop' | 'talk' | 'ding' | 'chime' | 'key' | 'paper' | 'water' | 'sip' | 'page' | 'sizzle' | 'bite' | 'meow' | 'blip' | 'pour' | 'clink'
   | 'doorbell' | 'inhale' | 'exhale' | 'thud' | 'huff' | 'clank' | 'pickup' | 'swipe' | 'ring' | 'mail' | 'ask' | 'thunder'
@@ -303,7 +359,11 @@ export function sfx(name: Sfx, roomId?: string, pitch = 1) {
       tone(c, t + 0.05, 62, 1.8, 0.1, 'sine', 38, 0.15);
       break;
     case 'meow':
-      playMeow(c, master, t, pitch, r, 0.2);
+      loadMeowClips(c);
+      if (meowClips.length) playMeowClip(c, master, t, pitch);
+      else playMeow(c, master, t, pitch, r, 0.08);
       break;
   }
 }
+
+if (import.meta.env.DEV && typeof window !== "undefined") Object.assign(window, { __sfx: sfx });

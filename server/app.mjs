@@ -13,6 +13,7 @@ const types = {
   '.png': 'image/png',
   '.ico': 'image/x-icon',
   '.woff2': 'font/woff2',
+  '.mp3': 'audio/mpeg',
 };
 
 /** Requests below `root` only; anything unknown falls back to index.html (single-page app). */
