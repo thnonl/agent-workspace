@@ -7,6 +7,9 @@
 const ENDPOINT = '/api/settings';
 /** keys of the old localStorage layout: moved to the server on first start */
 const LEGACY = /^(agent-workspace\.|claude-office:)/;
+/** per-browser choices (they depend on this device's GPU and taste): always stay in localStorage */
+const LOCAL = new Set(['agent-workspace.quality', 'agent-workspace.weather', 'agent-workspace.season']);
+const isLegacy = (k: string) => LEGACY.test(k) && !LOCAL.has(k);
 const FLUSH_MS = 300;
 const RETRY_MS = 5000;
 
@@ -92,7 +95,7 @@ export async function initSettings(): Promise<void> {
   // one-off move: values the server does not know yet are uploaded, then removed from the browser
   const old: Record<string, string> = {};
   for (const k of ls.keys()) {
-    const v = LEGACY.test(k) ? ls.get(k) : null;
+    const v = isLegacy(k) ? ls.get(k) : null;
     if (v === null) continue;
     if (!mem.has(k)) {
       mem.set(k, v);
@@ -104,22 +107,22 @@ export async function initSettings(): Promise<void> {
     schedule(RETRY_MS);
     return;
   }
-  for (const k of ls.keys()) if (LEGACY.test(k)) ls.del(k);
+  for (const k of ls.keys()) if (isLegacy(k)) ls.del(k);
 }
 
 export function getSetting(key: string): string | null {
-  return remote ? (mem.get(key) ?? null) : ls.get(key);
+  return remote && !LOCAL.has(key) ? (mem.get(key) ?? null) : ls.get(key);
 }
 
 export function setSetting(key: string, value: string) {
-  if (!remote) return ls.set(key, value);
+  if (!remote || LOCAL.has(key)) return ls.set(key, value);
   mem.set(key, value);
   pending.set(key, value);
   schedule();
 }
 
 export function removeSetting(key: string) {
-  if (!remote) return ls.del(key);
+  if (!remote || LOCAL.has(key)) return ls.del(key);
   mem.delete(key);
   pending.set(key, null);
   schedule();
