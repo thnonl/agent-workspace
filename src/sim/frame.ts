@@ -9,6 +9,9 @@
  */
 export const PRE_ROLL_MS = 160;
 
+/** a glide never lasts longer than this (ms) as far as drawing goes */
+export const GLIDE_MAX_MS = 4000;
+
 /** how many rooms after the one on screen are loaded ahead (see Preload in scene/Scene.tsx) */
 export const PRELOAD_ROOMS = 5;
 
@@ -41,6 +44,12 @@ export const frame = {
    * that, the new one moves), and nothing is loaded ahead. See FrameSync.
    */
   settling: false,
+  /**
+   * The camera is gliding from one room to another: only those two are drawn (the rooms in between flash by too fast to be missed, and
+   * each of them would be hundreds of draw calls per frame). `fromId` is the room that was left.
+   */
+  glide: false,
+  fromId: null as string | null,
   /** the active room the settling is about, and when it was switched to */
   settleFor: null as string | null,
   switchAt: 0,

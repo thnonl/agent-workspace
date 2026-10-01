@@ -5,7 +5,7 @@ import { OrbitControls } from '@react-three/drei';
 import { useStore } from '../store';
 import { getLayout } from '../world/layout';
 import { anchors, cats, catsInRoom, simsInRoom, view } from '../sim/registry';
-import { afterRender, frame, PRELOAD_ROOMS, PRE_ROLL_MS } from '../sim/frame';
+import { afterRender, frame, GLIDE_MAX_MS, PRELOAD_ROOMS, PRE_ROLL_MS } from '../sim/frame';
 import { env, envForHour, stepEnv } from '../env';
 import { OVERCAST } from '../weather';
 import { photoHooks } from '../photo';
@@ -133,6 +133,9 @@ useStore.subscribe((s, prev) => {
   frame.settleFor = s.activeRoomId;
   frame.switchAt = performance.now();
   frame.settling = true;
+  // (the camera glides from the room that was left to the new one: only those two are drawn meanwhile)
+  frame.fromId = prev.activeRoomId;
+  frame.glide = !!prev.activeRoomId && !!s.activeRoomId;
 });
 
 /** Writes the centre of the active room (a bit above the floor) into `out`; returns the camera fit distance, 0 when no room is active. */
@@ -201,6 +204,8 @@ function FrameSync() {
       frame.switchAt = tNow;
       frame.settling = true;
     } else if (frame.settling && tNow - frame.switchAt >= PRE_ROLL_MS) frame.settling = false;
+    // the glide is over once the camera has arrived (or after a while, whatever the camera does)
+    if (frame.glide && ((!frame.settling && !frame.cameraBusy) || tNow - frame.switchAt > GLIDE_MAX_MS)) frame.glide = false;
     for (const id of st.visibleOrder) {
       const room = st.rooms[id];
       if (!room) continue;
@@ -208,7 +213,7 @@ function FrameSync() {
       const l = getLayout(room.seed, room.themeIndex);
       tmpSphere.center.set(o[0], 2, o[2]);
       tmpSphere.radius = Math.hypot(l.width, l.depth) / 2 + 4;
-      if (id === st.activeRoomId || tmpFrustum.intersectsSphere(tmpSphere)) {
+      if (id === st.activeRoomId || (frame.glide && !frame.settling ? id === frame.fromId : tmpFrustum.intersectsSphere(tmpSphere))) {
         frame.visibleRooms.add(id);
         // (a room that is not the active one stands still: its decor does not animate)
         if (id === st.activeRoomId && !frame.settling) frame.animRooms.add(id);
