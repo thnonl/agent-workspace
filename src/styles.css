@@ -246,8 +246,10 @@ button.pill:hover { background: #fff; }
 .paper-close { position: absolute; z-index: 2; top: 12px; right: 14px; width: 32px; height: 32px; border: 0; border-radius: 50%; cursor: pointer; font-size: 20px; font-weight: 900; line-height: 1; background: rgba(120, 90, 60, 0.1); }
 .paper-close:hover { background: rgba(120, 90, 60, 0.22); }
 .paper-scroll {
-  overflow-y: auto; padding: 30px 38px 14px 54px; line-height: 1.55;
-  background: linear-gradient(90deg, transparent 40px, rgba(235, 110, 110, 0.35) 40px, rgba(235, 110, 110, 0.35) 41.5px, transparent 41.5px);
+  /* --m: where the red margin line of the paper runs; the text starts a little to the right of it (on a phone the margin is narrow) */
+  --m: 40px;
+  overflow-y: auto; padding: 30px 38px 14px calc(var(--m) + 14px); line-height: 1.55;
+  background: linear-gradient(90deg, transparent var(--m), rgba(235, 110, 110, 0.35) var(--m), rgba(235, 110, 110, 0.35) calc(var(--m) + 1.5px), transparent calc(var(--m) + 1.5px));
 }
 .paper-kicker { display: block; font-size: 12px; font-weight: 900; letter-spacing: 1.2px; text-transform: uppercase; color: #2f9a63; }
 .paper h2 { margin: 2px 0 0; font-size: 26px; font-weight: 900; line-height: 1.15; overflow-wrap: anywhere; }
@@ -289,7 +291,7 @@ button.pill:hover { background: #fff; }
 .app .confirm-card .btn-big, .app .modal-card .btn-big, .app .paper .btn-big { color: #fff; background: linear-gradient(135deg, #c92f6d, #d24d1c); border-color: #fff; box-shadow: 0 6px 16px rgba(201, 47, 109, 0.35); }
 .app .confirm-card .btn-big:hover, .app .modal-card .btn-big:hover, .app .paper .btn-big:hover { background: linear-gradient(135deg, #d63c7b, #de5d2b); }
 .confirm-note { color: #26314f; }
-@media (max-width: 860px) { .paper-scroll { padding: 26px 22px 12px 40px; } }
+@media (max-width: 860px) { .paper-scroll { --m: 16px; padding: 26px 18px 12px calc(var(--m) + 12px); } }
 
 .modal { position: absolute; inset: 0; z-index: 100; display: grid; place-items: center; background: rgba(60, 40, 90, 0.28); backdrop-filter: blur(4px); animation: fadeIn 0.2s both; }
 .modal-card { position: relative; width: min(560px, calc(100% - 32px)); max-height: calc(100% - 32px); overflow-y: auto; overscroll-behavior: contain; padding: 26px 30px; background: #fff; border-radius: 26px; box-shadow: 0 30px 70px rgba(60, 40, 90, 0.35); }
