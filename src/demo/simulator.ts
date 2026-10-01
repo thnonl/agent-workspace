@@ -121,6 +121,8 @@ export function startDemo(emit: Emit, count = 3): () => void {
     const p = PROJECTS[idx % PROJECTS.length];
     let run = idx;
     let used = 0;
+    // Codex has no sub-agents and no questions: the monitor only reports the main agent's own calls
+    const solo = p.provider === 'codex';
     await sleep(idx * 6500 + 300);
     emit({ type: 'session', sessionId: p.id, title: '', cwd: p.cwd, project: p.project, provider: p.provider, updatedAt: Date.now() });
     while (!stopped) {
@@ -128,7 +130,9 @@ export function startDemo(emit: Emit, count = 3): () => void {
       const title = sc.prompt.length > 46 ? `${sc.prompt.slice(0, 45)}…` : sc.prompt;
       // (the demo's context fills up a bit with every run and starts over when it is full)
       used = used > 175_000 ? rnd(12_000, 30_000) : (used || rnd(20_000, 70_000)) + rnd(14_000, 34_000);
-      emit({ type: 'session', sessionId: p.id, title, cwd: p.cwd, project: p.project, provider: p.provider, updatedAt: Date.now(), context: { used: Math.round(used), window: 200_000, exact: false, model: 'demo' } });
+      // (Codex tells its window size, so it is exact there; for the others the monitor only guesses)
+      const context = solo ? { used: Math.round(used), window: 272_000, exact: true, model: 'demo' } : { used: Math.round(used), window: 200_000, exact: false, model: 'demo' };
+      emit({ type: 'session', sessionId: p.id, title, cwd: p.cwd, project: p.project, provider: p.provider, updatedAt: Date.now(), lastPrompt: sc.prompt, context });
       emit({ type: 'agent_start', sessionId: p.id, agentId: 'main', role: 'main', label: 'Director' });
       emit({ type: 'agent_say', sessionId: p.id, agentId: 'main', kind: 'task', text: sc.prompt });
       await sleep(5200);
@@ -137,7 +141,7 @@ export function startDemo(emit: Emit, count = 3): () => void {
         emit({ type: 'agent_say', sessionId: p.id, agentId: 'main', kind: l.kind, text: l.text, tool: l.tool, cue: cueFrom(l.text) });
         await sleep(rnd(3000, 4200));
       }
-      if (sc.ask) {
+      if (sc.ask && !solo) {
         if (stopped) return;
         emit({ type: 'agent_say', sessionId: p.id, agentId: 'main', kind: 'tool', tool: 'AskUserQuestion', text: 'Using AskUserQuestion' });
         emit({ type: 'agent_ask', sessionId: p.id, text: sc.ask });
@@ -149,12 +153,25 @@ export function startDemo(emit: Emit, count = 3): () => void {
       }
       // hand out the work, one by one
       const running: Promise<void>[] = [];
-      for (let i = 0; i < sc.agents.length; i++) {
+      if (solo) {
+        // no team: the main agent does it all itself (every call is a task for the staff) and reports each result in a message
+        for (const a of sc.agents) {
+          for (const l of a.lines) {
+            if (stopped) return;
+            emit({ type: 'agent_say', sessionId: p.id, agentId: 'main', kind: l.kind, text: l.text, tool: l.tool, cue: cueFrom(l.text) });
+            await sleep(rnd(3200, 5200));
+          }
+          emit({ type: 'agent_say', sessionId: p.id, agentId: 'main', kind: 'text', text: a.summary });
+          await sleep(rnd(2400, 3600));
+        }
+      }
+      for (let i = 0; i < (solo ? 0 : sc.agents.length); i++) {
         if (stopped) return;
         const a = sc.agents[i];
         const id = `${p.id}-${run}-${i}`;
-        emit({ type: 'agent_say', sessionId: p.id, agentId: 'main', kind: 'tool', tool: 'Agent', text: `Delegating: ${a.label}` });
+        // the monitor announces the new sub-agent first, then the main agent's call that spawned it
         running.push(runAgent(p.id, id, { ...a, fail: Math.random() < 0.07 }));
+        emit({ type: 'agent_say', sessionId: p.id, agentId: 'main', kind: 'tool', tool: 'Agent', text: `Delegating: ${a.label}` });
         await sleep(rnd(1800, 3200));
       }
       // director keeps busy while the team works
