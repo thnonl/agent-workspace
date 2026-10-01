@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { G, M, MB, group, mesh } from './kit';
+import { leafGeo } from './plants';
 
 /**
  * Small things a character picks up during a break: a paper cup, a book, a watering can – plus the
@@ -24,6 +25,8 @@ export interface HeldItems {
   fx: THREE.Group;
   /** a delivery box carried in both arms */
   parcel: THREE.Group;
+  /** a flowerpot with a plant, carried in both arms */
+  pot: THREE.Group;
   /** a cigarette with a glowing tip */
   cig: THREE.Group;
   /** puffs of smoke at the mouth (room space, pooled) */
@@ -52,6 +55,26 @@ export function buildParcelBox(): THREE.Group {
   box.add(mesh(G.box(0.06, 0.247, 0.287), M('#ecdcae', { rough: 0.6 }), 0, 0, 0, { cast: false }));
   box.add(mesh(G.box(0.09, 0.06, 0.004), M('#ffffff', { rough: 0.7 }), 0.09, -0.02, 0.142, { cast: false }));
   return box;
+}
+
+/** a clay pot with a leafy plant (carried while tidying up; origin at the middle of the pot) */
+export function buildPotPlant(color = '#e07a5f'): THREE.Group {
+  const pot = group();
+  pot.add(mesh(G.cyl(0.14, 0.1, 0.2, 18), M(color, { rough: 0.55 }), 0, 0, 0));
+  pot.add(mesh(G.torus(0.14, 0.014, Math.PI * 2, 6, 18), M(color, { rough: 0.55 }), 0, 0.1, 0, { r: [Math.PI / 2, 0, 0] }));
+  pot.add(mesh(G.cyl(0.125, 0.125, 0.012, 14), M('#3a2a22', { rough: 1 }), 0, 0.098, 0, { cast: false }));
+  const green = M('#4fb86f', { rough: 0.65, side: THREE.DoubleSide });
+  const green2 = M('#3fa864', { rough: 0.65, side: THREE.DoubleSide });
+  for (let i = 0; i < 8; i++) {
+    const arm = group(0, 0.1, 0);
+    arm.rotation.y = (i / 8) * Math.PI * 2 + 0.3;
+    const lean = group();
+    lean.rotation.x = 0.2 + (i % 3) * 0.28;
+    lean.add(mesh(leafGeo(i % 2 ? 'oval' : 'blade', 0.3 + (i % 3) * 0.04, 0.1, 0.5, 0.25, 5), i % 2 ? green : green2, 0, 0, 0, { cast: false }));
+    arm.add(lean);
+    pot.add(arm);
+  }
+  return pot;
 }
 
 export function buildHeldItems(accent: string): HeldItems {
@@ -130,6 +153,8 @@ export function buildHeldItems(accent: string): HeldItems {
   // delivery box
   const parcel = buildParcelBox();
   parcel.visible = false;
+  const pot = buildPotPlant();
+  pot.visible = false;
 
   // cigarette: slanted forward and up, a glowing tip at the far end
   const cig = group();
@@ -169,5 +194,5 @@ export function buildHeldItems(accent: string): HeldItems {
   handsetTilt.quaternion.copy(Q_PHONE_EAR);
   handset.add(handsetTilt);
   handset.visible = false;
-  return { cup, book, bookLeft, bookRight, can, bowl, spout, stream, drops, steam, fx, parcel, cig, smoke, phone, phoneTilt, phoneScreen, handset };
+  return { cup, book, bookLeft, bookRight, can, bowl, spout, stream, drops, steam, fx, parcel, pot, cig, smoke, phone, phoneTilt, phoneScreen, handset };
 }

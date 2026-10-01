@@ -23,6 +23,8 @@ import { PropHits, Radio } from './Interactive';
 import { bonusCats, levelOf, useProgress } from '../progress';
 import type { Season } from '../season';
 import { CatView } from './CatView';
+import { CatToys } from './CatToys';
+import { MovableProps } from './MovableProps';
 import { shade } from './kit';
 
 export const ROOM_SPACING_X = 48;
@@ -119,9 +121,7 @@ const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle, season 
         ))}
       </StaticBake>
       <StaticBake>
-        {layout.props.map((p, i) => (
-          <PropView key={i} p={p} theme={theme} roomId={roomId} />
-        ))}
+        {layout.props.map((p, i) => (layout.movable.includes(i) ? null : <PropView key={i} p={p} theme={theme} roomId={roomId} />))}
       </StaticBake>
       {/* festive decorations (Halloween, Christmas, Tết): baked again when the season changes */}
       {season === 'none' ? null : (
@@ -189,6 +189,9 @@ export const RoomView = memo(function RoomView({ roomId }: { roomId: string }) {
         <DirectorDesk layout={layout} reports={reports} roomId={roomId} />
       </StaticBake>
       <Chair x={layout.director.seat.x} z={layout.director.seat.z} rot={0} turn={0} color={shade(theme.accent2, -0.05)} roomId={roomId} deskIndex={-1} big approachSide={layout.director.approachSide} seed={99} />
+
+      <CatToys roomId={roomId} layout={layout} />
+      <MovableProps roomId={roomId} layout={layout} />
 
       {/* the office cats */}
       {Array.from({ length: layout.catCount ? layout.catCount + extraCats : 0 }, (_, i) => (

@@ -1,4 +1,5 @@
 import { useMemo, useRef } from 'react';
+import { DeskPlant } from './plants';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import type { DeskDecor, DeskSlot, RoomLayout } from '../world/layout';
@@ -68,14 +69,7 @@ export function DeskItem({ kind, theme, seed }: { kind: DeskDecor; theme: RoomTh
         </group>
       );
     case 'plant':
-      return (
-        <group>
-          <Ms geo={G.cyl(0.06, 0.045, 0.09, 14)} mat={M(col, { rough: 0.6 })} pos={[0, 0.045, 0]} />
-          {[0, 1, 2, 3].map((i) => (
-            <Ms key={i} geo={G.sphere(0.055, 10, 8)} mat={M(i % 2 ? '#6fcf8b' : '#4fb86f')} pos={[Math.sin(i * 1.7) * 0.04, 0.13 + (i % 2) * 0.035, Math.cos(i * 1.7) * 0.04]} />
-          ))}
-        </group>
-      );
+      return <DeskPlant seed={seed} color={col} />;
     case 'notes':
       return (
         <group>

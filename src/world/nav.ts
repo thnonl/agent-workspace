@@ -55,7 +55,7 @@ export class NavGrid {
   isBlocked(x: number, z: number): boolean {
     const ix = this.ix(x);
     const iz = this.iz(z);
-    return !this.inside(ix, iz) || this.blocked[iz * this.cols + ix] === 1;
+    return !this.inside(ix, iz) || this.blocked[iz * this.cols + ix] > 0;
   }
 
   /** Block every cell whose centre lies inside the rectangle grown by `pad`. */
@@ -69,7 +69,7 @@ export class NavGrid {
       for (let ix = Math.max(0, this.ix(x0)); ix <= Math.min(this.cols - 1, this.ix(x1)); ix++) {
         const cx = this.cx(ix);
         const cz = this.cz(iz);
-        if (cx >= x0 && cx <= x1 && cz >= z0 && cz <= z1) this.blocked[iz * this.cols + ix] = 1;
+        if (cx >= x0 && cx <= x1 && cz >= z0 && cz <= z1) this.blocked[iz * this.cols + ix]++;
       }
     }
   }
@@ -79,6 +79,30 @@ export class NavGrid {
    * `oz` shifts the rectangle along its own z axis.
    */
   blockOriented(x: number, z: number, w: number, d: number, rot: number, pad = 0, oz = 0) {
+    this.markOriented(x, z, w, d, rot, pad, oz, 1);
+  }
+
+  /** Takes back a `blockOriented` with the same arguments (blocks are counted: what other things block stays blocked). */
+  unblockOriented(x: number, z: number, w: number, d: number, rot: number, pad = 0, oz = 0) {
+    this.markOriented(x, z, w, d, rot, pad, oz, -1);
+  }
+
+  /** Is the oriented rectangle (grown by `pad`) free of blocked cells? */
+  orientedFree(x: number, z: number, w: number, d: number, rot: number, pad = 0): boolean {
+    const c = Math.cos(rot);
+    const s = Math.sin(rot);
+    const hw = w / 2 + pad;
+    const hd = d / 2 + pad;
+    const step = CELL * 0.5;
+    for (let a = -hw; a <= hw + 1e-6; a += step) {
+      for (let b = -hd; b <= hd + 1e-6; b += step) {
+        if (this.isBlocked(x + a * c + b * s, z - a * s + b * c)) return false;
+      }
+    }
+    return true;
+  }
+
+  private markOriented(x: number, z: number, w: number, d: number, rot: number, pad: number, oz: number, delta: 1 | -1) {
     this.comp = null;
     const c = Math.cos(rot);
     const s = Math.sin(rot);
@@ -94,7 +118,11 @@ export class NavGrid {
         const dz = this.cz(iz) - cz;
         const lx = dx * c - dz * s;
         const lz = dx * s + dz * c;
-        if (Math.abs(lx) <= hw && Math.abs(lz) <= hd) this.blocked[iz * this.cols + ix] = 1;
+        if (Math.abs(lx) <= hw && Math.abs(lz) <= hd) {
+          const i = iz * this.cols + ix;
+          if (delta > 0) this.blocked[i]++;
+          else if (this.blocked[i] > 0) this.blocked[i]--;
+        }
       }
     }
   }

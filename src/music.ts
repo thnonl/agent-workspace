@@ -31,7 +31,7 @@ const PROGRESSIONS: Record<Mood, Chord[][]> = {
     [{ bass: 38, pad: [57, 60, 65, 69] }, { bass: 31, pad: [59, 62, 65, 67] }, { bass: 36, pad: [59, 64, 67, 71] }, { bass: 33, pad: [57, 60, 64, 67] }],
   ],
 };
-const BPM: Record<Mood, number> = { day: 80, dusk: 74, night: 66, rain: 70 };
+const BPM: Record<Mood, number> = { day: 66, dusk: 62, night: 56, rain: 58 };
 /** C major pentatonic (A minor pentatonic), two octaves: fits every chord above */
 const SCALE = [72, 74, 76, 79, 81, 84, 86, 88];
 const MUSIC_LEVEL = 0.42;
@@ -86,7 +86,7 @@ function build(): Engine | null {
   const rainGain = ctx.createGain();
   rainGain.gain.value = 0;
   rainGain.connect(g.sfx);
-  for (const [type, freq, q, level] of [['bandpass', 1800, 0.35, 1], ['lowpass', 500, 0.7, 0.7]] as const) {
+  for (const [type, freq, q, level] of [['bandpass', 1300, 0.35, 0.3], ['lowpass', 500, 0.7, 0.7]] as const) {
     const src = ctx.createBufferSource();
     src.buffer = noise;
     src.loop = true;
@@ -254,8 +254,8 @@ function sync() {
   const audible = pageActive() && e.ctx.state === 'running';
   const t = e.ctx.currentTime;
   e.musicGain.gain.setTargetAtTime(want.music && audible ? MUSIC_LEVEL : 0, t, 0.6);
-  e.rainGain.gain.setTargetAtTime(audible ? want.rain * 0.07 : 0, t, 0.8);
-  e.cricketGain.gain.setTargetAtTime(audible ? want.crickets * 0.012 : 0, t, 0.8);
+  e.rainGain.gain.setTargetAtTime(audible ? want.rain * 0.011 : 0, t, 0.8);
+  e.cricketGain.gain.setTargetAtTime(audible ? want.crickets * 0.006 : 0, t, 0.8);
   if (want.music && audible) startMusic(e);
   else if (timer) {
     // let the fade finish before the notes stop being scheduled

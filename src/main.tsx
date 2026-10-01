@@ -1,7 +1,7 @@
 import { StrictMode, Suspense, lazy } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
-import '@fontsource-variable/nunito';
+import '@fontsource-variable/baloo-2';
 import '@fontsource-variable/jetbrains-mono';
 import './styles.css';
 import './styles.fx.css';
@@ -11,6 +11,7 @@ import { getLayout } from './world/layout';
 import { useProgress } from './progress';
 
 const CatLab = lazy(() => import('./scene/CatLab').then((m) => ({ default: m.CatLab })));
+const PlantLab = lazy(() => import('./scene/PlantLab').then((m) => ({ default: m.PlantLab })));
 const WardrobeLab = lazy(() => import('./scene/WardrobeLab').then((m) => ({ default: m.WardrobeLab })));
 
 if (import.meta.env.DEV) Object.assign(window, { __office: useStore, __registry: registry, __layout: getLayout, __progress: useProgress });
@@ -20,6 +21,10 @@ createRoot(document.getElementById('root')!).render(
     {location.search.includes('catlab') ? (
       <Suspense fallback={null}>
         <CatLab />
+      </Suspense>
+    ) : location.search.includes('plantlab') ? (
+      <Suspense fallback={null}>
+        <PlantLab />
       </Suspense>
     ) : location.search.includes('wardrobe') ? (
       <Suspense fallback={null}>

@@ -146,9 +146,19 @@ export interface Station {
   pan?: V2;
 }
 
+/** Things for the cats: a cardboard box to curl up in (also a `Spot`), a scratching post, a ball of yarn and a toy mouse that get batted around. */
+export interface Toy {
+  kind: 'box' | 'post' | 'yarn' | 'mouse';
+  x: number;
+  z: number;
+  rot: number;
+  /** floor position cats stand at to use it (box / post) */
+  approach?: V2;
+}
+
 /** Places to sit / lie down: sofas, beanbags, the director's desk, a patch of sun. */
 export interface Spot {
-  kind: 'sofa' | 'armchair' | 'beanbag' | 'desk' | 'sun';
+  kind: 'sofa' | 'armchair' | 'beanbag' | 'desk' | 'sun' | 'box';
   x: number;
   z: number;
   y: number;
@@ -175,6 +185,9 @@ export interface RoomLayout {
   signPos: { wall: 'back' | 'left'; pos: number; y: number } | null;
   catWindows: CatWindow[];
   spots: Spot[];
+  toys: Toy[];
+  /** indices into `props` of the plants and cartons that people carry to a tidier place (see sim/tidy.ts) */
+  movable: number[];
   stations: Station[];
   catCount: number;
   nav: NavGrid;
@@ -977,8 +990,54 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
     perKind.set(kindSt, (perKind.get(kindSt) ?? 0) + 1);
   }
 
+  // ------------- cat toys: a box to curl up in, a scratching post, a ball of yarn, a toy mouse (only in rooms the cats can visit)
+  const toys: Toy[] = [];
+  if (catWindows.length) {
+    const ring = (x: number, z: number, rad: number) => Array.from({ length: 8 }, (_, k) => [x + Math.cos((k / 8) * Math.PI * 2) * rad, z + Math.sin((k / 8) * Math.PI * 2) * rad]);
+    // open floor all around: blocking the middle of it cannot seal anybody off
+    const roomy = (x: number, z: number, rad: number) => !nav.isBlocked(x, z) && ring(x, z, rad).every(([qx, qz]) => !nav.isBlocked(qx, qz));
+    const clear = (x: number, z: number) => Math.hypot(x - door.inside.x, z - door.inside.z) > 2.4 && toys.every((t) => Math.hypot(t.x - x, t.z - z) > 1.6)
+      && stations.every((st) => Math.hypot(st.stand.x - x, st.stand.z - z) > 1) && spots.every((sp) => Math.hypot(sp.approach.x - x, sp.approach.z - z) > 1);
+    const cand: V2[] = [];
+    for (let k = 0; k < 90; k++) cand.push({ x: r.range(-W / 2 + 1.1, W / 2 - 1.1), z: r.range(-D / 2 + 1.1, D / 2 - 1.1) });
+    const take = (rad: number, edge: boolean) => {
+      const hit = cand.find((c) => clear(c.x, c.z) && roomy(c.x, c.z, rad) && (!edge || Math.min(W / 2 - Math.abs(c.x), D / 2 - Math.abs(c.z)) < 2.3));
+      if (hit) cand.splice(cand.indexOf(hit), 1);
+      return hit;
+    };
+    const box = take(1.0, true);
+    if (box) {
+      const approach = { x: box.x, z: box.z + 0.8 };
+      if (roomy(approach.x, approach.z, 0.25) && nav.reachable(door.inside, approach)) {
+        nav.blockRect({ x: box.x, z: box.z, w: 0.8, d: 0.7 });
+        toys.push({ kind: 'box', x: box.x, z: box.z, rot: 0, approach });
+        spots.push({ kind: 'box', x: box.x, z: box.z, y: 0.05, yaw: r.range(-0.5, 0.5), approach });
+      }
+    }
+    const post = take(0.95, true);
+    if (post) {
+      const approach = { x: post.x, z: post.z + 0.62 };
+      if (roomy(approach.x, approach.z, 0.2) && nav.reachable(door.inside, approach)) {
+        nav.blockRect({ x: post.x, z: post.z, w: 0.55, d: 0.55 });
+        toys.push({ kind: 'post', x: post.x, z: post.z, rot: 0, approach });
+      }
+    }
+    const yarn = take(0.6, false);
+    if (yarn) toys.push({ kind: 'yarn', x: yarn.x, z: yarn.z, rot: r.range(0, Math.PI * 2) });
+    const mouse = take(0.6, false);
+    if (mouse) toys.push({ kind: 'mouse', x: mouse.x, z: mouse.z, rot: r.range(0, Math.PI * 2) });
+  }
+
+  // ------------- plants and cartons that nobody's break depends on: they can be carried to a tidier place
+  const movable: number[] = [];
+  props.forEach((pr, i) => {
+    if (pr.kind !== 'plant' && pr.kind !== 'tallPlant' && pr.kind !== 'cactus' && pr.kind !== 'boxes') return;
+    if (stations.some((st) => Math.hypot(st.target.x - pr.x, st.target.z - pr.z) < 0.05)) return;
+    movable.push(i);
+  });
+
   return {
-    seed, kind: kind.name, seating, width: W, depth: D, wallHeight, theme, door, windows, desks, director, props, wallDecor, decals, rug, signPos, catWindows, spots, stations, catCount, nav,
+    seed, kind: kind.name, seating, width: W, depth: D, wallHeight, theme, door, windows, desks, director, props, wallDecor, decals, rug, signPos, catWindows, spots, toys, movable, stations, catCount, nav,
     fitDistance: Math.hypot(W, D) * 1.2 + 3.5,
   };
 }

@@ -34,8 +34,8 @@ function buildAO(layout: RoomLayout): THREE.BufferGeometry {
   rects.push({ x: -W / 2 - t / 2, z: 0, w: t, d: D, rot: 0, m: 0.62 });
   for (const d of layout.desks) rects.push({ x: d.x, z: d.z, w: d.w, d: 1.0, rot: d.rot, m: 0.34 });
   rects.push({ x: layout.director.desk.x, z: layout.director.desk.z, w: 3.0, d: 1.2, rot: 0, m: 0.4 });
-  for (const p of layout.props) {
-    if (NO_AO.has(p.kind)) continue;
+  for (const [pi, p] of layout.props.entries()) {
+    if (NO_AO.has(p.kind) || layout.movable.includes(pi)) continue;
     const [fw, fd] = FOOT[p.kind];
     const k = SHRINK[p.kind] ?? 1;
     const small = Math.min(fw, fd);

@@ -112,6 +112,68 @@ export interface RoomRuntime {
 
 export const roomRuntime = new Map<string, RoomRuntime>();
 
+/** A plant or carton of `layout.props` (one of `layout.movable`) while people carry it around: where it stands now. */
+export interface MovedProp {
+  /** index into layout.props */
+  prop: number;
+  state: 'placed' | 'carried';
+  x: number;
+  z: number;
+  rot: number;
+  /** key of the character who is going to / carrying it */
+  by: string | null;
+  /** where it is going (reserved so nobody else picks the same place) */
+  to: { x: number; z: number; rot: number } | null;
+  /** performance.now()/1000 it was last set down (0 = never moved) */
+  movedAt: number;
+}
+
+const movedByRoom = new Map<string, { layout: import('../world/layout').RoomLayout; items: MovedProp[]; version: number; listeners: Set<() => void> }>();
+
+function movedEntry(roomId: string, layout: import('../world/layout').RoomLayout) {
+  let c = movedByRoom.get(roomId);
+  if (!c || c.layout !== layout) {
+    const listeners = c?.listeners ?? new Set<() => void>();
+    c = {
+      layout,
+      version: (c?.version ?? 0) + 1,
+      listeners,
+      items: layout.movable.map((i) => ({ prop: i, state: 'placed' as const, x: layout.props[i].x, z: layout.props[i].z, rot: layout.props[i].rot, by: null, to: null, movedAt: 0 })),
+    };
+    movedByRoom.set(roomId, c);
+  }
+  return c;
+}
+
+/** where the carriable plants and cartons of a room stand now (created from the layout the first time) */
+export function movedOf(roomId: string, layout: import('../world/layout').RoomLayout): MovedProp[] {
+  return movedEntry(roomId, layout).items;
+}
+
+/** the moved props of a room as they are now, or nothing when nobody has looked yet */
+export function movedIfAny(roomId: string): MovedProp[] | null {
+  return movedByRoom.get(roomId)?.items ?? null;
+}
+
+/** something was picked up / put down: the scene redraws the room's carriable props */
+export function notifyMoved(roomId: string) {
+  const c = movedByRoom.get(roomId);
+  if (!c) return;
+  c.version++;
+  c.listeners.forEach((f) => f());
+}
+
+export function subscribeMoved(roomId: string, fn: () => void): () => void {
+  const c = movedByRoom.get(roomId);
+  if (!c) return () => {};
+  c.listeners.add(fn);
+  return () => c.listeners.delete(fn);
+}
+
+export function movedVersion(roomId: string): number {
+  return movedByRoom.get(roomId)?.version ?? 0;
+}
+
 /** Schedules and delivers the parcels of a room: a first one soon after somebody is on stage, then one every 2-5 minutes once it is collected. Only numbers are compared. Returns true at the moment a parcel arrives. */
 export function tickParcel(rt: RoomRuntime, now: number): boolean {
   if (rt.parcelAt === 0) rt.parcelAt = now + 40 + Math.random() * 50;
@@ -322,7 +384,7 @@ export interface CatSim {
 export const cats = new Map<string, CatSim>();
 
 /** Dev / test switches (exposed as window.__registry in dev builds). */
-export const debugFlags: { activity?: string; catNow?: boolean; catLeave?: boolean; catSpot?: string; catPose?: string; channel?: 'call' | 'email' } = {};
+export const debugFlags: { activity?: string; catNow?: boolean; catLeave?: boolean; catSpot?: string; catToy?: 'play' | 'scratch'; catPose?: string; channel?: 'call' | 'email' } = {};
 
 const catLists = new Map<string, { n: number; list: CatSim[] }>();
 

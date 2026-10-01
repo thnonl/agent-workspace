@@ -420,7 +420,7 @@ function createPerson(get: Get, set: SetFn, roomId: string, role: 'director' | '
   const state = get();
   const rec: PersonRec = {
     key, sessionId: roomId, role, name: pickName(roomId, key, state.names, roomNames(state, roomId)), seed: hashString(key),
-    present: true, taskKey: null, desk, joinedAt: Date.now(), lastWorkEnd: 0, leaveAt: 0, demo: state.rooms[roomId]?.demo ?? false,
+    present: true, taskKey: null, desk, joinedAt: Date.now(), restored: !!state.syncing, lastWorkEnd: 0, leaveAt: 0, demo: state.rooms[roomId]?.demo ?? false,
   };
   set({ people: { ...state.people, [key]: rec } });
   return rec;

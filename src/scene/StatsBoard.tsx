@@ -140,13 +140,13 @@ export function StatsBoard({ roomId, layout }: { roomId: string; layout: RoomLay
     g.fill();
     g.fillRect(0, 50, W_PX, 38);
     g.fillStyle = '#ffffff';
-    g.font = '800 38px Nunito Variable, Nunito, system-ui, sans-serif';
+    g.font = '800 38px Baloo 2 Variable, system-ui, sans-serif';
     g.textBaseline = 'middle';
     g.textAlign = 'left';
     const name = (room.project || room.title || 'Office').replace(/\s+/g, ' ');
     g.fillText(name.length > 18 ? `${name.slice(0, 17)}…` : name, 26, 46);
     g.textAlign = 'right';
-    g.font = '800 30px Nunito Variable, Nunito, system-ui, sans-serif';
+    g.font = '800 30px Baloo 2 Variable, system-ui, sans-serif';
     g.fillText(`Lv ${lv.level} · ${lv.title}`, W_PX - 26, 46);
     // numbers
     const cells: [string, string, string][] = [
@@ -160,10 +160,10 @@ export function StatsBoard({ roomId, layout }: { roomId: string; layout: RoomLay
       const y = 100 + Math.floor(i / 2) * 92;
       g.textAlign = 'left';
       g.fillStyle = col;
-      g.font = '900 64px Nunito Variable, Nunito, system-ui, sans-serif';
+      g.font = '900 64px Baloo 2 Variable, system-ui, sans-serif';
       g.fillText(num, x, y + 30);
       g.fillStyle = '#6a6084';
-      g.font = '700 25px Nunito Variable, Nunito, system-ui, sans-serif';
+      g.font = '700 25px Baloo 2 Variable, system-ui, sans-serif';
       g.fillText(label, x, y + 72);
     });
     // xp bar and trophies
@@ -174,7 +174,7 @@ export function StatsBoard({ roomId, layout }: { roomId: string; layout: RoomLay
     roundRect(g, 26, H_PX - 62, Math.max(14, 200 * (lv.into / lv.need)), 14, 7);
     g.fill();
     g.textAlign = 'left';
-    g.font = '700 21px Nunito Variable, Nunito, system-ui, sans-serif';
+    g.font = '700 21px Baloo 2 Variable, system-ui, sans-serif';
     g.fillStyle = '#6a6084';
     g.fillText(`${pr.xp.toLocaleString('en-US')} XP`, 26, H_PX - 24);
     const show = lv.level >= 3;

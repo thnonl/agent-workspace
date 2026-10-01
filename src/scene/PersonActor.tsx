@@ -135,7 +135,7 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
   const scale = RIG_SCALE * app.scale;
   const items = useMemo(() => {
     const it = buildHeldItems(layout.theme.accent);
-    rig.handHold.add(it.cup, it.book, it.can, it.bowl, it.parcel, it.cig, it.phone, it.handset);
+    rig.handHold.add(it.cup, it.book, it.can, it.bowl, it.parcel, it.pot, it.cig, it.phone, it.handset);
     return it;
   }, [rig, layout.theme]);
   const bells = useMemo(() => {
@@ -390,6 +390,9 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
     items.can.visible = held === 'can';
     items.bowl.visible = held === 'bowl';
     items.parcel.visible = held === 'parcel';
+    items.pot.visible = held === 'pot';
+    if (held === 'parcel') items.parcel.scale.setScalar(actor.heldScale);
+    else if (held === 'pot') items.pot.scale.setScalar(actor.heldScale);
     items.cig.visible = held === 'cig';
     const phoneOn = held === 'phone';
     items.phone.visible = phoneOn;
@@ -406,8 +409,8 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
       rig.root.getWorldQuaternion(qRoot);
       qRel.copy(qHand).invert().multiply(qRoot);
       qTilt.setFromAxisAngle(tiltAxis, actor.heldTilt);
-      const item = phoneOn ? items.phone : held === 'handsetEar' ? items.handset : held === 'parcel' ? items.parcel : held === 'cig' ? items.cig : held === 'cup' ? items.cup : held === 'book' ? items.book : held === 'bowl' ? items.bowl : items.can;
-      const off = held === 'phone' ? vTmp.set(-0.03, 0.05, 0.05) : held === 'handsetEar' ? vTmp.set(-0.045, 0.05, 0) : held === 'parcel' ? vTmp.set(-0.2, -0.02, 0.14) : held === 'cig' ? vTmp.set(0, 0.03, 0.02) : held === 'cup' ? vTmp.set(0, 0.07, 0.03) : held === 'book' ? vTmp.set(-0.13, 0.03, 0.06) : held === 'bowl' ? vTmp.set(0, 0.05, 0.06) : vTmp.set(0, -0.03, 0.1);
+      const item = phoneOn ? items.phone : held === 'handsetEar' ? items.handset : held === 'parcel' ? items.parcel : held === 'pot' ? items.pot : held === 'cig' ? items.cig : held === 'cup' ? items.cup : held === 'book' ? items.book : held === 'bowl' ? items.bowl : items.can;
+      const off = held === 'phone' ? vTmp.set(-0.03, 0.05, 0.05) : held === 'handsetEar' ? vTmp.set(-0.045, 0.05, 0) : held === 'parcel' ? vTmp.set(-0.2, -0.02, 0.14) : held === 'pot' ? vTmp.set(-0.2, -0.02, 0.14) : held === 'cig' ? vTmp.set(0, 0.03, 0.02) : held === 'cup' ? vTmp.set(0, 0.07, 0.03) : held === 'book' ? vTmp.set(-0.13, 0.03, 0.06) : held === 'bowl' ? vTmp.set(0, 0.05, 0.06) : vTmp.set(0, -0.03, 0.1);
       item.position.copy(off).applyQuaternion(qRel);
       item.quaternion.copy(qRel).multiply(qTilt);
       if (held === 'book') {

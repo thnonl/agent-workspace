@@ -56,7 +56,7 @@ function playMeowClip(c: AudioContext, out: AudioNode, t: number, pitch: number,
   const len = buf.duration / rate;
   if (Math.random() < 0.55) src.playbackRate.linearRampToValueAtTime(rate * (Math.random() < 0.5 ? 0.92 + Math.random() * 0.05 : 1.03 + Math.random() * 0.07), t + len);
   const g = c.createGain();
-  g.gain.value = 0.09 + Math.random() * 0.06;
+  g.gain.value = 0.045 + Math.random() * 0.03;
   src.connect(g).connect(out);
   src.start(t);
   if (again && n > 1 && Math.random() < 0.16) playMeowClip(c, out, t + len + 0.06 + Math.random() * 0.18, pitch * (0.9 + Math.random() * 0.2), false);
@@ -356,13 +356,13 @@ export function sfx(name: Sfx, roomId?: string, pitch = 1) {
       break;
     case 'thunder':
       // far away: a low rumble that rolls out
-      noise(c, t, 2.6, 0.16, 'lowpass', 260, 70, 0.7);
-      tone(c, t + 0.05, 62, 1.8, 0.1, 'sine', 38, 0.15);
+      noise(c, t, 2.6, 0.08, 'lowpass', 260, 70, 0.7);
+      tone(c, t + 0.05, 62, 1.8, 0.05, 'sine', 38, 0.15);
       break;
     case 'meow':
       loadMeowClips(c);
       if (meowClips.length) playMeowClip(c, master, t, pitch);
-      else playMeow(c, master, t, pitch, r, 0.08);
+      else playMeow(c, master, t, pitch, r, 0.04);
       break;
   }
 }

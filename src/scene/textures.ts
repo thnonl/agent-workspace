@@ -210,16 +210,16 @@ export function textTexture(text: string, w: number, h: number, bg: string, fg: 
     g.textAlign = 'center';
     const label = opts.icon ? `${opts.icon}  ${text}` : text;
     let size = Math.floor(h * 0.5) * px;
-    g.font = `800 ${size}px ${opts.font ?? 'Nunito Variable, Nunito, system-ui, sans-serif'}`;
+    g.font = `800 ${size}px ${opts.font ?? 'Baloo 2 Variable, system-ui, sans-serif'}`;
     while (g.measureText(label).width > c.width - 60 * px && size > 12) {
       size -= 2 * px;
-      g.font = `800 ${size}px ${opts.font ?? 'Nunito Variable, Nunito, system-ui, sans-serif'}`;
+      g.font = `800 ${size}px ${opts.font ?? 'Baloo 2 Variable, system-ui, sans-serif'}`;
     }
     g.fillText(label, c.width / 2, c.height / 2 + 2 * px);
     t.needsUpdate = true;
   };
   draw();
-  // redraw once webfonts are ready so the sign uses Nunito
+  // redraw once webfonts are ready so the sign uses the UI font
   document.fonts?.ready.then(draw).catch(() => undefined);
   remember(key, t);
   return t;
@@ -235,12 +235,12 @@ export function calendarTexture(month: string, accent: string, seed: number): TH
   g.fillStyle = accent;
   g.fillRect(0, 0, 256, 74);
   g.fillStyle = '#ffffff';
-  g.font = '800 40px Nunito Variable, Nunito, system-ui, sans-serif';
+  g.font = '800 40px Baloo 2 Variable, system-ui, sans-serif';
   g.textAlign = 'center';
   g.textBaseline = 'middle';
   g.fillText(month, 128, 40);
   g.fillStyle = '#5b5670';
-  g.font = '700 22px Nunito Variable, Nunito, system-ui, sans-serif';
+  g.font = '700 22px Baloo 2 Variable, system-ui, sans-serif';
   const r = new Rng(seed);
   const marked = new Set([r.int(3, 28), r.int(3, 28), r.int(3, 28)]);
   for (let i = 0; i < 31; i++) {

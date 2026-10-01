@@ -133,6 +133,11 @@ const CHAT = [
 ];
 
 const PARCEL = ['Delivery! 📦', 'Is that my package?', 'Somebody rang the bell!', 'A parcel for us!', 'Ooh, a delivery at the door', 'Let me grab that box'];
+const TIDY = [
+  'This place needs tidying up', 'Let me put this where it belongs', 'Somebody left this in the way', 'A tidy office, a tidy mind',
+  'I’ll move that out of the walkway', 'Time for a little tidy-up', 'This box has been in the way all week', 'That pot is in a silly spot',
+  'Let me clear a path', 'A bit of order never hurt',
+];
 const SMOKE = ['Just a quick smoke break', 'Fresh air and a cigarette', 'One cigarette, then back to work', 'Stepping out for a puff'];
 const SLEEP = ['So sleepy… a little nap', 'Just resting my eyes', 'Power nap time', 'Five minutes of sleep…', 'Zzz… wake me when there is work'];
 
@@ -160,6 +165,7 @@ export const thoughts = {
   lift: () => pick(LIFT),
   chat: (name: string) => pick(CHAT)(name),
   parcel: () => pick(PARCEL),
+  tidy: () => pick(TIDY),
   smoke: () => pick(SMOKE),
   sleep: () => pick(SLEEP),
 };

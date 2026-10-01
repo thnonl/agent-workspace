@@ -3,6 +3,7 @@ import type { V2 } from '../world/nav';
 import { Rng } from '../util/rng';
 import { sfx } from '../audio';
 import { frame, SLOW_MAX_DT } from './frame';
+import { kickToy, toyState } from './toys';
 import { debugFlags, spotOwners, type CatSim, type SimState } from './registry';
 
 /** Joint angles of one leg: upper (shoulder / hip), lower (elbow / knee), paw. Positive swings backwards. */
@@ -77,7 +78,11 @@ export interface CatCtx {
 }
 
 type Phase =
-  | 'away' | 'arrive' | 'jump' | 'idle' | 'wander' | 'sit' | 'groom' | 'stretch' | 'toSpot' | 'sleep' | 'toWindow' | 'exit';
+  | 'away' | 'arrive' | 'jump' | 'idle' | 'wander' | 'sit' | 'groom' | 'stretch' | 'toSpot' | 'sleep' | 'toWindow' | 'exit'
+  | 'toToy' | 'play' | 'toPost' | 'scratch';
+
+/** what a cat does with a ball or a mouse: watch it, pounce on it, run after it when it rolls away */
+type PlayStep = 'stalk' | 'pounce' | 'chase';
 
 interface Jump {
   x0: number; y0: number; z0: number;
@@ -131,6 +136,12 @@ export class CatBrain {
   private curlDir = 1;
   /** landing squash, counts down from 1 */
   private land = 0;
+  /** index into layout.toys of the toy the cat is going to / playing with */
+  private toy = -1;
+  private step: PlayStep = 'stalk';
+  private stepT = 0;
+  private stalkFor = 1;
+  private kicked = false;
   /** clock time of the next spontaneous meow, and this cat's voice pitch */
   private nextMeowAt = 0;
   private readonly voice: number;
@@ -280,6 +291,18 @@ export class CatBrain {
     this.setPhase('jump');
   }
 
+  /** a spot on the floor a stride away from the toy, on the side the cat comes from */
+  private nearToy(st: { x: number; z: number }, layout: RoomLayout): V2 {
+    const s = this.sim;
+    const base = Math.atan2(s.z - st.z, s.x - st.x);
+    for (let k = 0; k < 8; k++) {
+      const a = base + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 0.6;
+      const p = { x: st.x + Math.cos(a) * 0.55, z: st.z + Math.sin(a) * 0.55 };
+      if (!layout.nav.isBlocked(p.x, p.z)) return p;
+    }
+    return { x: s.x, z: s.z };
+  }
+
   private randomPoint(ctx: CatCtx): V2 | null {
     const { width: W, depth: D, nav } = ctx.layout;
     for (let i = 0; i < 40; i++) {
@@ -312,10 +335,24 @@ export class CatBrain {
       return;
     }
     const free = layout.spots.map((_, i) => i).filter((i) => !spotOwners.has(`${s.roomId}#${i}`));
-    const pick = this.rng.weighted<'wander' | 'sit' | 'groom' | 'stretch' | 'nap' | 'trot'>([
+    const movers = layout.toys.map((t, i) => (t.kind === 'yarn' || t.kind === 'mouse' ? i : -1)).filter((i) => i >= 0);
+    const posts = layout.toys.map((t, i) => (t.kind === 'post' ? i : -1)).filter((i) => i >= 0);
+    const pick = this.rng.weighted<'wander' | 'sit' | 'groom' | 'stretch' | 'nap' | 'trot' | 'play' | 'scratch'>([
       ['wander', 34], ['sit', 12], ['groom', 10], ['stretch', 7], ['nap', free.length ? (debugFlags.catSpot ? 500 : 26) : 0], ['trot', 7],
+      ['play', movers.length ? (debugFlags.catToy === 'play' ? 500 : 15) : 0], ['scratch', posts.length ? (debugFlags.catToy === 'scratch' ? 500 : 7) : 0],
     ]);
-    if (pick === 'wander' || pick === 'trot') {
+    if (pick === 'play') {
+      this.toy = this.rng.pick(movers);
+      const st = toyState(s.roomId, layout, this.toy);
+      const to = this.nearToy(st, layout);
+      this.startPath(layout.nav.findPath({ x: s.x, z: s.z }, to) ?? [to], 1.2);
+      this.setPhase('toToy');
+    } else if (pick === 'scratch') {
+      this.toy = this.rng.pick(posts);
+      const ap = layout.toys[this.toy].approach!;
+      this.startPath(layout.nav.findPath({ x: s.x, z: s.z }, ap) ?? [ap], 0.9);
+      this.setPhase('toPost');
+    } else if (pick === 'wander' || pick === 'trot') {
       const p = this.randomPoint(ctx);
       if (!p) return;
       this.startPath(layout.nav.findPath({ x: s.x, z: s.z }, p) ?? [p], pick === 'trot' ? 1.7 : 0.7);
@@ -500,6 +537,108 @@ export class CatBrain {
         } else if (done && !this.win) this.setPhase('idle');
         break;
       }
+      case 'toToy': {
+        const done = this.walk(dt);
+        moving = true;
+        const st = toyState(s.roomId, ctx.layout, this.toy);
+        if (petted) this.setPhase('idle');
+        else if (done && this.v < 0.15) {
+          // the toy has rolled on while the cat was on its way: go after it again
+          if (Math.hypot(st.x - s.x, st.z - s.z) > 1.1) {
+            const to = this.nearToy(st, ctx.layout);
+            this.startPath(ctx.layout.nav.findPath({ x: s.x, z: s.z }, to) ?? [to], 1.4);
+          } else {
+            this.timer = this.rng.range(7, 16);
+            this.step = 'stalk';
+            this.stepT = 0;
+            this.stalkFor = this.rng.range(0.7, 1.5);
+            this.setPhase('play');
+          }
+        }
+        break;
+      }
+      case 'play': {
+        this.timer -= dt;
+        this.stepT += dt;
+        const st = toyState(s.roomId, ctx.layout, this.toy);
+        const dx = st.x - s.x;
+        const dz = st.z - s.z;
+        const d = Math.hypot(dx, dz);
+        const mouse = ctx.layout.toys[this.toy].kind === 'mouse';
+        if (this.step === 'chase') {
+          const done = this.walk(dt);
+          moving = true;
+          if (done || d < 0.55) {
+            this.v *= 0.3;
+            this.step = 'stalk';
+            this.stepT = 0;
+            this.stalkFor = this.rng.range(0.4, 1.1);
+          }
+        } else {
+          if (d > 0.01) s.yaw += angleDiff(s.yaw, Math.atan2(dx, dz)) * Math.min(1, dt * 9);
+          if (this.step === 'stalk') {
+            stalkPose(p, this.clock, smooth(this.stepT / 0.3));
+            if (d > 1.15) {
+              const to = this.nearToy(st, ctx.layout);
+              this.startPath(ctx.layout.nav.findPath({ x: s.x, z: s.z }, to) ?? [to], 1.7);
+              this.step = 'chase';
+            } else if (this.stepT >= this.stalkFor) {
+              this.step = 'pounce';
+              this.stepT = 0;
+              this.kicked = false;
+            }
+          } else {
+            const u = Math.min(1, this.stepT / 0.5);
+            pouncePose(p, u);
+            // lunge at the toy, hit it at the end of the reach
+            if (!this.kicked && d > 0.3) {
+              const nx = s.x + (dx / d) * 2.2 * dt;
+              const nz = s.z + (dz / d) * 2.2 * dt;
+              if (!ctx.layout.nav.isBlocked(nx, nz)) {
+                s.x = nx;
+                s.z = nz;
+              }
+            }
+            if (!this.kicked && (u > 0.45 || d <= 0.3)) {
+              this.kicked = true;
+              const a = Math.atan2(dx, dz) + this.rng.range(-0.8, 0.8);
+              kickToy(st, Math.sin(a), Math.cos(a), mouse ? this.rng.range(1.5, 2.8) : this.rng.range(1.0, 2.1), mouse);
+            }
+            if (u >= 1) {
+              this.step = 'stalk';
+              this.stepT = 0;
+              this.stalkFor = this.rng.range(0.5, 1.4);
+            }
+          }
+        }
+        if (petted || (this.timer <= 0 && this.step === 'stalk')) {
+          this.timer = this.rng.range(0.4, 1.5);
+          this.setPhase('idle');
+        }
+        break;
+      }
+      case 'toPost': {
+        const done = this.walk(dt);
+        moving = true;
+        const post = ctx.layout.toys[this.toy];
+        if (petted) this.setPhase('idle');
+        else if (done && this.v < 0.15 && post) {
+          this.facing = Math.atan2(post.x - s.x, post.z - s.z);
+          this.timer = this.rng.range(4, 8);
+          this.setPhase('scratch');
+        } else if (done && !post) this.setPhase('idle');
+        break;
+      }
+      case 'scratch': {
+        this.timer -= dt;
+        s.yaw += angleDiff(s.yaw, this.facing) * Math.min(1, dt * 6);
+        scratchPose(p, this.clock, smooth(this.t / 0.5) * smooth(this.timer / 0.5));
+        if (this.timer <= 0 || petted) {
+          this.timer = this.rng.range(0.5, 2);
+          this.setPhase('idle');
+        }
+        break;
+      }
       case 'exit': {
         const done = this.walk(dt);
         moving = true;
@@ -583,6 +722,48 @@ export function sitPose(p: CatPose, c: number, groom: boolean) {
   }
 }
 
+/** crouched, rump wiggling, tail lashing: about to pounce (`k` 0-1 eases in) */
+export function stalkPose(p: CatPose, c: number, k: number) {
+  p.y = -0.085 * k;
+  p.pitch = 0.2 * k;
+  p.legs = [leg(-0.5 * k, 0.9 * k, -0.3 * k), leg(-0.5 * k, 0.9 * k, -0.3 * k), leg(-0.9 * k, 1.5 * k, -0.6 * k), leg(-0.9 * k, 1.5 * k, -0.6 * k)];
+  p.roll = Math.sin(c * 19) * 0.07 * k;
+  p.headX = -0.3 * k;
+  p.tailLift = 0.1 * k;
+  p.tailSway = 1.2;
+  p.eyes = 1;
+}
+
+/** the leap itself: stretched out, front paws reaching (`u` 0-1) */
+export function pouncePose(p: CatPose, u: number) {
+  const air = Math.sin(Math.PI * Math.min(1, u * 1.05));
+  p.y = 0.04 * air;
+  p.pitch = -0.35 * air;
+  p.arch = -0.3 * air;
+  p.legs = [leg(-1.3 * air, 0.2 * air, -0.5 * air), leg(-1.3 * air, 0.2 * air, -0.5 * air), leg(0.8 * air, 0.15 * air, 0.7 * air), leg(0.8 * air, 0.15 * air, 0.7 * air)];
+  p.tailLift = 0.3 * air;
+  p.headX = -0.2 * air;
+  p.earsBack = 0.5 * air;
+}
+
+/** up on the hind legs, front paws raking the post (`k` 0-1 eases in and out) */
+export function scratchPose(p: CatPose, c: number, k: number) {
+  const rake = Math.sin(c * 7.5);
+  p.pitch = -0.95 * k;
+  p.arch = 0.25 * k;
+  p.legs = [
+    leg((-2.1 + rake * 0.4) * k, 0.2 * k, -0.2 * k),
+    leg((-2.1 - rake * 0.4) * k, 0.2 * k, -0.2 * k),
+    leg(0.95 * k, 0.1 * k, 0),
+    leg(0.95 * k, 0.1 * k, 0),
+  ];
+  p.headX = -0.45 * k;
+  p.tailLift = -0.25 * k;
+  p.tailSway = 0.3;
+  p.eyes = 1 - 0.55 * k;
+  p.earsBack = 0.15 * k;
+}
+
 export function stretchPose(p: CatPose, u: number) {
   const k = Math.sin(Math.PI * u);
   // play-bow: chest down, front legs reach forward, rump and tail up
@@ -623,6 +804,9 @@ export function poseByName(name: string, clock: number, curlDir = 1): CatPose {
   else if (name === 'sleep') sleepPose(p, false);
   else if (name === 'purr') sleepPose(p, true);
   else if (name === 'stretch') stretchPose(p, 0.5);
+  else if (name === 'stalk') stalkPose(p, clock, 1);
+  else if (name === 'pounce') pouncePose(p, 0.5);
+  else if (name === 'scratch') scratchPose(p, clock, 1);
   else if (name === 'walk') {
     p.walk = 1;
     p.gait = clock * 6;

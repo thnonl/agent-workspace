@@ -7,7 +7,8 @@ import { SLOW_MAX_DT } from './frame';
 import { CHAT_SCRIPTS, eatLine, goodbyeLine, greetingLine, reportLine, serveLine, thoughts } from './phrases';
 import { kickDummy, takeDumbbells } from './gym';
 import { notePet } from '../progress';
-import { debugFlags, dismissIdle, enqueueSpeech, greet, parcelDone, roomRuntime, tickParcel, sims, simsInRoom, spotOwners, type CatSim, type Phase, type RoomRuntime, type SimState } from './registry';
+import { debugFlags, movedIfAny, movedOf, notifyMoved, dismissIdle, enqueueSpeech, greet, parcelDone, roomRuntime, tickParcel, sims, simsInRoom, spotOwners, type CatSim, type Phase, type RoomRuntime, type SimState } from './registry';
+import { commitMove, findTidySpot, standBeside, untidyProps, type Place } from './tidy';
 
 export interface Pose {
   bob: number;
@@ -70,7 +71,7 @@ export interface ActorCtx {
   nameOf: (simKey: string) => string;
 }
 
-type ActivityKind = 'wander' | 'sofa' | 'watch' | 'window' | 'pet' | 'stay' | 'chat' | 'parcel' | 'sleep' | StationKind;
+type ActivityKind = 'wander' | 'sofa' | 'watch' | 'window' | 'pet' | 'stay' | 'chat' | 'parcel' | 'tidy' | 'sleep' | StationKind;
 
 const pickOne = <T,>(list: readonly T[]): T => list[Math.floor(Math.random() * list.length)];
 
@@ -129,6 +130,7 @@ function thoughtOf(a: Activity, name: string): [string, string] | null {
     case 'watch': return [thoughts.watch(name), 'watch'];
     case 'window': return a.smoke ? [thoughts.smoke(), 'smoke'] : [thoughts.window(), 'window'];
     case 'parcel': return [thoughts.parcel(), 'parcel'];
+    case 'tidy': return [thoughts.tidy(), 'tidy'];
     case 'sleep': return [thoughts.sleep(), 'sleep'];
     case 'pet': return [thoughts.pet(), 'pet'];
     case 'drink': return a.station?.prop === 'coffee' ? [thoughts.coffee(), 'coffee'] : [thoughts.water(), 'drink'];
@@ -145,7 +147,7 @@ function thoughtOf(a: Activity, name: string): [string, string] | null {
 }
 
 /** what a character holds in the right hand */
-export type HeldKind = 'none' | 'cup' | 'book' | 'can' | 'bowl' | 'dumbbell' | 'parcel' | 'cig' | 'phone' | 'handsetEar';
+export type HeldKind = 'none' | 'cup' | 'book' | 'can' | 'bowl' | 'dumbbell' | 'parcel' | 'pot' | 'cig' | 'phone' | 'handsetEar';
 
 /** arm/body key pose of a station activity (missing values fall back to the relaxed pose) */
 interface Key {
@@ -198,6 +200,9 @@ interface Activity {
   /** chat: the colleague at the desk and what is said */
   partnerKey?: string;
   script?: readonly string[];
+  /** tidy: index into the room's moved-props list of the plant / carton to carry, and where to */
+  tidy?: number;
+  tidyTo?: Place;
 }
 
 /** height of the hip above the floor for an appearance scale of 1 (model hip * rig scale) */
@@ -206,6 +211,9 @@ const HIP = 0.47 * 0.85;
 const THIGH_R = 0.098 / 0.47;
 /** on a sofa the person sits this far forward of the seat point (the cushion is deeper than the legs are long) */
 const SOFA_FWD = 0.14;
+/** sitting down on a sofa: first turn round (and line up with the seat) in front of it, then back in and lower onto the cushion */
+const SOFA_TURN_S = 0.55;
+const SOFA_SIT_S = 0.9;
 /** knee bend on a sofa relative to a chair: the lower legs point forward and down over the front edge */
 const SOFA_KNEE = 0.4;
 
@@ -308,6 +316,8 @@ export class Actor {
   pour = 0;
   /** tilt of the held item about the character's x axis (radians, positive = leaning forward) */
   heldTilt = 0;
+  /** size of the held plant / carton relative to the model */
+  heldScale = 1;
   /** 0..1: the book is open */
   bookOpen = 0;
   /** running water at a sink tap: room position and strength 0..1 */
@@ -322,6 +332,8 @@ export class Actor {
   private bites = 0;
   private ate = false;
   private served = false;
+  /** a person restored by a page load was put at their desk already (later arrivals walk in) */
+  private restoredDone = false;
   /** key of the task the current work timers belong to */
   private curTask = '';
   /** the last "what I am doing" bubble, so the same words are not said twice in a row */
@@ -554,6 +566,28 @@ export class Actor {
         s.walkWait = 0;
         if (!person.present) break;
         if (!this.isDirector && s.desk < 0) break;
+        if (person.restored && !this.restoredDone) {
+          // the page opened while the session was already working: they have been at their desk all along
+          this.restoredDone = true;
+          const seat = this.seatOf(ctx);
+          s.x = seat.x;
+          s.z = seat.z;
+          s.yaw = this.seatYaw(ctx);
+          s.sitT = 1;
+          s.onStage = true;
+          this.waveDone.clear();
+          this.resume = false;
+          this.strolling = false;
+          this.reporting = false;
+          this.act = null;
+          this.curTask = '';
+          this.lastSaid = '';
+          this.restT = 0;
+          this.deskPetT = -1;
+          this.nextIdleAt = 12 + Math.random() * 8;
+          this.setPhase('working');
+          break;
+        }
         if (ctx.now < rt.doorFreeAt) break;
         // (the way in is a priority walk: it waits for a free slot, and idle walks give way to it meanwhile)
         if (!this.takeWalkSlot(ctx, dt, true)) break;
@@ -1082,6 +1116,20 @@ export class Actor {
       prt.parcelBy = null;
       if (prt.parcel === 'carried') prt.parcel = 'waiting';
     }
+    // an interrupted tidy-up: the plant / carton is back in its old place, a claimed one is free again
+    const mrt = movedIfAny(this.sim.roomId);
+    if (mrt) {
+      let changed = false;
+      for (const it of mrt) {
+        if (it.by !== this.sim.key) continue;
+        if (it.state === 'carried') changed = true;
+        it.state = 'placed';
+        it.by = null;
+        it.to = null;
+      }
+      if (changed) notifyMoved(this.sim.roomId);
+    }
+    this.heldScale = 1;
     this.smoke = 0;
     this.held = 'none';
     this.pour = 0;
@@ -1136,6 +1184,7 @@ export class Actor {
     const watchable = workers.filter((w) => w.desk >= 0 && w.busy && w.key !== s.key);
     const staff = !this.isDirector;
     const chatters = ctx.idlers.filter((w) => w.key !== s.key && !w.chatBy && !w.asleep && w.onStage && w.phase === 'working' && !w.busy && w.desk >= 0);
+    const untidy = layout.movable.length ? untidyProps(s.roomId, layout, ctx.now) : [];
     const parcelFree = ctx.rt.parcel === 'waiting' && (!ctx.rt.parcelBy || !sims.get(ctx.rt.parcelBy)?.onStage);
     const stationsOf = (k: StationKind) => layout.stations.map((st, i) => ({ st, i })).filter(({ st, i }) => st.kind === k && !spotOwners.has(`${s.roomId}@${i}`));
     const options: [ActivityKind, number][] = [
@@ -1147,7 +1196,7 @@ export class Actor {
       ['box', stationsOf('box').length ? 2.5 : 0], ['lift', stationsOf('lift').length ? 2.5 : 0],
       ['chat', chatters.length ? (staff ? 4 : 2.5) : 0],
       // a box on the porch: the first to roll it goes (nobody else is on the way); a nap is likelier at night
-      ['parcel', parcelFree ? 25 : 0], ['sleep', staff || !ctx.rt.visitors.some((v) => v !== null) ? 2 * (1 + env.night) : 0],
+      ['parcel', parcelFree ? 25 : 0], ['tidy', untidy.length ? (staff ? 4 : 2.5) : 0], ['sleep', staff || !ctx.rt.visitors.some((v) => v !== null) ? 2 * (1 + env.night) : 0],
     ];
     let roll = Math.random() * options.reduce((a, [, w]) => a + w, 0);
     let kind: ActivityKind = 'wander';
@@ -1217,6 +1266,20 @@ export class Actor {
         const smoke = Math.random() < 0.35;
         return { kind, target: cw.land, yaw: cw.yaw + Math.PI, dur: smoke ? 20 + Math.random() * 6 : 15 + Math.random() * 13, smoke };
       }
+      case 'tidy': {
+        // a plant or carton that stands in the middle of the room goes to a tidier place along a wall
+        const items = movedOf(s.roomId, layout);
+        for (const idx of untidy.sort(() => Math.random() - 0.5).slice(0, 3)) {
+          const it = items[idx];
+          const to = findTidySpot(s.roomId, layout, idx);
+          const stand = to ? standBeside(layout, layout.props[it.prop].kind, it.x, it.z, from) : null;
+          if (!to || !stand) continue;
+          it.by = s.key;
+          it.to = to;
+          return { kind, target: stand, yaw: Math.atan2(it.x - stand.x, it.z - stand.z), dur: 0, tidy: idx, tidyTo: to };
+        }
+        return null;
+      }
       case 'parcel': {
         // a spot on the porch in front of the box, looking at it
         const { threshold, dir } = layout.door;
@@ -1238,7 +1301,7 @@ export class Actor {
         const spot = c.spot >= 0 ? layout.spots[c.spot] : null;
         if (spot?.kind === 'desk') return { kind, target: from, yaw: 0, dur: 11 + Math.random() * 5, catKey: c.key, atDesk: true };
         let target: V2 | null = null;
-        if (spot && (spot.kind === 'sofa' || spot.kind === 'armchair' || spot.kind === 'beanbag')) target = spot.approach;
+        if (spot && (spot.kind === 'sofa' || spot.kind === 'armchair' || spot.kind === 'beanbag' || spot.kind === 'box')) target = spot.approach;
         else {
           let best = Infinity;
           for (let a = 0; a < 12; a++) {
@@ -1296,16 +1359,34 @@ export class Actor {
         const seatX = spot.x + Math.sin(spot.yaw) * SOFA_FWD * k;
         const seatZ = spot.z + Math.cos(spot.yaw) * SOFA_FWD * k;
         if (this.actStage === 0) {
-          const u = smooth(t / 0.9);
-          s.x = lerp(this.from.x, seatX, u);
-          s.z = lerp(this.from.z, seatZ, u);
-          s.y = lerp(0, yOn, u);
-          s.sitT = u;
-          this.faceYaw(spot.yaw, dt, 10);
-          this.seatedPose(pose, u, SOFA_KNEE);
-          if (t >= 0.9) {
-            this.actStage = 1;
-            this.t = 0;
+          // the line through the seat that the person backs in along (the sofa's front is +spot.yaw; they face the same way, away from the cushion)
+          const fx = Math.sin(spot.yaw);
+          const fz = Math.cos(spot.yaw);
+          const lat = (this.from.x - seatX) * fz - (this.from.z - seatZ) * fx;
+          const qx = this.from.x - fz * lat;
+          const qz = this.from.z + fx * lat;
+          if (t < SOFA_TURN_S) {
+            // standing in front of the sofa: turn round, with a small side step if the walk ended off to one side
+            const u = smooth(t / SOFA_TURN_S);
+            s.x = lerp(this.from.x, qx, u);
+            s.z = lerp(this.from.z, qz, u);
+            s.y = 0;
+            s.sitT = 0;
+            this.faceYaw(spot.yaw, dt, 9);
+            if (Math.abs(lat) > 0.04) this.walkPose(pose, 0.5);
+            else this.idlePose(pose);
+          } else {
+            const u = smooth((t - SOFA_TURN_S) / SOFA_SIT_S);
+            s.x = lerp(qx, seatX, u);
+            s.z = lerp(qz, seatZ, u);
+            s.y = lerp(0, yOn, u);
+            s.sitT = u;
+            this.faceYaw(spot.yaw, dt, 12);
+            this.seatedPose(pose, u, SOFA_KNEE);
+            if (t >= SOFA_TURN_S + SOFA_SIT_S) {
+              this.actStage = 1;
+              this.t = 0;
+            }
           }
         } else if (this.actStage === 1) {
           s.sitT = 1;
@@ -1351,6 +1432,10 @@ export class Actor {
           for (let at = 5.0; at < a.dur - 2; at += SMOKE_CYCLE) this.cue('exhale', at);
         } else this.lookOutPose(pose);
         if (back || t > a.dur) this.goHome(ctx);
+        break;
+      }
+      case 'tidy': {
+        this.tidyRun(dt, ctx, pose, a, back);
         break;
       }
       case 'parcel': {
@@ -1894,6 +1979,84 @@ export class Actor {
         parcelDone(rt, ctx.now);
         this.goHome(ctx);
       }
+    }
+  }
+
+  /**
+   * Carrying a plant or a carton of the room to a tidier place (stage 0: bend down and pick it up, 1: carry it there, 2: set it down
+   * and look pleased). Anything that cuts it short sends the person home; the prop is back in its old place (see releaseSpot).
+   */
+  private tidyRun(dt: number, ctx: ActorCtx, pose: Pose, a: Activity, back: boolean) {
+    const s = this.sim;
+    const t = this.t;
+    const items = movedOf(s.roomId, ctx.layout);
+    const it = items[a.tidy ?? -1];
+    const to = a.tidyTo;
+    if (!it || !to || back || it.by !== s.key) {
+      this.goHome(ctx);
+      return;
+    }
+    const prop = ctx.layout.props[it.prop];
+    const kind: HeldKind = prop.kind === 'boxes' ? 'parcel' : 'pot';
+    if (this.actStage === 0) {
+      this.faceYaw(Math.atan2(it.x - s.x, it.z - s.z), dt, 8);
+      this.idlePose(pose);
+      this.keyed(pose, PARCEL_KEYS, t);
+      const crouch = seg(t, 0.4, 1.3) * (1 - seg(t, 1.9, 2.6));
+      pose.thighLx = pose.thighRx = -0.35 * crouch;
+      pose.kneeLx = pose.kneeRx = 0.6 * crouch;
+      pose.bob = -0.04 * crouch;
+      this.cue('pickup', 1.6);
+      if (t >= 1.6 && this.held !== kind) {
+        // it is in the arms: gone from the floor
+        this.held = kind;
+        this.heldScale = prop.kind === 'boxes' ? 1.7 : prop.kind === 'tallPlant' ? 1.5 : prop.kind === 'cactus' ? 0.85 : 1.15;
+        it.state = 'carried';
+        notifyMoved(s.roomId);
+      }
+      if (t >= 2.7) {
+        const stand = standBeside(ctx.layout, prop.kind, to.x, to.z, { x: s.x, z: s.z });
+        if (!stand) {
+          this.goHome(ctx);
+          return;
+        }
+        this.startPath(ctx.layout.nav.findPath({ x: s.x, z: s.z }, stand) ?? [stand]);
+        this.actStage = 1;
+        this.setPhase('activity');
+      }
+    } else if (this.actStage === 1) {
+      this.walkPose(pose, 0.85);
+      this.holdBoxPose(pose);
+      if (this.walk(dt, ctx, 0.9)) {
+        this.actStage = 2;
+        s.walking = false;
+        this.setPhase('activity');
+      }
+    } else {
+      this.faceYaw(Math.atan2(to.x - s.x, to.z - s.z), dt, 7);
+      this.idlePose(pose);
+      const down = seg(t, 0.2, 0.9) * (1 - seg(t, 1.5, 2.1));
+      this.holdBoxPose(pose);
+      pose.lean = 0.04 + 0.5 * down;
+      pose.thighLx = pose.thighRx = -0.35 * down;
+      pose.kneeLx = pose.kneeRx = 0.6 * down;
+      pose.bob = -0.04 * down;
+      if (t >= 1.1 && this.held === kind) {
+        // set down: it stays there
+        this.held = 'none';
+        this.heldScale = 1;
+        commitMove(s.roomId, ctx.layout, a.tidy!, to, ctx.now);
+        this.cue('thud', 1.1);
+      }
+      if (this.held === 'none') {
+        // arms drop, a pleased look at the tidy corner
+        pose.armLx = pose.armRx = 0.1;
+        pose.armLz = pose.armRz = 0.14;
+        pose.foreLx = pose.foreRx = -0.2;
+        pose.lean = 0.5 * down;
+        pose.happy = seg(t, 1.2, 1.6);
+      }
+      if (t >= 2.6) this.goHome(ctx);
     }
   }
 

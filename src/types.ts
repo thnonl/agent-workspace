@@ -64,6 +64,8 @@ export interface PersonRec {
   /** desk index in the room layout (staff only, fixed for the whole session) */
   desk: number;
   joinedAt: number;
+  /** created while the page caught up with a session that was already running: sits at the desk at once instead of walking in */
+  restored: boolean;
   /** when the last task was handed over – the person who rested longest takes the next task */
   lastWorkEnd: number;
   /** set while everybody is leaving one after another: when this person has to go (ms, 0 = none) */

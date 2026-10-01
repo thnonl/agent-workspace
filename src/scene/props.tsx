@@ -10,53 +10,10 @@ import { GLOW, glowMat } from './glow';
 import { RB, Ms, DeskItem } from './furniture';
 import { useBaked } from './bake';
 import { PunchDummy, Dumbbells } from './gymProps';
+import { FloorPlant, TallPlant, CactusProp } from './plants';
 import { FileCabinet, Copier, MeetingSet, WhiteboardStand, Boxes, ServerRack, Fridge, Vending, Trolley, Recycle, Credenza } from './officeProps';
 
 // ------------------------------------------------------------------------ props
-const GREENS = ['#4fb86f', '#6fcf8b', '#7bd88f', '#3fa864'];
-
-function Plant({ p, tall }: { p: Prop; tall?: boolean }) {
-  const rng = useMemo(() => new Rng(Math.floor(p.x * 100 + p.z * 37) + p.variant), [p.x, p.z, p.variant]);
-  const leaves = useMemo(
-    () => Array.from({ length: tall ? 9 : 6 }, (_, i) => ({
-      a: (i / (tall ? 9 : 6)) * Math.PI * 2 + rng.range(-0.3, 0.3),
-      r: rng.range(0.1, 0.24),
-      y: (tall ? 1.05 : 0.5) + rng.range(-0.12, 0.35) * (tall ? 2 : 1),
-      s: rng.range(0.16, 0.26) * (tall ? 1.25 : 1),
-      c: rng.pick(GREENS),
-    })),
-    [rng, tall],
-  );
-  const flower = p.variant === 1 && !tall;
-  const potH = tall ? 0.42 : 0.3;
-  return (
-    <group>
-      <Ms geo={G.cyl(tall ? 0.3 : 0.27, tall ? 0.21 : 0.19, potH, 20)} mat={M(p.color, { rough: 0.55 })} pos={[0, potH / 2, 0]} />
-      <Ms geo={G.torus(tall ? 0.3 : 0.27, 0.025, Math.PI * 2, 8, 24)} mat={M(p.color, { rough: 0.55 })} pos={[0, potH, 0]} rot={[Math.PI / 2, 0, 0]} />
-      <Ms geo={G.cyl(0.24, 0.24, 0.02, 16)} mat={MB('#000000')} pos={[0, potH - 0.006, 0]} cast={false} />
-      {tall ? <Ms geo={G.cyl(0.035, 0.05, 0.75, 8)} mat={M('#8a6a4a')} pos={[0, 0.75, 0]} /> : null}
-      {leaves.map((l, i) => (
-        <Ms key={i} geo={G.sphere(l.s, 12, 10)} mat={M(l.c, { rough: 0.6 })} pos={[Math.sin(l.a) * l.r, l.y, Math.cos(l.a) * l.r]} scale={[1, tall ? 1.35 : 1.05, 1]} />
-      ))}
-      {flower
-        ? [0, 1, 2].map((i) => <Ms key={i} geo={G.sphere(0.05, 8, 6)} mat={M(['#ff8fb1', '#ffd166', '#ffffff'][i])} pos={[Math.sin(i * 2.4) * 0.16, 0.66 + (i % 2) * 0.05, Math.cos(i * 2.4) * 0.16]} />)
-        : null}
-    </group>
-  );
-}
-
-function Cactus({ p }: { p: Prop }) {
-  return (
-    <group>
-      <Ms geo={G.cyl(0.24, 0.18, 0.28, 18)} mat={M('#ffffff', { rough: 0.6 })} pos={[0, 0.14, 0]} />
-      <Ms geo={G.cyl(0.25, 0.25, 0.04, 18)} mat={M(p.color)} pos={[0, 0.28, 0]} />
-      <Ms geo={G.capsule(0.13, 0.5, 6, 14)} mat={M('#59c27d')} pos={[0, 0.66, 0]} />
-      <Ms geo={G.capsule(0.07, 0.16, 6, 10)} mat={M('#59c27d')} pos={[0.2, 0.72, 0]} rot={[0, 0, -0.9]} />
-      <Ms geo={G.capsule(0.07, 0.12, 6, 10)} mat={M('#59c27d')} pos={[-0.19, 0.58, 0]} rot={[0, 0, 0.9]} />
-      <Ms geo={G.sphere(0.05, 8, 6)} mat={M('#ff8fb1')} pos={[0, 1.03, 0]} />
-    </group>
-  );
-}
 
 function Bookshelf({ p, theme }: { p: Prop; theme: RoomTheme }) {
   const wood = shade(theme.desk, -0.05);
@@ -352,9 +309,9 @@ export function PropView({ p, theme, roomId }: { p: Prop; theme: RoomTheme; room
   let body: React.ReactNode;
   switch (p.kind) {
     case 'bookshelf': body = <Bookshelf p={p} theme={theme} />; break;
-    case 'plant': body = <Plant p={p} />; break;
-    case 'tallPlant': body = <Plant p={p} tall />; break;
-    case 'cactus': body = <Cactus p={p} />; break;
+    case 'plant': body = <FloorPlant p={p} />; break;
+    case 'tallPlant': body = <TallPlant p={p} />; break;
+    case 'cactus': body = <CactusProp p={p} />; break;
     case 'cooler': body = <Cooler p={p} />; break;
     case 'coffee': body = <Coffee p={p} theme={theme} />; break;
     case 'sofa': body = <Sofa p={p} theme={theme} />; break;

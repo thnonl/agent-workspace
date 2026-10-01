@@ -18,7 +18,8 @@ export function parseNames(text: string): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const raw of text.split(/[\n,;]+/)) {
-    const n = raw.trim().replace(/\s+/g, ' ').slice(0, 24);
+    // composed form: a name with separate combining marks (NFD) would take its accents from a fallback font
+    const n = raw.normalize('NFC').trim().replace(/\s+/g, ' ').slice(0, 24);
     if (!n || seen.has(n.toLowerCase())) continue;
     seen.add(n.toLowerCase());
     out.push(n);
@@ -30,7 +31,7 @@ export function parseNames(text: string): string[] {
 export function loadNames(): string[] {
   try {
     const v = JSON.parse(localStorage.getItem(NAMES_KEY) ?? '[]');
-    return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : [];
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').map((x) => x.normalize('NFC')) : [];
   } catch {
     return [];
   }

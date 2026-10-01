@@ -36,6 +36,16 @@ export async function enterPip(): Promise<boolean> {
   base.href = document.baseURI;
   w.document.head.appendChild(base);
   for (const n of Array.from(document.head.querySelectorAll('link[rel="stylesheet"], style'))) w.document.head.appendChild(n.cloneNode(true));
+  // (this window has its own font set: the font's Latin / Vietnamese pieces load on first use, so until then the names show in a fallback font)
+  try {
+    const sample = 'AaĂăÂâĐđÊêÔôƠơƯưẠạẢảẤấẦầẨẩẪẫẬậẮắẰằẲẳẴẵẶặẸẹẺẻẼẽẾếỀềỂểỄễỆệ ỈỉỊịỌọỎỏỐốỒồỔổỖỗỘộỚớỜờỞởỠỡỢợỤụỦủỨứỪừỬửỮữỰựỲỳỴỵỶỷỸỹ';
+    await Promise.race([
+      Promise.all([400, 700, 800, 900].map((wt) => w.document.fonts.load(`${wt} 12px "Baloo 2 Variable"`, sample))),
+      new Promise((r) => setTimeout(r, 1500)),
+    ]);
+  } catch {
+    /* the window works without it: the fonts arrive a moment later */
+  }
   w.document.documentElement.style.cssText = 'height:100%';
   w.document.body.style.cssText = 'margin:0;height:100%;overflow:hidden';
 

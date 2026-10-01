@@ -78,7 +78,7 @@ export function takePhoto() {
 
   g.drawImage(gl, 0, 0);
 
-  g.font = `700 ${Math.round(15 * k)}px Nunito Variable, system-ui, sans-serif`;
+  g.font = `700 ${Math.round(15 * k)}px Baloo 2 Variable, system-ui, sans-serif`;
   g.textAlign = 'right';
   g.fillStyle = 'rgba(255,255,255,0.8)';
   g.shadowColor = 'rgba(40,30,70,0.5)';
