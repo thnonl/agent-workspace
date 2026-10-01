@@ -179,36 +179,40 @@ const PHONE = [
  * What somebody wants to look at while scrolling the phone: built from an opener and a target, so two people (or one
  * person twice) rarely think the same sentence. The last few targets are skipped.
  */
-const SCROLL_TARGETS = [
-  'the group chat', 'the weather for tomorrow', 'my bank balance', 'the football scores', 'where my parcel is', 'the news',
-  'my horoscope', 'a recipe for dinner', 'the stock prices', 'what my friends posted', 'cheap flights', 'my step count',
-  'a new playlist', 'the memes of the day', 'my unread mail', 'a video about cats', 'the cinema times', 'the traffic home',
-  'my food delivery', 'the sale at my favourite shop', 'who liked my photo', 'the latest tech gossip', 'my camera roll',
-  'a funny thread', 'the lunch menu nearby', 'a podcast for the commute', 'the price of that keyboard', 'my savings goal',
-  'a map to the new café', 'the birthday reminders', 'the group photo from last weekend', 'a workout video',
-  'how many unread messages I have', 'my alarm for tomorrow', 'a review of that new phone', 'the bus times',
-  'a tutorial on something I will never try', 'my fantasy league', 'the holiday photos', 'the headlines',
+const SCROLL_TARGETS: [string, string][] = [
+  ['the group chat', '💬'], ['the weather for tomorrow', '⛅'], ['my bank balance', '💰'], ['the football scores', '⚽'],
+  ['where my parcel is', '📦'], ['the news', '📰'], ['my horoscope', '🔮'], ['a recipe for dinner', '🍳'],
+  ['the stock prices', '📈'], ['what my friends posted', '👥'], ['cheap flights', '✈️'], ['my step count', '👟'],
+  ['a new playlist', '🎧'], ['the memes of the day', '😂'], ['my unread mail', '✉️'], ['a video about cats', '🐱'],
+  ['the cinema times', '🎬'], ['the traffic home', '🚗'], ['my food delivery', '🛵'], ['the sale at my favourite shop', '🛍️'],
+  ['who liked my photo', '❤️'], ['the latest tech gossip', '💻'], ['my camera roll', '🖼️'], ['a funny thread', '😂'],
+  ['the lunch menu nearby', '🍜'], ['a podcast for the commute', '🎙️'], ['the price of that keyboard', '⌨️'], ['my savings goal', '🐷'],
+  ['a map to the new café', '🗺️'], ['the birthday reminders', '🎂'], ['the group photo from last weekend', '📸'], ['a workout video', '🏋️'],
+  ['how many unread messages I have', '🔔'], ['my alarm for tomorrow', '⏰'], ['a review of that new phone', '⭐'], ['the bus times', '🚌'],
+  ['a tutorial on something I will never try', '🎓'], ['my fantasy league', '🏆'], ['the holiday photos', '🏖️'], ['the headlines', '📰'],
 ];
 const SCROLL_OPENERS: ((x: string) => string)[] = [
-  (x) => `I wonder what is new in ${x}`, (x) => `Let me check ${x} 📱`, (x) => `Quick look at ${x}…`,
+  (x) => `I wonder what is new in ${x}`, (x) => `Let me check ${x}`, (x) => `Quick look at ${x}…`,
   (x) => `I should really check ${x}`, (x) => `Time to see ${x}`, (x) => `Did anything happen to ${x}?`,
   (x) => `Just want to see ${x}, then work`, (x) => `Now, where was ${x}…`, (x) => `Hmm, I haven’t looked at ${x} today`,
   (x) => `One peek at ${x} won’t hurt`, (x) => `Let me find ${x}`, (x) => `I bet there is something in ${x}`,
-  (x) => `Right, ${x} next 📱`, (x) => `Wait, I need to check ${x}`, (x) => `Maybe ${x} has an update`,
+  (x) => `Right, ${x} next`, (x) => `Wait, I need to check ${x}`, (x) => `Maybe ${x} has an update`,
 ];
-const SCROLL_FULL = [
-  'Who texted me? Somebody texted me.', 'I swear I felt it buzz', 'Only one notification, I promise', 'Just refreshing it once more…',
-  'Is it already Friday on my phone?', 'Nothing new. Let me refresh again.', 'Ten minutes, then I will work. Honest.',
-  'My thumb has a mind of its own', 'Scroll, scroll, scroll… more scrolling', 'Why is there never anything good at the top?',
+const SCROLL_FULL: [string, string][] = [
+  ['Who texted me? Somebody texted me.', '💬'], ['I swear I felt it buzz', '📳'], ['Only one notification, I promise', '🔔'],
+  ['Just refreshing it once more…', '🔄'], ['Is it already Friday on my phone?', '📅'], ['Nothing new. Let me refresh again.', '🔄'],
+  ['Ten minutes, then I will work. Honest.', '⏰'], ['My thumb has a mind of its own', '👍'],
+  ['Scroll, scroll, scroll… more scrolling', '♾️'], ['Why is there never anything good at the top?', '🤔'],
 ];
 const recentScroll: string[] = [];
+/** always ends with an icon for what is looked at, then the smartphone */
 function scrollLine(): string {
-  if (Math.random() < 0.15) return pick(SCROLL_FULL);
+  if (Math.random() < 0.15) { const [t, e] = pick(SCROLL_FULL); return `${t} ${e}📱`; }
   let x = pick(SCROLL_TARGETS);
-  for (let i = 0; i < 6 && recentScroll.includes(x); i++) x = pick(SCROLL_TARGETS);
-  recentScroll.push(x);
+  for (let i = 0; i < 6 && recentScroll.includes(x[0]); i++) x = pick(SCROLL_TARGETS);
+  recentScroll.push(x[0]);
   if (recentScroll.length > 12) recentScroll.shift();
-  return pick(SCROLL_OPENERS)(x);
+  return `${pick(SCROLL_OPENERS)(x[0])} ${x[1]}📱`;
 }
 
 const WC_HURRY = [

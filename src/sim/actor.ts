@@ -133,7 +133,7 @@ const PHONE_BUMP_S = 13;
 const PHONE_SWIPE_S = 11;
 /** seconds between two thoughts about what to look at on the phone (plus up to 4 more), and before the first one */
 const PHONE_THINK_S = 6;
-const PHONE_THINK_FIRST_S = 1;
+const PHONE_THINK_FIRST_S = 0;
 /** held back while standing with the phone in the hand: the thought about it only shows after this long (s) */
 const PHONE_WAIT_THINK_S = 5;
 /** seconds per line of a chat */
