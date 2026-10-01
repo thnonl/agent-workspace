@@ -36,6 +36,9 @@ const MIN_DPR = 1;
 /** highest render resolution (device pixels per CSS pixel) of each quality level */
 const QUALITY_DPR = { low: 1, medium: 1.5, high: 2 } as const;
 
+/** furthest the camera may be pulled back by hand (framing a room on a narrow screen may go further) */
+const MAX_DISTANCE = 80;
+
 /** world-space offset of the default room framing (keeps the room clear of the HUD cards); applied by computeActive while the room itself is followed */
 const viewShift = new THREE.Vector3();
 /** the room the camera frames right now (null while a cat or a person is followed) */
@@ -365,6 +368,15 @@ function CameraRig() {
     if (framedRoom) fit.current.dist = frameRoom(framedRoom, (camera as THREE.PerspectiveCamera).fov, aspect, size.width, viewShift, pip);
     else {
       viewShift.set(0, 0, 0);
+  // (on a touch screen the height also changes with the address bar and the keyboard: that is no reason to frame the room again and undo a pinch)
+  const framedSize = useRef({ w: size.width, h: size.height });
+  const touch = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+  const f = framedSize.current;
+  if (!touch || Math.abs(size.width - f.w) > 2 || size.width > size.height !== f.w > f.h) {
+    f.w = size.width;
+    f.h = size.height;
+  }
+
       fit.current.dist = a.fit;
     }
     // R / the reset button: back to the default angles too, not only the distance
@@ -374,13 +386,16 @@ function CameraRig() {
     }
     fit.current.active = true;
     frame.cameraBusy = true;
-  }, [activeRoomId, resetTick, focused, size.width, size.height, pip]);
+  }, [activeRoomId, resetTick, focused, f.w, f.h, pip]);
 
   useFrame((_, dt) => {
     const c = controls.current;
     if (!c || !frame.hasActive) {
       frame.cameraBusy = false;
       return;
+    // (a narrow screen needs a camera further away than the usual limit: with the limit in the way the framing pushed outwards and the controls
+    // pulled back on every single frame, so the picture trembled between the two)
+    if (controls.current) controls.current.maxDistance = Math.max(MAX_DISTANCE, fit.current.dist * 1.3);
     }
     // a camera that has ever become NaN stays NaN: start it again from the framing
     if (!Number.isFinite(camera.position.x + c.target.x)) fit.current.snap = true;
@@ -458,7 +473,7 @@ function CameraRig() {
       rotateSpeed={0.6}
       zoomSpeed={0.8}
       minDistance={3.5}
-      maxDistance={80}
+      maxDistance={MAX_DISTANCE}
       minPolarAngle={0.3}
       maxPolarAngle={1.3}
       minAzimuthAngle={0.12}

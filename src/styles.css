@@ -28,6 +28,12 @@ button { font: inherit; color: inherit; }
 }
 
 .stage { position: absolute; inset: 0; }
+/* a phone's address bar slides in and out and changes the height of the page by a few percent: the picture must not follow it (the room would breathe in and out) */
+@media (pointer: coarse) {
+  @supports (height: 100lvh) {
+    .stage { inset: 0 0 auto 0; height: 100lvh; }
+  }
+}
 .stage canvas { touch-action: none; outline: none; }
 
 /* --- drifting clouds -------------------------------------------------- */
