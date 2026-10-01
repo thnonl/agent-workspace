@@ -3,12 +3,13 @@ import { sfx } from './audio';
 import { pushToast } from './toast';
 import { celestial, env } from './env';
 import { OVERCAST } from './weather';
+import { drawBubbles } from './photoBubbles';
 
 /** Set by the 3D scene: draws one frame right now and returns the canvas it drew into. */
 export const photoHooks = { render: null as (() => HTMLCanvasElement) | null };
 
 /**
- * Saves what the screen shows (the sky, the office, without the buttons and speech bubbles) as a PNG.
+ * Saves what the screen shows (the sky, the office and the speech / thought bubbles, without the buttons) as a PNG.
  * The WebGL canvas is transparent and the sky is CSS, so the sky is painted first on a 2D canvas.
  */
 export function takePhoto() {
@@ -77,6 +78,11 @@ export function takePhoto() {
   }
 
   g.drawImage(gl, 0, 0);
+  try {
+    drawBubbles(g, gl);
+  } catch {
+    // (a bubble that cannot be drawn must not lose the photo)
+  }
 
   g.font = `700 ${Math.round(15 * k)}px Baloo 2 Variable, system-ui, sans-serif`;
   g.textAlign = 'right';
