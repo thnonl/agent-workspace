@@ -83,7 +83,7 @@ export function SettingsDialog() {
 
       <h3>Context window</h3>
       <Segmented value={contextWindow} options={CONTEXT_WINDOWS} label={(w: ContextWindowPref) => (w === 'auto' ? 'Auto' : w.toUpperCase())} onChange={setContextWindow} />
-      <p className="muted">The session buttons show how much of the context window is used. Codex and OpenCode (with limits in its config) report the window size; for Claude Code it is a guess – 200k, or 1M once a session has outgrown that. Pick the size of your model here when the guess is off.</p>
+      <p className="muted">The session buttons show how much of the context window is used. The window size comes from the model list (Claude models, Codex's model cache) or from the agent itself (Codex, OpenCode limits). Only for a model nobody lists it is a guess – 200k, or 1M once a session has outgrown that. Pick the size here when that guess is off.</p>
 
       <h3>People</h3>
       <div className="set-row">

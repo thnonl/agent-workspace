@@ -21,7 +21,7 @@ export type MonitorEvent =
 export interface ContextInfo {
   used: number;
   window: number;
-  /** the window size comes from the agent itself (Codex, the OpenCode config); otherwise the monitor guessed it */
+  /** the window size is known: the agent reports it (Codex, the OpenCode config) or the model list has it (Claude table, Codex model cache); otherwise the monitor guessed it */
   exact: boolean;
   model?: string;
 }

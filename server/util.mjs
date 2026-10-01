@@ -1,5 +1,6 @@
 // Helpers shared by the transcript monitor and its provider parsers (Claude Code, Codex, OpenCode).
 import fs from 'node:fs';
+import { modelWindow } from './models.mjs';
 export const MIN = 60_000;
 
 // Claude often stores thinking blocks without readable text; show something cute instead.
@@ -84,6 +85,19 @@ export function guessWindow(model, used) {
   return Math.ceil(used / ONE_M) * ONE_M;
 }
 
+/**
+ * The window of a model: { window, exact }. exact when the model list knows it (models.mjs: Codex's cache, the Claude table, a "[1m]" name);
+ * otherwise guessWindow(). CONTEXT_WINDOW_TOKENS overrides the list. A session that already holds more than the listed window means
+ * the list is wrong for this session, so it is guessed too.
+ */
+export function resolveWindow(model, used) {
+  if (!parseTokens(process.env.CONTEXT_WINDOW_TOKENS)) {
+    const known = modelWindow(model);
+    if (known && used <= known) return { window: known, exact: true };
+  }
+  return { window: guessWindow(model, used), exact: false };
+}
+
 /** Tokens the context holds after a Claude Code assistant message (what the next request starts from), or null. */
 export function claudeContext(message) {
   const u = message?.usage;
@@ -91,7 +105,7 @@ export function claudeContext(message) {
   if (!u || !model || model.startsWith('<')) return null;
   const used = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.output_tokens || 0);
   if (!used) return null;
-  return { used, window: guessWindow(model, used), exact: false, model };
+  return { used, ...resolveWindow(model, used), model };
 }
 
 /**

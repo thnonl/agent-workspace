@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { MUSINGS, pick, clip, cleanPrompt, toolSummary, cueOf, guessWindow, askOf } from './util.mjs';
+import { MUSINGS, pick, clip, cleanPrompt, toolSummary, cueOf, resolveWindow, askOf } from './util.mjs';
 
 const defaultConfig = () => process.env.OPENCODE_CONFIG || path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'opencode', 'opencode.json');
 let limits = { at: 0, map: new Map() };
@@ -179,7 +179,7 @@ export function createOpenCodeSource(host, { dbFile, windowMs, log = console.war
       const t = d.tokens;
       const used = (t.input || 0) + (t.output || 0) + (t.cache?.read || 0) + (t.cache?.write || 0);
       const limit = modelLimit(d.model?.providerID, d.model?.id);
-      if (used > 0) host.context?.(s, { used, window: limit || guessWindow(d.model?.id, used), exact: limit > 0, model: d.model?.id || 'opencode' });
+      if (used > 0) host.context?.(s, { used, ...(limit > 0 ? { window: limit, exact: true } : resolveWindow(d.model?.id, used)), model: d.model?.id || 'opencode' });
     }
     let m = ctx.open.get(row.id);
     if (!m) {

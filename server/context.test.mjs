@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createMonitor } from './monitor.mjs';
 import { claudeContext, guessWindow, parseTokens } from './util.mjs';
+import { claudeWindow, modelWindow } from './models.mjs';
 import { createCodexParser } from './codex.mjs';
 import { modelLimit } from './opencode.mjs';
 
@@ -22,11 +23,42 @@ test('parseTokens and guessWindow', () => {
   assert.equal(guessWindow('x', 1_200_000), 2_000_000);
 });
 
+test('claudeWindow: the Claude table', () => {
+  const M = 1_000_000;
+  const K = 200_000;
+  for (const [id, w] of [
+    ['claude-fable-5-1', M], ['claude-opus-5-5', M], ['claude-opus-5', M], ['claude-opus-4-8', M], ['claude-opus-4-6', M],
+    ['claude-sonnet-5-5', M], ['claude-sonnet-4-6', M], ['claude-mythos-preview', M],
+    ['claude-haiku-4-5-20251001', K], ['claude-opus-4-5-20251101', K], ['claude-opus-4-1-20250805', K], ['claude-opus-4-20250514', K],
+    ['claude-sonnet-4-5-20250929', K], ['claude-sonnet-4-20250514', K], ['claude-3-5-sonnet-20241022', K], ['claude-3-opus-20240229', K],
+    ['kr/claude-sonnet-4.5-thinking-agentic', K], ['kr/claude-haiku-4.5', K], ['anthropic.claude-opus-4-6-v1:0', M], ['claude-haiku-4-5@20251001', K],
+    ['gpt-5.5', 0], ['main-agent', 0], ['', 0],
+  ]) assert.equal(claudeWindow(id), w, id);
+  assert.equal(modelWindow('claude-sonnet-4-5[1m]'), M);
+});
+
+test('modelWindow reads the Codex model cache (context_window x effective_context_window_percent)', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-home-'));
+  fs.writeFileSync(path.join(home, 'models_cache.json'), JSON.stringify({ models: [{ slug: 'gpt-x', context_window: 272_000, effective_context_window_percent: 95 }, { slug: 'gpt-y', context_window: 100_000 }] }));
+  const prev = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = home;
+  try {
+    assert.equal(modelWindow('gpt-x'), 258_400, 'the number Codex reports in token_count');
+    assert.equal(modelWindow('gpt-y'), 100_000);
+    assert.equal(modelWindow('openai/gpt-x'), 258_400);
+  } finally {
+    if (prev === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = prev;
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('claudeContext adds input, cache and output tokens; synthetic messages count for nothing', () => {
   const c = claudeContext({ model: 'claude-opus-4-1', usage: { input_tokens: 2, cache_creation_input_tokens: 1000, cache_read_input_tokens: 90_000, output_tokens: 500 } });
   assert.equal(c.used, 91_502);
   assert.equal(c.window, 200_000);
-  assert.equal(c.exact, false);
+  assert.equal(c.exact, true, 'Opus 4.1 is in the model table');
+  assert.equal(claudeContext({ model: 'some-gateway-model', usage: { input_tokens: 5 } }).exact, false, 'an unlisted model is guessed');
   assert.equal(claudeContext({ model: '<synthetic>', usage: { input_tokens: 5 } }), null);
   assert.equal(claudeContext({ model: 'm' }), null);
 });

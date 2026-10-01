@@ -108,7 +108,7 @@ Publishing: `npm publish` (the `prepack` script builds `dist/` first; only `dist
 | `OPENCODE_DB` | `~/.local/share/opencode/opencode.db` | OpenCode database |
 | `SESSION_WINDOW_MIN` | `30` | A session gets a room while it was active within this many minutes |
 | `PORT` | `4173` | Port of the web page (same as `--port`) |
-| `CONTEXT_WINDOW_TOKENS` | *(guessed)* | Context window assumed for Claude Code sessions, e.g. `1m` or `200k` (the Settings dialog can do the same per browser) |
+| `CONTEXT_WINDOW_TOKENS` | *(from the model list)* | Forces the context window of every session without a reported size, e.g. `1m` or `200k` (the Settings dialog can do the same per browser) |
 | `OPENCODE_CONFIG` | `~/.config/opencode/opencode.json` | OpenCode config; its `provider.<id>.models.<id>.limit.context` gives the context window of each model |
 
 ## Controls
@@ -137,7 +137,7 @@ Click the coffee machine, the water cooler, the fish tank, the printer or the ve
 * **Moments:** when the agent finishes a run the office cheers and confetti falls (a long run also gets a cake on the director's desk); a `git commit` gives a shower of sparkles, a `git push` a confetti cannon.
 * **Cats:** the meows are real recordings (public/sfx/meow, ~57 KB for 13 clips, credits in `CREDITS.txt`); each cat has its own pitch, the clip, pitch glide and loudness change from meow to meow and now and then a cat meows twice. Put new downloads into `assets-src/meow/` and run `npm run meow` (needs ffmpeg): every file is cut into its single meows, filtered, levelled and re-encoded. Without the clips the synthesised meow is used.
 * **Sound:** generative lo-fi music (mood follows the time of day and the weather), rain on the roof, crickets at night – all synthesised, no audio files.
-* **Context window:** every session button (and the room header) shows how full the main agent's context is, e.g. `554k / 1M · 55%`, green below 60 %, amber up to 85 %, red above. Claude Code: input + cache + output tokens of the last message; Codex and OpenCode (with limits in its config) report their window size, for Claude Code it is a guess (200k, 1M once a session has outgrown that, or a `[1m]` model name) that Settings → Context window can correct.
+* **Context window:** every session button (and the room header) shows how full the main agent's context is, e.g. `554k / 1M · 55%`, green below 60 %, amber up to 85 %, red above. Claude Code: input + cache + output tokens of the last message; Codex and OpenCode (with limits in its config) report their window size, Claude models come from a built-in table (1M for Fable, Mythos, Opus 4.6+, Sonnet 4.6+; 200k for the rest), Codex models from its `models_cache.json`. Only a model nobody lists is guessed (200k, 1M once a session has outgrown that) – Settings → Context window can correct that.
 * **Progress:** finished tasks, reports, runs, commits and pushes earn experience; levels unlock extra cats, achievements show up as toasts and as stars on the wall board of every room. It is all kept in this browser (real sessions only).
 
 ## How it works

@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { MUSINGS, pick, clip, base, toolSummary, cueOf, guessWindow, cleanPrompt } from './util.mjs';
+import { MUSINGS, pick, clip, base, toolSummary, cueOf, resolveWindow, cleanPrompt } from './util.mjs';
 
 export const defaultCodexHome = () => process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
 
@@ -134,7 +134,7 @@ export function createCodexParser({ say, mainStart, mainEnd, context }) {
         const last = p.info?.last_token_usage;
         const used = last ? last.total_tokens || (last.input_tokens || 0) + (last.output_tokens || 0) : 0;
         const window = Number(p.info?.model_context_window) || 0;
-        if (used > 0) context?.(s, { used, window: window || guessWindow(s.model, used), exact: window > 0, model: s.model || 'codex' });
+        if (used > 0) context?.(s, { used, ...(window > 0 ? { window, exact: true } : resolveWindow(s.model, used)), model: s.model || 'codex' });
         break;
       }
       case 'task_started':
