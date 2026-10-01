@@ -1,7 +1,8 @@
 import { Rng, hashString } from './util/rng';
+import { getSetting, setSetting } from './settings';
 
 /**
- * Names for the director and the staff. The user's own list is stored in localStorage and shared by
+ * Names for the director and the staff. The user's own list is stored in the settings (SQLite on the server) and shared by
  * every room / every run; when it is used up, common English names are used instead.
  */
 const NAMES_KEY = 'claude-office:names';
@@ -30,7 +31,7 @@ export function parseNames(text: string): string[] {
 
 export function loadNames(): string[] {
   try {
-    const v = JSON.parse(localStorage.getItem(NAMES_KEY) ?? '[]');
+    const v = JSON.parse(getSetting(NAMES_KEY) ?? '[]');
     return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').map((x) => x.normalize('NFC')) : [];
   } catch {
     return [];
@@ -39,7 +40,7 @@ export function loadNames(): string[] {
 
 export function saveNames(list: string[]) {
   try {
-    localStorage.setItem(NAMES_KEY, JSON.stringify(list));
+    setSetting(NAMES_KEY, JSON.stringify(list));
   } catch {
     /* private mode – the list simply is not remembered */
   }
@@ -47,7 +48,7 @@ export function saveNames(list: string[]) {
 
 function loadAssigned(): Record<string, string> {
   try {
-    const v = JSON.parse(localStorage.getItem(ASSIGNED_KEY) ?? '{}');
+    const v = JSON.parse(getSetting(ASSIGNED_KEY) ?? '{}');
     return v && typeof v === 'object' ? v : {};
   } catch {
     return {};
@@ -62,7 +63,7 @@ export function rememberAssigned(key: string, name: string) {
     all[key] = name;
     const keys = Object.keys(all);
     for (const k of keys.slice(0, Math.max(0, keys.length - 400))) delete all[k];
-    localStorage.setItem(ASSIGNED_KEY, JSON.stringify(all));
+    setSetting(ASSIGNED_KEY, JSON.stringify(all));
   } catch {
     /* ignore */
   }

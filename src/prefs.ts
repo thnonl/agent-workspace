@@ -1,9 +1,11 @@
-/** Small persisted preferences (localStorage; a blocked storage just means the choice is not remembered). */
+import { getSetting, setSetting } from './settings';
+
+/** Small persisted preferences (stored by the server in SQLite, see settings.ts). */
 const PREFIX = 'agent-workspace.';
 
 export function loadPref<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
   try {
-    const v = localStorage.getItem(PREFIX + key);
+    const v = getSetting(PREFIX + key);
     return allowed.includes(v as T) ? (v as T) : fallback;
   } catch {
     return fallback;
@@ -12,7 +14,7 @@ export function loadPref<T extends string>(key: string, allowed: readonly T[], f
 
 export function loadFlag(key: string, fallback: boolean): boolean {
   try {
-    const v = localStorage.getItem(PREFIX + key);
+    const v = getSetting(PREFIX + key);
     return v === null ? fallback : v === '1';
   } catch {
     return fallback;
@@ -21,7 +23,7 @@ export function loadFlag(key: string, fallback: boolean): boolean {
 
 export function savePref(key: string, value: string | boolean) {
   try {
-    localStorage.setItem(PREFIX + key, typeof value === 'boolean' ? (value ? '1' : '0') : value);
+    setSetting(PREFIX + key, typeof value === 'boolean' ? (value ? '1' : '0') : value);
   } catch {
     /* private mode */
   }
@@ -29,7 +31,7 @@ export function savePref(key: string, value: string | boolean) {
 
 export function loadJson<T>(key: string, fallback: T): T {
   try {
-    const v = JSON.parse(localStorage.getItem(PREFIX + key) ?? 'null');
+    const v = JSON.parse(getSetting(PREFIX + key) ?? 'null');
     return v ?? fallback;
   } catch {
     return fallback;
@@ -38,7 +40,7 @@ export function loadJson<T>(key: string, fallback: T): T {
 
 export function saveJson(key: string, value: unknown) {
   try {
-    localStorage.setItem(PREFIX + key, JSON.stringify(value));
+    setSetting(PREFIX + key, JSON.stringify(value));
   } catch {
     /* private mode */
   }

@@ -1,7 +1,48 @@
+import { createSettingsStore } from './settings.mjs';
+
+const BODY_LIMIT = 2 * 1024 * 1024;
+
+function json(res, status, body) {
+  res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  res.end(JSON.stringify(body));
+}
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > BODY_LIMIT) {
+        reject(Object.assign(new Error('too large'), { status: 413 }));
+        req.destroy();
+      } else chunks.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+}
+
+/** A page from another origin must not be able to rewrite the settings: same host only, and a JSON body (forces a CORS preflight). */
+function sameOriginJson(req) {
+  const origin = req.headers.origin;
+  if (origin) {
+    try {
+      if (new URL(origin).host !== req.headers.host) return false;
+    } catch {
+      return false;
+    }
+  }
+  return /^application\/json\b/i.test(String(req.headers['content-type'] || ''));
+}
+
 // Tiny connect-style middleware exposing the monitor over Server-Sent Events.
 // The monitor only runs while somebody listens: the first stream starts it, and it stops `idleStopMs` after the last
 // stream closed (a page reload or an EventSource reconnect must not cost a cold start).
-export function createApi(monitor, { idleStopMs = 30_000 } = {}) {
+export function createApi(monitor, { idleStopMs = 30_000, settings } = {}) {
+  // opened on first use: a server nobody asks for settings never creates the database file
+  let store = settings;
+  const settingsStore = () => (store ??= createSettingsStore());
   // one subscription for all clients: each event is stringified once and the same frame goes to every stream
   const clients = new Set();
   let off = null;
@@ -48,6 +89,27 @@ export function createApi(monitor, { idleStopMs = 30_000 } = {}) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, claudeDir: monitor.claudeDir, sources: monitor.sources, sessions: monitor.sessionCount() }));
       return;
+    }
+    if (url.pathname === '/api/settings') {
+      if (req.method === 'GET') {
+        const s = settingsStore();
+        if (!s.available) return json(res, 503, { error: 'sqlite unavailable' });
+        return json(res, 200, s.all());
+      }
+      if (req.method === 'PUT') {
+        if (!sameOriginJson(req)) return json(res, 403, { error: 'forbidden' });
+        const s = settingsStore();
+        if (!s.available) return json(res, 503, { error: 'sqlite unavailable' });
+        readBody(req)
+          .then((text) => {
+            const body = JSON.parse(text);
+            if (!body || typeof body !== 'object' || Array.isArray(body)) throw Object.assign(new Error('object expected'), { status: 400 });
+            json(res, 200, { saved: s.apply(body) });
+          })
+          .catch((err) => json(res, err.status || (err instanceof SyntaxError ? 400 : 500), { error: err.message }));
+        return;
+      }
+      return json(res, 405, { error: 'method not allowed' });
     }
     next();
   };

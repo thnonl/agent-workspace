@@ -4,6 +4,7 @@
  */
 import { playMeow } from './meow';
 import { pageActive } from './pipHost';
+import { getSetting, setSetting } from './settings';
 
 /**
  * Real cat recordings: public/sfx/meow/index.json lists the clips (made by scripts/process-meow.mjs). They are fetched and decoded
@@ -76,7 +77,7 @@ let noiseBuf: AudioBuffer | null = null;
 let outBus: DynamicsCompressorNode | null = null;
 let muted = (() => {
   try {
-    return localStorage.getItem(MUTE_KEY) === '1';
+    return getSetting(MUTE_KEY) === '1';
   } catch {
     return false;
   }
@@ -100,7 +101,7 @@ export function subscribeAudioState(f: () => void): () => void {
 export function setMuted(m: boolean) {
   muted = m;
   try {
-    localStorage.setItem(MUTE_KEY, m ? '1' : '0');
+    setSetting(MUTE_KEY, m ? '1' : '0');
   } catch {
     /* private mode – the choice is simply not remembered */
   }

@@ -8,6 +8,7 @@ import { loadNames, pickName, saveNames } from './names';
 import { getLayout } from './world/layout';
 import { isMuted, setMuted as setAudioMuted, sfx } from './audio';
 import { loadFlag, loadPref, QUALITIES, savePref, type Quality } from './prefs';
+import { getSetting, setSetting } from './settings';
 import { CONTEXT_WINDOWS, type ContextWindowPref } from './context';
 import { resolveWeather, WEATHER_MODES, type Weather, type WeatherMode } from './weather';
 import { resolveSeason, SEASON_MODES, type Season, type SeasonMode } from './season';
@@ -172,7 +173,7 @@ const initWeatherMode: WeatherMode = pickMode(queryOf('weather'), WEATHER_MODES)
 const initSeasonMode: SeasonMode = pickMode(queryOf('season'), SEASON_MODES) ?? loadPref('season', SEASON_MODES, 'auto');
 function loadShowSwitcher(): boolean {
   try {
-    return localStorage.getItem(SWITCHER_KEY) !== '0';
+    return getSetting(SWITCHER_KEY) !== '0';
   } catch {
     return true;
   }
@@ -191,7 +192,7 @@ const RELEASED_KEY = 'claude-office:released';
 /** Rooms the user released (hidden from the list until the session is continued), by session id → when. */
 function loadReleased(): Record<string, number> {
   try {
-    const v = JSON.parse(localStorage.getItem(RELEASED_KEY) ?? '{}');
+    const v = JSON.parse(getSetting(RELEASED_KEY) ?? '{}');
     return v && typeof v === 'object' ? v : {};
   } catch {
     return {};
@@ -201,7 +202,7 @@ function loadReleased(): Record<string, number> {
 function saveReleased(r: Record<string, number>) {
   try {
     const keep = Object.entries(r).filter(([, at]) => Date.now() - at < 3 * 86_400_000).sort((a, b) => b[1] - a[1]).slice(0, 200);
-    localStorage.setItem(RELEASED_KEY, JSON.stringify(Object.fromEntries(keep)));
+    setSetting(RELEASED_KEY, JSON.stringify(Object.fromEntries(keep)));
   } catch {
     /* private mode – the release is simply not remembered */
   }
@@ -1141,7 +1142,7 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
   setShowNames: (on) => set({ showNames: on }),
   setShowSwitcher: (on) => {
     try {
-      localStorage.setItem(SWITCHER_KEY, on ? '1' : '0');
+      setSetting(SWITCHER_KEY, on ? '1' : '0');
     } catch {
       /* private mode: the choice just is not remembered */
     }

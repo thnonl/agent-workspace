@@ -131,6 +131,7 @@ Publishing: `npm publish` (the `prepack` script builds `dist/` first; only `dist
 | `PORT` | `4173` | Port of the web page (same as `--port`) |
 | `CONTEXT_WINDOW_TOKENS` | *(from the model list)* | Forces the context window of every session without a reported size, e.g. `1m` or `200k` (the Settings dialog can do the same per browser) |
 | `OPENCODE_CONFIG` | `~/.config/opencode/opencode.json` | OpenCode config; its `provider.<id>.models.<id>.limit.context` gives the context window of each model |
+| `AGENT_WORKSPACE_DB` | `~/.agent-workspace/settings.db` | SQLite file with your settings (quality, weather, names, progress …). Needs Node 22.5+; on older Node the settings stay in the browser (localStorage). Old localStorage values are moved into the file on first start |
 
 ## Controls
 

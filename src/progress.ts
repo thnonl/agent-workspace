@@ -7,7 +7,7 @@ import type { IconName } from './ui/Icon';
 /**
  * The office grows with the work it has seen: every finished task, report, run, commit and push earns experience, the
  * level unlocks more cats, and achievements (shown on the stats board and in the dialog) are handed out on the way.
- * Everything is kept in this browser (localStorage) and only real sessions count – not the demo.
+ * Everything is kept in the settings (SQLite on the server) and only real sessions count – not the demo.
  */
 export interface Stats {
   tasks: number;
