@@ -131,6 +131,11 @@ const SOFA_PHONE_CHANCE = 0.45;
 /** seconds between two smile bumps / swipe sounds while scrolling the phone */
 const PHONE_BUMP_S = 13;
 const PHONE_SWIPE_S = 11;
+/** seconds between two thoughts about what to look at on the phone (plus up to 4 more), and before the first one */
+const PHONE_THINK_S = 6;
+const PHONE_THINK_FIRST_S = 1;
+/** held back while standing with the phone in the hand: the thought about it only shows after this long (s) */
+const PHONE_WAIT_THINK_S = 5;
 /** seconds per line of a chat */
 const CHAT_LINE_S = 3.6;
 
@@ -455,6 +460,11 @@ export class Actor {
   private curTask = '';
   /** the last "what I am doing" bubble, so the same words are not said twice in a row */
   private lastSaid = '';
+  /** the last context handed to update(), for the poses that have no ctx of their own */
+  private ctxNow: ActorCtx | null = null;
+  /** the next thought about what to look at on the phone (this.clock); phoneSeen: the clock when scrolling was last going on */
+  private scrollAt = 0;
+  private phoneSeen = -10;
   /** on the way to the director with a report */
   private reporting = false;
   /** height of this character's hip (sitting on a sofa) */
@@ -771,6 +781,7 @@ export class Actor {
     dt = Math.min(dt, SLOW_MAX_DT); // (callers already cap the active room at ACTIVE_MAX_DT; slow rooms hand in one long step)
     this.clock += dt;
     this.t += dt;
+    this.ctxNow = ctx;
     const s = this.sim;
     const { person, layout, rt } = ctx;
     const pose = this.targetPose();
@@ -1858,6 +1869,7 @@ export class Actor {
           } else if (a.phone) {
             this.held = 'phone';
             this.phonePose(pose, t);
+            this.scrollThought(ctx, PHONE_THINK_FIRST_S);
             for (let at = 3; at < a.dur - 2; at += PHONE_SWIPE_S) this.cue('swipe', at);
           } else this.sofaPose(pose);
           if (back || t >= a.dur) {
@@ -1988,6 +2000,7 @@ export class Actor {
     if (mode === 'phone') {
       this.held = 'phone';
       this.phonePose(p, t, 1);
+      if (this.ctxNow) this.scrollThought(this.ctxNow, PHONE_THINK_FIRST_S);
       for (let at = 3; at < a.dur - 2; at += PHONE_SWIPE_S) this.cue('swipe', at);
     } else if (mode === 'book') {
       this.held = 'book';
@@ -2170,6 +2183,20 @@ export class Actor {
     const bump = seg(m, 0, 0.4) * (1 - seg(m, 1.4, 2.0));
     p.happy = 0.15 + 0.85 * bump;
     p.bob = Math.sin(c * 1.15) * 0.004;
+  }
+
+  /**
+   * A thought about what they want to look at on the phone: the first one `first` seconds after the scrolling starts,
+   * then a new one every 6-10 s. (Called every frame while the phone is in use; a gap in the calls
+   * means a new scrolling session.)
+   */
+  private scrollThought(ctx: ActorCtx, first: number) {
+    const c = this.clock;
+    if (c - this.phoneSeen > 1) this.scrollAt = c + first;
+    this.phoneSeen = c;
+    if (c < this.scrollAt) return;
+    this.scrollAt = c + PHONE_THINK_S + Math.random() * 4;
+    this.announce(ctx, [thoughts.scroll(), 'phone']);
   }
 
   /** standing, head down over the phone, a thumb flicking the screen */
@@ -2871,8 +2898,10 @@ export class Actor {
         this.held = 'phone';
         this.phoneWait = true;
       }
-      if (this.held === 'phone') this.standPhonePose(p);
-      else this.idlePose(p);
+      if (this.held === 'phone') {
+        this.standPhonePose(p);
+        if (this.phoneWait && this.ctxNow) this.scrollThought(this.ctxNow, PHONE_WAIT_THINK_S);
+      } else this.idlePose(p);
       return;
     }
     if (this.phoneWait) {
