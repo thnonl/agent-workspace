@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, startTransition, useEffect, useMemo, useRef, useState } from 'react';
 import type * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { useShallow } from 'zustand/react/shallow';
@@ -203,7 +203,8 @@ function useBuildStage(people: number, cats: number, active: boolean) {
         t = w.setTimeout(next, 100);
         return;
       }
-      setStage((n) => n + 1);
+      // (a transition: React builds the stage's objects in slices of a few ms and lets frames in between, instead of in one long task)
+      startTransition(() => setStage((n) => n + 1));
     };
     // (a stage that builds a person or a cat is preceded by a pause; stages with nobody to build go by quickly)
     const n = stage + 1;
@@ -235,7 +236,7 @@ const RoomPeople = memo(function RoomPeople({ roomId, layout, active, stage, per
         t = w.setTimeout(next, 100);
         return;
       }
-      setSlots((n) => n + 1);
+      startTransition(() => setSlots((n) => n + 1));
     };
     t = w.setTimeout(next, CHARACTER_GAP_MS);
     return () => w.clearTimeout(t);
@@ -324,7 +325,7 @@ export const RoomView = memo(function RoomView({ roomId, active }: { roomId: str
   const origin = roomOrigin(index);
 
   return (
-    <group ref={group} position={origin}>
+    <group ref={group} position={origin} userData={{ room: roomId }}>
       <RoomStatic roomId={roomId} layout={layout} signTitle={signTitle} season={season} stage={stage} />
 
       {/* movable furniture */}

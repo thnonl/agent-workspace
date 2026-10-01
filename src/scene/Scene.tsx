@@ -616,6 +616,25 @@ function ViewSync() {
   return null;
 }
 
+/** Dev builds only: `?perf` shows a small statistics panel (perfOverlay.ts). Production drops this component and the module with it. */
+function PerfHook() {
+  const gl = useThree((s) => s.gl);
+  const scene = useThree((s) => s.scene);
+  useEffect(() => {
+    if (!new URLSearchParams(location.search).has('perf')) return;
+    let stop: (() => void) | undefined;
+    let dead = false;
+    void import('../perfOverlay').then((m) => {
+      if (!dead) stop = m.startPerfOverlay(gl, scene);
+    });
+    return () => {
+      dead = true;
+      stop?.();
+    };
+  }, [gl, scene]);
+  return null;
+}
+
 /** Feeds the system clock into the damped `env` object and refreshes time-reactive materials. */
 function EnvSync() {
   const last = useRef({ lamps: -1, day: -1, night: -1, overcast: -1 });
@@ -670,6 +689,7 @@ function RoomLights() {
     }
     // (a negative or huge delta must never reach exp(): the lights would become NaN and stay so)
     const k = 1 - Math.exp(-5 * Math.min(Math.max(dt, 0), 0.5));
+    let on = false;
     for (let i = 0; i < POOL; i++) {
       const l = refs.current[i];
       if (!l) continue;
@@ -681,7 +701,13 @@ function RoomLights() {
       }
       const target = r ? env.lamps * 22 : 0;
       l.intensity += (target - l.intensity) * k;
-      l.visible = l.intensity > 0.5;
+      if (l.intensity > 0.5) on = true;
+    }
+    // (three leaves invisible lights out, and the number of lights is part of every lit material's shader: the pool is switched on and off as
+    // a whole, so there are only two variants to compile - see ShaderWarmUp - and a light that restarts at another room does not add a third)
+    for (let i = 0; i < POOL; i++) {
+      const l = refs.current[i];
+      if (l) l.visible = on;
     }
   });
   return (
@@ -691,6 +717,57 @@ function RoomLights() {
       ))}
     </>
   );
+}
+
+/** room groups whose materials were compiled already (a rebuilt room is a new group) */
+const warmed = new WeakSet<THREE.Object3D>();
+/**
+ * Three compiles a shader program the first time a material is drawn, which stalls that frame (tens to hundreds of ms on a real GPU).
+ * Every room that has become ready is compiled ahead, in both light variants (the warm lamp pool off for the day, on for the night), so
+ * dusk, dawn and switching to a room that was loaded ahead do not hitch. Three walks the whole group, hidden or not, so a room the camera
+ * does not see is covered too; the lights come from the scene. The call is synchronous (nothing is drawn meanwhile) and cheap for a
+ * program that already exists: only the first room of a page load costs real time, the others share almost all programs with it.
+ */
+function warmUp(gl: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera) {
+  const pool: THREE.PointLight[] = [];
+  for (const c of scene.children) if ((c as THREE.PointLight).isPointLight) pool.push(c as THREE.PointLight);
+  const was = pool.map((l) => l.visible);
+  try {
+    for (const c of scene.children) {
+      const id = c.userData.room as string | undefined;
+      if (!id || warmed.has(c) || !frame.readyRooms.has(id)) continue;
+      warmed.add(c);
+      for (const on of [false, true]) {
+        for (const l of pool) l.visible = on;
+        gl.compileAsync(c, camera, scene).catch(() => {});
+      }
+    }
+  } finally {
+    pool.forEach((l, i) => (l.visible = was[i]));
+  }
+}
+
+function ShaderWarmUp() {
+  const s = useRef({ ready: 0, pending: false, queued: false });
+  useFrame((state) => {
+    const r = s.current;
+    const n = frame.readyRooms.size;
+    if (n > r.ready) r.pending = true;
+    r.ready = n;
+    // (not while a room is still being built or the camera moves: the compile waits for a quiet moment)
+    if (!r.pending || r.queued || frame.building > 0 || frame.cameraBusy) return;
+    r.queued = true;
+    const { gl, scene, camera } = state;
+    const run = () => {
+      r.queued = false;
+      if (frame.building > 0) return; // (a room was started meanwhile: the next ready room asks again)
+      r.pending = false;
+      warmUp(gl, scene, camera);
+    };
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 2000 });
+    else setTimeout(run, 300);
+  });
+  return null;
 }
 
 function Lights() {
@@ -848,6 +925,8 @@ export function Scene() {
       <EnvSync />
       <Lights />
       <RoomLights />
+      <ShaderWarmUp />
+      {import.meta.env.DEV ? <PerfHook /> : null}
       <CameraRig />
       <Evictor evict={evict} />
       <Preload mount={preload} />
