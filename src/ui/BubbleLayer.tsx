@@ -51,6 +51,12 @@ interface Item {
   radii?: [number, number, number, number];
   /** a thought (puffs instead of a tail) */
   thought?: boolean;
+  /** what the outline was drawn for (sizes and points in half pixels): it is only drawn again when one of them changed */
+  shapeKey?: string;
+  /** where the bubble was placed last time, for whom (the head's world position) and when its speech queue was last ticked */
+  placed?: Placed;
+  lastA?: [number, number, number];
+  tickAt?: number;
 }
 /** "idle" bubbles that are said out loud rather than thought */
 const SPOKEN = new Set(['talk', 'wave', 'home', 'eat']);
@@ -60,6 +66,8 @@ const items = new Map<string, Item>();
 const proj: Projected = { x: 0, y: 0, z: 0, dist: 0 };
 const projSm: Projected = { x: 0, y: 0, z: 0, dist: 0 };
 let lastLayout = 0;
+/** a number that changes whenever the camera or the screen size does (a bubble over somebody who stands still is only placed again then) */
+let lastCamSig = 0;
 
 /** space between a bubble and the head it belongs to, half the width of the tail's base, distance to the screen edge */
 const GAP = 18;
@@ -69,6 +77,8 @@ const GAP_THOUGHT = 25;
 const PUFFS: [number, number][] = [[0.36, 4.6], [0.76, 2.8]];
 const TAIL_HALF = 9;
 const EDGE = 6;
+/** the speech queue of a bubble over somebody who stands still moves on at most this often (ms) – about 15 times a second */
+const LAYOUT_STEP_MS = 66;
 /** how fast the bubble follows a walking head (1/s); the camera moving does not lag: both are projected with the same camera */
 const FOLLOW = 11;
 
@@ -82,6 +92,8 @@ interface Placed {
   dist: number;
   w: number;
   h: number;
+  /** nothing changed since it was placed: only its stacking order is looked at */
+  still?: boolean;
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
@@ -134,6 +146,15 @@ function setStyle(el: HTMLElement, prop: 'visibility' | 'transform' | 'zIndex', 
 function layoutLoop() {
   if (!view.project) return;
   const now = performance.now();
+  const cam = view.camera;
+  let sig = view.width * 7 + view.height * 13;
+  if (cam) {
+    const m = cam.matrixWorldInverse.elements;
+    const p = cam.projectionMatrix.elements;
+    for (let k = 0; k < 16; k += 3) sig += m[k] * (k + 1.3) + p[k] * (k + 2.1);
+  }
+  const camMoved = sig !== lastCamSig;
+  lastCamSig = sig;
   const dtS = clamp((now - lastLayout) / 1000, 0.001, 0.1);
   lastLayout = now;
   const follow = 1 - Math.exp(-FOLLOW * dtS);
@@ -147,6 +168,20 @@ function layoutLoop() {
     let bx = 0;
     let by = 0;
     let dist = 0;
+    // a bubble over somebody who stands still (same head position, camera, size and bubble as when it was placed): there is nothing to
+    // work out or write, only its speech queue still moves on – and not on every frame. Bubbles of people who move are placed on every frame.
+    const here = it.root.firstElementChild?.firstElementChild;
+    const placed = it.placed;
+    const was = it.lastA;
+    const sm0 = it.sm;
+    if (show && a && !camMoved && placed && was && sm0 && here === it.bub && a.x === was[0] && a.y === was[1] && a.z === was[2] && Math.abs(sm0.x - a.x) + Math.abs(sm0.y - a.y) + Math.abs(sm0.z - a.z) < 0.006 && it.size.w === placed.w && it.size.h === placed.h) {
+      if (now - (it.tickAt ?? 0) >= LAYOUT_STEP_MS) {
+        it.tickAt = now;
+        it.tick(true, now, true);
+      }
+      list.push({ ...placed, still: true });
+      continue;
+    }
     if (show && a) {
       view.project(a.x, a.y, a.z, proj);
       dist = proj.dist;
@@ -169,9 +204,14 @@ function layoutLoop() {
     if (!show) {
       hidden.push(key);
       it.sm = undefined;
+      it.placed = undefined;
       continue;
     }
-    list.push({ key, tx, ty, bx, by, dist, w: it.size.w, h: it.size.h });
+    const now2: Placed = { key, tx, ty, bx, by, dist, w: it.size.w, h: it.size.h };
+    it.placed = now2;
+    it.lastA = a ? [a.x, a.y, a.z] : undefined;
+    it.tickAt = now;
+    list.push(now2);
   }
   for (const key of hidden) {
     const it = items.get(key);
@@ -181,6 +221,10 @@ function layoutLoop() {
   list.sort((a, b) => a.dist - b.dist);
   list.forEach((p, i) => {
     const it = items.get(p.key)!;
+    if (p.still) {
+      setStyle(it.root, 'zIndex', String(9000 - i + (it.top ? 5000 : 0)));
+      return;
+    }
     setStyle(it.root, 'visibility', 'visible');
     // the bubble that is drawn now (if any) and its outline element: looked up once per bubble
     const bub = it.root.firstElementChild?.firstElementChild as HTMLElement | null | undefined;
@@ -189,6 +233,7 @@ function layoutLoop() {
       it.shape = bub?.classList.contains('bubble') ? bub.querySelector('.bubble-shape') : null;
       it.radii = it.shape && bub ? readRadii(bub) : undefined;
       it.thought = !!bub?.classList.contains('bubble-thinking');
+      it.shapeKey = undefined;
     }
     // (on a narrow screen a bubble slides back into view)
     const left = clamp(p.bx - p.w / 2, EDGE, Math.max(EDGE, view.width - p.w - EDGE));
@@ -206,6 +251,9 @@ function layoutLoop() {
     const ty = Math.max(h + 12, p.ty - 3 - top);
     const pad = Math.min(TAIL_HALF + 8 + Math.max(radii[2], radii[3]), w / 2);
     const bx = clamp(tx, pad, w - pad);
+    const key = `${Math.round(w * 2)}|${Math.round(h * 2)}|${Math.round(bx * 2)}|${Math.round(tx * 2)}|${Math.round(ty * 2)}|${it.thought ? 1 : 0}`;
+    if (key === it.shapeKey) return;
+    it.shapeKey = key;
     const d = bubblePath(w, h, radii, bx, tx, ty, !it.thought);
     setAttr(shape.children[0], 'd', d);
     setAttr(shape.children[1], 'd', d);
