@@ -1,4 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useShallow } from 'zustand/react/shallow';
 import { orderedRooms, useStore } from '../store';
 import { themeFor } from '../world/palettes';
@@ -10,6 +11,7 @@ import { audioRunning, sfx, subscribeAudioState } from '../audio';
 import { retryConnection } from '../live/connection';
 import { takePhoto } from '../photo';
 import { pipSupported, togglePip } from '../pip';
+import { floatingWindow } from '../pipHost';
 import { contextShare } from '../context';
 import { LevelChip } from './ProgressDialog';
 import { Dialog } from './Dialog';
@@ -325,18 +327,58 @@ function TaskList({ roomId }: { roomId: string }) {
   );
 }
 
-/** the floating window has no header: the context use of the room on show sits in its corner */
+/** the little window has room for a few words of the session title only */
+const PIP_DESC_MAX = 36;
+
+/** the floating window has no header: a bar along its bottom shows the session on view (who, state, context use) and holds the sound and music buttons */
 export function PipContext() {
   const room = useStore((s) => (s.activeRoomId ? s.rooms[s.activeRoomId] : null));
+  const ask = useStore((s) => (s.activeRoomId ? s.asks[s.activeRoomId] : undefined));
+  const unseen = useStore((s) => (s.activeRoomId ? !!s.unseen[s.activeRoomId] : false));
   const ctxPref = useStore((s) => s.contextWindow);
+  const muted = useStore((s) => s.muted);
+  const setMuted = useStore((s) => s.setMuted);
+  const musicOn = useStore((s) => s.musicOn);
+  const setMusicOn = useStore((s) => s.setMusicOn);
+  const status = useRoomStatus();
   const ctx = contextShare(room?.context, ctxPref);
-  if (!ctx) return null;
-  return (
-    <div className={`pip-ctx ctx-${ctx.level}`} title={ctx.title} role="status">
-      <Icon name="layers" size={12} />
-      <i aria-hidden="true"><b style={{ width: `${Math.min(100, ctx.pct)}%` }} /></i>
-      <em>{ctx.text}</em>
-    </div>
+  // React listens for clicks on the page's root element, and the office has left it: a portal makes React listen on the office itself (inside the floating window)
+  const target = floatingWindow()?.document.querySelector('.app');
+  const working = room ? (status[room.id] ?? NO_STATUS).working : false;
+  const state = ask ? 'Needs your input' : unseen ? 'Done – summary waiting' : working ? 'Working' : 'Idle';
+  const full = room ? shortTitle(room) : '';
+  const desc = full.length > PIP_DESC_MAX ? `${full.slice(0, PIP_DESC_MAX - 1).trimEnd()}…` : full;
+  if (!target) return null;
+  return createPortal(
+    <div className="pip-bar">
+      {room ? (
+        <div className={`pip-ctx${ctx ? ` ctx-${ctx.level}` : ''}`} title={`${room.title} · ${PROVIDER_NAME[room.provider]}${ctx ? ` · ${ctx.title}` : ''}`} role="status">
+          <span className="pip-logo"><ProviderLogo provider={room.provider} /></span>
+          <span className="pip-who">
+            <b>
+              <i className={`room-card-dot${ask ? ' is-ask' : unseen ? ' is-unseen' : working ? ' is-working' : ''}`} role="img" aria-label={state} title={state} />
+              <span>{room.project}</span>
+            </b>
+            {desc ? <small>{desc}</small> : null}
+            {ctx ? (
+              <span className="pip-ctx-use">
+                <Icon name="layers" size={12} />
+                <em>{ctx.text}</em>
+              </span>
+            ) : null}
+          </span>
+        </div>
+      ) : <span />}
+      <div className="pip-ctl">
+        <button type="button" className={`pip-btn${muted ? '' : ' on'}`} aria-pressed={!muted} aria-label={muted ? 'Turn sound effects on' : 'Turn sound effects off'} title={muted ? 'Sound effects off (M)' : 'Sound effects on (M)'} onClick={() => { setMuted(!muted); if (muted) window.setTimeout(() => sfx('ding'), 60); }}>
+          <Icon name={muted ? 'volume-x' : 'volume'} size={15} />
+        </button>
+        <button type="button" className={`pip-btn${musicOn ? ' on' : ''}`} aria-pressed={musicOn} aria-label={musicOn ? 'Turn music off' : 'Turn music on'} title={musicOn ? 'Lo-fi music on (K)' : 'Lo-fi music off (K)'} onClick={() => setMusicOn(!musicOn)}>
+          <Icon name="music" size={15} />
+        </button>
+      </div>
+    </div>,
+    target,
   );
 }
 

@@ -192,12 +192,26 @@
 /* --- picture-in-picture: the office lives in a small floating window --------------------------------------------------- */
 /* (the .cinema class is on as well: no buttons, no pointer; dialogs would only crowd the little window) */
 .app.pip .modal, .app.pip .paper-backdrop, .app.pip .confirm-backdrop, .app.pip .cinema-hint { display: none; }
-.pip-ctx { position: absolute; left: 8px; bottom: 8px; z-index: 60; display: flex; align-items: center; gap: 6px; max-width: calc(100% - 16px); padding: 4px 10px 4px 8px; border-radius: 999px; background: rgba(30, 24, 60, 0.62); color: #fff; font-size: 11px; font-weight: 800; font-variant-numeric: tabular-nums; pointer-events: none; --ctx: #3ddc97; }
+.app.pip { cursor: default; }
+.pip-bar { position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 60; display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; pointer-events: none; }
+.pip-ctx { min-width: 0; max-width: calc(100% - 76px); display: flex; align-items: center; gap: 8px; padding: 5px 14px 5px 5px; border-radius: 22px; background: rgba(30, 24, 60, 0.62); color: #fff; font-size: 11px; font-weight: 800; font-variant-numeric: tabular-nums; --ctx: #3ddc97; }
 .pip-ctx.ctx-warn { --ctx: #ffb020; }
 .pip-ctx.ctx-hot { --ctx: #ff5d73; }
-.pip-ctx .ico { flex: none; color: var(--ctx); }
-.pip-ctx i { flex: none; width: 44px; height: 5px; border-radius: 5px; background: rgba(255, 255, 255, 0.25); overflow: hidden; }
-.pip-ctx i b { display: block; height: 100%; border-radius: 5px; background: var(--ctx); transition: width 0.6s ease; }
-.pip-ctx em { font-style: normal; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pip-logo { flex: none; width: 26px; height: 26px; border-radius: 50%; overflow: hidden; border: 2px solid #fff; }
+.pip-logo .provider-logo { display: block; width: 100%; height: 100%; }
+.pip-who { min-width: 0; display: grid; line-height: 1.2; }
+.pip-who > b { display: flex; align-items: center; gap: 7px; font-size: 12px; white-space: nowrap; }
+.pip-who > b > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.pip-who > b > i { margin: 0 0 3px 2px; }
+.pip-who small { font-size: 10px; font-weight: 700; opacity: 0.85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pip-ctx-use { display: flex; align-items: center; gap: 5px; margin-top: 5px; }
+.pip-ctx-use .ico { flex: none; color: var(--ctx); }
+.pip-ctx-use em { font-style: normal; white-space: nowrap; }
+.pip-ctl { flex: none; display: flex; gap: 6px; pointer-events: auto; }
+.pip-btn { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; background: rgba(30, 24, 60, 0.62); color: rgba(255, 255, 255, 0.6); cursor: pointer; transition: background 0.15s ease, color 0.15s ease; }
+.pip-btn.on { background: rgba(61, 220, 151, 0.9); color: #14301f; }
+.pip-btn:hover { background: rgba(30, 24, 60, 0.85); color: #fff; }
+.pip-btn.on:hover { background: #3ddc97; color: #14301f; }
+.pip-btn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 .pip-placeholder { height: 100%; display: grid; place-content: center; justify-items: center; gap: 14px; text-align: center; padding: 24px; background: linear-gradient(160deg, var(--sky1, #ffe9f0), var(--sky2, #ffd0b5)); color: var(--ink); font-weight: 800; }
 .pip-placeholder p { margin: 0; font-size: 16px; }

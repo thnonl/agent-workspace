@@ -154,14 +154,15 @@ export function audioGraph(): { ctx: AudioContext; sfx: GainNode; out: AudioNode
 }
 
 // browsers start audio contexts suspended until the user has interacted with the page
+/** resumes the audio context; the floating window (pip.ts) calls it too, since a click there is not a click on the page */
+export function unlockAudio() {
+  const c = ensure();
+  if (c && c.state === 'suspended') void c.resume();
+  notifyState();
+}
 if (typeof window !== 'undefined') {
-  const unlock = () => {
-    const c = ensure();
-    if (c && c.state === 'suspended') void c.resume();
-    notifyState();
-  };
-  window.addEventListener('pointerdown', unlock, { passive: true });
-  window.addEventListener('keydown', unlock);
+  window.addEventListener('pointerdown', unlockAudio, { passive: true });
+  window.addEventListener('keydown', unlockAudio);
 }
 
 const MIN_GAP: Partial<Record<Sfx, number>> = { shutter: 500, fanfare: 1500, confetti: 400, sparkle: 600, levelup: 2000, achieve: 1500, puff: 400, radio: 300, clap: 3000, key: 70, pop: 160, talk: 240, blip: 200, water: 500, sizzle: 1500, doorbell: 4000, inhale: 2500, exhale: 2500, thud: 130, huff: 900, clank: 250, pickup: 3000, swipe: 2500, ring: 3000, mail: 2500, ask: 3000 };

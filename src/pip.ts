@@ -1,12 +1,13 @@
 import { useStore } from './store';
 import { pushToast } from './toast';
+import { unlockAudio } from './audio';
 import { floatingWindow, setFloatingWindow } from './pipHost';
 
 /**
  * Picture-in-picture mode: the whole office moves into a small always-on-top window (the browser's Document Picture-in-Picture
- * API: Chrome and Edge 116+, on https or localhost). It looks like the screensaver – no buttons – but the camera holds still, it
- * starts in the room that was on screen (and moves on to the room that was active most recently once that one has nothing to do)
- * and has no photo button. Close the window (or press I) to bring the office back.
+ * API: Chrome and Edge 116+, on https or localhost). It looks like the screensaver – no header or list – but the camera holds still,
+ * it starts in the room that was on screen (and moves on to the room that was active most recently once that one has nothing to do)
+ * and has no photo button. A bar along the bottom shows the session on view and holds the sound and music buttons. Close the window (or press I) to bring the office back.
  */
 interface DocumentPip {
   requestWindow(options?: { width?: number; height?: number }): Promise<Window>;
@@ -67,9 +68,11 @@ export async function enterPip(): Promise<boolean> {
   };
   title();
   const unsub = useStore.subscribe(title);
+  w.addEventListener('pointerdown', unlockAudio, { passive: true }); // (the sound and music buttons live in this window)
 
   const leave = () => {
     unsub();
+    w.removeEventListener('pointerdown', unlockAudio);
     w.removeEventListener('pagehide', leave);
     restore = null;
     setFloatingWindow(null);
