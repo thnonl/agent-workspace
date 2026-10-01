@@ -49,7 +49,7 @@ export function WeatherLayer() {
     const drops: Drop[] = Array.from({ length: n }, () => ({
       x: Math.random() * w,
       y: Math.random() * h,
-      v: kind === 'rain' ? 520 + Math.random() * 360 : 38 + Math.random() * 60,
+      v: kind === 'rain' ? 260 + Math.random() * 180 : 38 + Math.random() * 60,
       s: kind === 'rain' ? 9 + Math.random() * 14 : 1.1 + Math.random() * 2.2,
       ph: Math.random() * 6.28,
     }));

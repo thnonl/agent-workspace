@@ -93,7 +93,10 @@ function useClock() {
     if (q !== null && !Number.isNaN(Number(q))) useStore.getState().setHour(Number(q));
     const t = setInterval(() => {
       const s = useStore.getState();
-      if (s.timeMode === 'auto' && new URLSearchParams(location.search).get('hour') === null) s.setHour(localHour());
+      if (s.timeMode !== 'auto' || new URLSearchParams(location.search).get('hour') !== null) return;
+      // (the clock shows minutes: a change of seconds is not worth a re-render of the page)
+      const h = localHour();
+      if (Math.floor(h * 60) !== Math.floor(s.hour * 60)) s.setHour(h);
     }, 15000);
     return () => clearInterval(t);
   }, []);
@@ -252,6 +255,37 @@ function useHotkeys() {
   }, []);
 }
 
+/**
+ * Everything on the page that takes no props from App. It is built once: when App re-renders (time of day, weather, screensaver...)
+ * React sees the same element and leaves the scene, the bubbles and all panels alone (they follow the store on their own).
+ */
+const LAYERS = (
+  <>
+    <WeatherLayer />
+    <main className="stage" aria-label="3D office: every session of your agents is a room with a director, staff and cats. Use the session list and the buttons to follow them.">
+      <Suspense fallback={null}>
+        <Scene />
+      </Suspense>
+    </main>
+    <BubbleLayer />
+    <div className="hud-top">
+      <TopBar />
+      <RoomHeader />
+    </div>
+    <AgentPanel />
+    <RoomSwitcher />
+    <EmptyState />
+    <Help />
+    <NamesDialog />
+    <SummaryPaper />
+    <ReleaseConfirm />
+    <SettingsDialog />
+    <ProgressDialog />
+    <Toasts />
+    <Announcer />
+  </>
+);
+
 export default function App() {
   useLiveConnection();
   useAskTitle();
@@ -292,30 +326,9 @@ export default function App() {
         <i className="cloud cx c6" />
         <i className="sky-fog" />
       </div>
-      <WeatherLayer />
-      <main className="stage" aria-label="3D office: every session of your agents is a room with a director, staff and cats. Use the session list and the buttons to follow them.">
-        <Suspense fallback={null}>
-          <Scene />
-        </Suspense>
-      </main>
-      <BubbleLayer />
-      <div className="hud-top">
-        <TopBar />
-        <RoomHeader />
-      </div>
-      <AgentPanel />
-      <RoomSwitcher />
-      <EmptyState />
-      <Help />
-      <NamesDialog />
-      <SummaryPaper />
-      <ReleaseConfirm />
-      <SettingsDialog />
-      <ProgressDialog />
-      <Toasts />
+      {LAYERS}
       {pip ? <PipContext /> : null}
       {cinema ? <div className="cinema-hint" role="note">Screensaver · click or press Esc to leave</div> : null}
-      <Announcer />
     </div>
   );
 }

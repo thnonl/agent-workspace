@@ -9,9 +9,9 @@
 .stars { opacity: calc(clamp(0, calc(var(--night) * 1.35 - 0.25), 1) * (1 - var(--wx))); }
 .cloud.cx { opacity: calc(var(--wx) * 1.6); }
 /* (no filter on the clouds: it keeps the drift off the compositor; the grey veil above already darkens them) */
-.c4 { top: 24%; left: -300px; animation-duration: 95s; animation-timing-function: steps(1140); animation-delay: -30s; transform: scale(1.7); }
-.c5 { top: 48%; left: -280px; animation-duration: 120s; animation-timing-function: steps(1440); animation-delay: -80s; transform: scale(1.2); }
-.c6 { top: 8%; left: -320px; animation-duration: 140s; animation-timing-function: steps(1680); animation-delay: -10s; transform: scale(2); }
+.c4 { top: 24%; left: -300px; animation-duration: 190s; animation-timing-function: steps(2280); animation-delay: -60s; transform: scale(1.7); }
+.c5 { top: 48%; left: -280px; animation-duration: 240s; animation-timing-function: steps(2880); animation-delay: -160s; transform: scale(1.2); }
+.c6 { top: 8%; left: -320px; animation-duration: 280s; animation-timing-function: steps(3360); animation-delay: -20s; transform: scale(2); }
 .sky-fog { position: absolute; inset: 0; opacity: 0; transition: opacity 2.5s ease; background: radial-gradient(ellipse at 30% 70%, rgba(236, 240, 250, 0.75), transparent 60%), radial-gradient(ellipse at 75% 40%, rgba(236, 240, 250, 0.6), transparent 55%); animation: fogdrift 40s steps(480) infinite alternate; animation-play-state: paused; }
 /* (clouds that only show up in bad weather and the fog stand still while invisible) */
 .app.wx-fog .sky-fog { animation-play-state: running; }

@@ -39,13 +39,13 @@ button { font: inherit; color: inherit; }
 /* --- drifting clouds -------------------------------------------------- */
 .sky { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 .cloud { position: absolute; display: block; height: 46px; width: 150px; border-radius: 99px; background: rgba(255, 255, 255, 0.55); /* (the drift moves in 12 steps per second: a smooth animation of six clouds was restyled on the main thread in every display frame, about half of its time) */
-  animation: drift 90s steps(1080) infinite; }
+  animation: drift 180s steps(2160) infinite; }
 .cloud::before, .cloud::after { content: ''; position: absolute; background: inherit; border-radius: 50%; }
 .cloud::before { width: 62px; height: 62px; left: 22px; top: -30px; }
 .cloud::after { width: 46px; height: 46px; left: 74px; top: -20px; }
-.c1 { top: 14%; left: -200px; animation-duration: 110s; animation-timing-function: steps(1320); }
-.c2 { top: 62%; left: -260px; animation-duration: 150s; animation-timing-function: steps(1800); animation-delay: -60s; transform: scale(1.4); opacity: 0.7; }
-.c3 { top: 36%; left: -240px; animation-duration: 130s; animation-timing-function: steps(1560); animation-delay: -95s; transform: scale(0.8); }
+.c1 { top: 14%; left: -200px; animation-duration: 220s; animation-timing-function: steps(2640); }
+.c2 { top: 62%; left: -260px; animation-duration: 300s; animation-timing-function: steps(3600); animation-delay: -120s; transform: scale(1.4); opacity: 0.7; }
+.c3 { top: 36%; left: -240px; animation-duration: 260s; animation-timing-function: steps(3120); animation-delay: -190s; transform: scale(0.8); }
 @keyframes drift { to { translate: calc(100vw + 500px) 0; } }
 
 /* --- top bar ---------------------------------------------------------- */
