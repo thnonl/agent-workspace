@@ -11,7 +11,7 @@ import { G, M, MB, shade } from './kit';
 import { Ms, RB } from './furniture';
 import { useBaked } from './bake';
 import { calendarTexture, textTexture } from './textures';
-import { posterTexture, sloganTexture, worldMapTexture } from './wallArt';
+import { posterTexture, sloganTexture, worldMapPins, worldMapTexture } from './wallArt';
 import { Rng } from '../util/rng';
 
 export const WALL_T = 0.28;
@@ -324,7 +324,12 @@ export function WallDecorView({ d, localX, theme, roomId }: { d: WallDecor; loca
       case 'slogan':
         return <WallPicture d={d} tex={sloganTexture(d.variant, d.variant + Math.floor(d.pos), d.color, theme.accent3, d.w, d.h, d.round)} edge={shade(theme.desk, -0.15)} />;
       case 'worldmap':
-        return <WallPicture d={d} tex={worldMapTexture(d.variant, theme.accent, theme.accent3, Math.floor(d.pos * 10) + d.variant, d.round)} edge={shade(theme.desk, -0.22)} />;
+      {
+        // (the map is the same in every room; the pins and routes are a small layer of their own)
+        const seed = Math.floor(d.pos * 10) + d.variant;
+        const crop = seed % 3;
+        return <WallPicture d={d} tex={worldMapTexture(d.variant, d.round, crop)} over={worldMapPins(d.variant, theme.accent, theme.accent3, seed, d.round, crop)} edge={shade(theme.desk, -0.22)} />;
+      }
       case 'clock':
         return <Clock w={d.w} roomId={roomId} />;
       case 'whiteboard':
@@ -383,7 +388,12 @@ export function WallDecorView({ d, localX, theme, roomId }: { d: WallDecor; loca
 }
 
 /** A flat picture in a thin frame (poster, slogan, world map): a texture on a plane, lit by nothing. */
-function WallPicture({ d, tex, edge }: { d: WallDecor; tex: THREE.Texture; edge: string }) {
+function WallPicture({ d, tex, over, edge }: { d: WallDecor; tex: THREE.Texture; over?: THREE.Texture; edge: string }) {
+  const layer = over ? (
+    <mesh geometry={d.round ? G.circle(d.w / 2, 40) : G.plane(d.w, d.h)} position={[0, 0, 0.029]}>
+      <meshBasicMaterial map={over} transparent toneMapped={false} depthWrite={false} />
+    </mesh>
+  ) : null;
   if (d.round) {
     return (
       <group>
@@ -391,6 +401,7 @@ function WallPicture({ d, tex, edge }: { d: WallDecor; tex: THREE.Texture; edge:
         <mesh geometry={G.circle(d.w / 2, 40)} position={[0, 0, 0.027]}>
           <meshBasicMaterial map={tex} toneMapped={false} />
         </mesh>
+        {layer}
       </group>
     );
   }
@@ -400,6 +411,7 @@ function WallPicture({ d, tex, edge }: { d: WallDecor; tex: THREE.Texture; edge:
       <mesh geometry={G.plane(d.w, d.h)} position={[0, 0, 0.027]}>
         <meshBasicMaterial map={tex} toneMapped={false} />
       </mesh>
+      {layer}
     </group>
   );
 }

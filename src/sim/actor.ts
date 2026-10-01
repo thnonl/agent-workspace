@@ -178,7 +178,7 @@ function thoughtOf(a: Activity, name: string): [string, string] | null {
 }
 
 /** what a character holds in the right hand */
-export type HeldKind = 'none' | 'cup' | 'book' | 'can' | 'bowl' | 'dumbbell' | 'parcel' | 'pot' | 'cig' | 'phone' | 'handsetEar';
+export type HeldKind = 'none' | 'cup' | 'book' | 'can' | 'bowl' | 'dumbbell' | 'parcel' | 'pot' | 'cig' | 'phone';
 
 /** arm/body key pose of a station activity (missing values fall back to the relaxed pose) */
 interface Key {
@@ -1258,7 +1258,6 @@ export class Actor {
         if (this.held === 'phone') this.held = 'none';
         this.heldTilt = 0;
       }
-      s.handsetUp = false;
       if (msgOn && s.msgVia === 'email' && s.phase === 'working') this.mailPose(pose);
     }
     // a question of the agent is waiting for the user: the director looks up and waves for attention (wakes him, over a break's hand pose)

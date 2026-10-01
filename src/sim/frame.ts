@@ -52,6 +52,8 @@ export const frame = {
   cameraBusy: false,
   /** rooms that are still being built stage by stage (their frames are slow and say nothing about the speed of the machine) */
   building: 0,
+  /** somebody in the active room sits still with something to see (music, a video, a game…): the idle frame rate goes up a little */
+  lively: false,
   /** the scene needs full frame rate (otherwise it idles at a low rate, see IdleGovernor) */
   busy: true,
   /** static geometry appeared or changed: the shadow map must be redrawn */

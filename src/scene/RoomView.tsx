@@ -214,6 +214,45 @@ function useBuildStage(people: number, cats: number, active: boolean) {
   return { stage, cap };
 }
 
+/**
+ * The people of a room. They are put into the scene one at a time (a person is a few dozen milliseconds of work: geometry merged, skeleton
+ * bound), also those hired later – three people arriving in one commit would be one long frame. In a room that is only loaded ahead each one
+ * also waits for a quiet moment. (A component of its own, so that each step re-renders only the people, not the whole room.)
+ */
+const RoomPeople = memo(function RoomPeople({ roomId, layout, active, stage, personKeys, directorKey }: { roomId: string; layout: RoomLayout; active: boolean; stage: number; personKeys: string[]; directorKey: string | null }) {
+  const staff = personKeys.filter((k) => k !== directorKey).length;
+  const [slots, setSlots] = useState(0);
+  useEffect(() => {
+    if (slots > staff) {
+      setSlots(staff);
+      return;
+    }
+    if (stage < STAGE.people - 1 || slots >= staff) return;
+    const w = host();
+    let t = 0;
+    const next = () => {
+      if (!active && !frame.loadOk) {
+        t = w.setTimeout(next, 100);
+        return;
+      }
+      setSlots((n) => n + 1);
+    };
+    t = w.setTimeout(next, CHARACTER_GAP_MS);
+    return () => w.clearTimeout(t);
+  }, [stage, slots, staff, active]);
+  return (
+    <>
+      {personKeys.map((k, i) => {
+        const boss = k === directorKey;
+        // (the position among the staff decides when somebody's turn comes)
+        const turn = boss ? 0 : personKeys.slice(0, i).filter((o) => o !== directorKey).length;
+        const here = boss ? stage >= STAGE.people - 1 : stage >= STAGE.people + Math.min(i, 7) && turn < slots;
+        return here ? <PersonActor key={k} personKey={k} roomId={roomId} layout={layout} frozen={!active} /> : null;
+      })}
+    </>
+  );
+});
+
 export const RoomView = memo(function RoomView({ roomId, active }: { roomId: string; active: boolean }) {
   // narrow selectors: the room record changes on every event (timestamps, counters) but only these matter here
   const exists = useStore((s) => !!s.rooms[roomId]);
@@ -294,7 +333,7 @@ export const RoomView = memo(function RoomView({ roomId, active }: { roomId: str
       ))}
       {stage >= STAGE.director ? (
         <StaticBake key={Math.min(reports, 12)}>
-          <DirectorDesk layout={layout} reports={reports} roomId={roomId} />
+          <DirectorDesk layout={layout} reports={reports} />
         </StaticBake>
       ) : null}
       {stage >= STAGE.director ? <Chair x={layout.director.seat.x} z={layout.director.seat.z} rot={0} turn={0} color={shade(theme.accent2, -0.05)} roomId={roomId} deskIndex={-1} big seed={99} /> : null}
@@ -316,11 +355,7 @@ export const RoomView = memo(function RoomView({ roomId, active }: { roomId: str
 
       {/* people */}
       {/* (everybody is there, also in a room that is only loaded ahead: standing still until the room is the one on screen) */}
-      {personKeys.map((k, i) => {
-        const boss = k === directorKey;
-        const here = boss ? stage >= STAGE.people - 1 : stage >= STAGE.people + Math.min(i, 7);
-        return here ? <PersonActor key={k} personKey={k} roomId={roomId} layout={layout} frozen={!active} /> : null;
-      })}
+      <RoomPeople roomId={roomId} layout={layout} active={active} stage={stage} personKeys={personKeys} directorKey={directorKey} />
     </group>
   );
 });

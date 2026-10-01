@@ -35,8 +35,6 @@ export interface HeldItems {
   phone: THREE.Group;
   phoneTilt: THREE.Group;
   phoneScreen: THREE.Mesh;
-  /** the handset of the desk phone (at the ear during a call): earpiece up, mouthpiece down, pads towards the head */
-  handset: THREE.Group;
 }
 
 /** the screen glow flickers between these shared materials (no per-frame allocation) */
@@ -44,7 +42,6 @@ export const PHONE_GLOWS = [MB('#9fd6ff'), MB('#bfe4ff'), MB('#8fc4f5'), MB('#d6
 const _m = new THREE.Matrix4();
 /** orientation of the phone (screen = local +y, top = local +z): held in front of the chest tilted towards the face / upright at the right ear with the screen towards the head */
 export const Q_PHONE_CHEST = new THREE.Quaternion().setFromRotationMatrix(_m.makeBasis(new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0.7071, -0.7071), new THREE.Vector3(0, 0.7071, 0.7071)));
-export const Q_PHONE_EAR = new THREE.Quaternion().setFromRotationMatrix(_m.makeBasis(new THREE.Vector3(0, 0, -1), new THREE.Vector3(-1, 0, 0), new THREE.Vector3(0, 1, 0)));
 
 const DROPS = 9;
 
@@ -184,15 +181,5 @@ export function buildHeldItems(accent: string): HeldItems {
   phoneTilt.quaternion.copy(Q_PHONE_CHEST);
   phone.add(phoneTilt);
   phone.visible = false;
-  // desk phone handset: a slim grip bowed away from the head with an earpiece and a mouthpiece pad at its ends (local +y faces the head, +z = earpiece end)
-  const handset = group();
-  const handsetTilt = group();
-  const hsBody = M('#2f3244', { rough: 0.45, metal: 0.2 });
-  handsetTilt.add(mesh(G.rbox(0.03, 0.028, 0.15, 0.011), hsBody, 0, -0.012, 0, { cast: false }));
-  handsetTilt.add(mesh(G.rbox(0.05, 0.03, 0.05, 0.014), hsBody, 0, 0.004, 0.085, { cast: false }));
-  handsetTilt.add(mesh(G.rbox(0.05, 0.03, 0.05, 0.014), hsBody, 0, 0.004, -0.085, { cast: false }));
-  handsetTilt.quaternion.copy(Q_PHONE_EAR);
-  handset.add(handsetTilt);
-  handset.visible = false;
-  return { cup, book, bookLeft, bookRight, can, bowl, spout, stream, drops, steam, fx, parcel, pot, cig, smoke, phone, phoneTilt, phoneScreen, handset };
+  return { cup, book, bookLeft, bookRight, can, bowl, spout, stream, drops, steam, fx, parcel, pot, cig, smoke, phone, phoneTilt, phoneScreen };
 }

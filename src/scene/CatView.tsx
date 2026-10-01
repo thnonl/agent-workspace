@@ -7,6 +7,7 @@ import type { RoomLayout } from '../world/layout';
 import { CatBrain, neutralCatPose, type CatPose } from '../sim/cat';
 import { cats, catsInRoom, simsInRoom, spotOwners } from '../sim/registry';
 import { CALM_STEP, frame, roomStep, stepDt } from '../sim/frame';
+import { walkMatrices } from './matrixWalk';
 import { buildCat, makeCatLook, type CatRig } from './catModel';
 import { MB } from './kit';
 import { useStore } from '../store';
@@ -147,6 +148,9 @@ export function CatView({ catKey, roomId, layout, seed }: Props) {
   const settled = useRef(false);
   /** the cat has been animated live (the rig shows a pose already) */
   const liveBefore = useRef(false);
+  /** frames the cat has stood stopped, and whether its matrices are no longer worked out */
+  const stoppedFor = useRef(0);
+  const matsOff = useRef(false);
 
   // R3F does not dispose <primitive>: free the body/head geometry and bone texture this cat owns
   useEffect(() => () => disposeOwned(rig.root), [rig]);
@@ -169,10 +173,21 @@ export function CatView({ catKey, roomId, layout, seed }: Props) {
     if (frozen) {
       pending.current = 0;
       if (liveBefore.current) settled.current = true; // (stopped in the middle of it: the rig keeps its pose)
-      if (settled.current || !visible) return;
+      if (settled.current || !visible) {
+        if (settled.current && !matsOff.current && visible && ++stoppedFor.current > 3) {
+          matsOff.current = true;
+          walkMatrices(rig.root, false);
+        }
+        return;
+      }
     } else {
       settled.current = false;
       liveBefore.current = true;
+      stoppedFor.current = 0;
+      if (matsOff.current) {
+        matsOff.current = false;
+        walkMatrices(rig.root, true);
+      }
     }
     let dt = 10;
     const now = performance.now() / 1000;

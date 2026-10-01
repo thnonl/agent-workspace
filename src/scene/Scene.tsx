@@ -4,7 +4,7 @@ import { Canvas, addAfterEffect, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { useStore } from '../store';
 import { getLayout } from '../world/layout';
-import { anchors, cats, sims, view } from '../sim/registry';
+import { anchors, cats, catsInRoom, simsInRoom, view } from '../sim/registry';
 import { afterRender, frame, PRELOAD_ROOMS, PRE_ROLL_MS } from '../sim/frame';
 import { env, envForHour, stepEnv } from '../env';
 import { OVERCAST } from '../weather';
@@ -15,11 +15,16 @@ import { updateGlow } from './glow';
 import { RoomView, roomOrigin } from './RoomView';
 
 const AZIMUTH = 0.72;
+/** when frame.loading was last worked out in full (ms) */
+let loadingAt = 0;
 const POLAR = 0.8;
 /** frame rate while nothing moves in the active room (a calm office is not worth a laptop fan; still well above the background rooms' tick rate) */
-const IDLE_FPS = 18;
+const IDLE_FPS = 12;
+/** ...a bit more while somebody sits with something to see (music, a video, a game…) */
+const LIVELY_FPS = 18;
 /** ...and when nobody has touched the page for CALM_AFTER ms it drops to this (only the slow decor is left to draw) */
-const CALM_FPS = 10;
+const CALM_FPS = 6;
+const CALM_LIVELY_FPS = 10;
 const CALM_AFTER = 15_000;
 const EVICT_CHECK = 2_000;
 /**
@@ -213,16 +218,20 @@ function FrameSync() {
     // only the active room's movement asks for the busy frame rate; a background room is drawn on the frames that happen anyway
     let dynamic = false;
     let moving = false;
-    for (const s of sims.values()) {
-      if (!s.onStage || s.roomId !== st.activeRoomId) continue;
+    let lively = false;
+    // (the lists of the active room are the ones the people and cats read in this frame too: one pass over everybody serves all)
+    const here = st.activeRoomId ? simsInRoom(st.activeRoomId) : [];
+    for (const s of here) {
+      if (!s.onStage) continue;
       // on the move: on their feet, or in the middle of sitting down / getting up (the rest of the room is loaded only while nobody is)
       if (s.walking || s.phase === 'sitting' || s.phase === 'standing' || (s.sitT > 0.01 && s.sitT < 0.99)) moving = true;
       // (somebody who sits still does not ask for the busy frame rate)
       if (!s.calm) dynamic = true;
+      if (s.lively) lively = true;
     }
     if (!dynamic) {
-      for (const c of cats.values()) {
-        if (c.onStage && !c.still && c.roomId === st.activeRoomId) {
+      for (const c of st.activeRoomId ? catsInRoom(st.activeRoomId) : []) {
+        if (c.onStage && !c.still) {
           dynamic = true;
           break;
         }
@@ -233,9 +242,15 @@ function FrameSync() {
       dynamic = false;
       moving = false;
     }
+    frame.lively = lively && !frame.settling;
     frame.moving = moving;
     frame.loadOk = !moving && !frame.settling && !frame.cameraBusy;
-    frame.loading = !st.pip && !!st.activeRoomId && (frame.aheadBuilding > 0 || preloadTargets(st).some((id) => !frame.mountedRooms.has(id)));
+    // (whether a room is left to load only changes when one is added or mounted: no need to look at every frame)
+    if (frame.aheadBuilding > 0) frame.loading = !st.pip && !!st.activeRoomId;
+    else if (tNow - loadingAt >= 200) {
+      loadingAt = tNow;
+      frame.loading = !st.pip && !!st.activeRoomId && preloadTargets(st).some((id) => !frame.mountedRooms.has(id));
+    }
     frame.dynamic = dynamic;
     frame.busy = dynamic || frame.cameraBusy || st.cinema;
 
@@ -323,7 +338,7 @@ function IdleGovernor() {
     document.addEventListener('visibilitychange', touch);
     const loop = (t: number) => {
       raf = requestAnimationFrame(loop);
-      const fps = frame.busy ? BUSY_FPS : t - input > CALM_AFTER ? CALM_FPS : IDLE_FPS;
+      const fps = frame.busy ? BUSY_FPS : t - input > CALM_AFTER ? (frame.lively ? CALM_LIVELY_FPS : CALM_FPS) : frame.lively ? LIVELY_FPS : IDLE_FPS;
       // (a few ms of slack: a 33.3 ms interval would otherwise skip to every third refresh at 60 Hz)
       const every = frame.cameraBusy ? 0 : 1000 / fps - 4;
       if (t - last >= every) {
@@ -375,7 +390,7 @@ function PipDriver() {
       // (the page's own observer reports an empty canvas for a moment after the move, and may do so after this window's first size was set)
       const cur = get().size;
       if (w.innerWidth > 8 && w.innerHeight > 8 && (cur.width !== w.innerWidth || cur.height !== w.innerHeight)) fit();
-      const every = frame.cameraBusy ? 0 : 1000 / (frame.busy ? BUSY_FPS : CALM_FPS) - 4;
+      const every = frame.cameraBusy ? 0 : 1000 / (frame.busy ? BUSY_FPS : frame.lively ? CALM_LIVELY_FPS : CALM_FPS) - 4;
       if (t - last >= every) {
         const before = seconds;
         seconds += Math.min(0.25, (t - last) / 1000);

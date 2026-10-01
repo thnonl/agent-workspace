@@ -134,6 +134,11 @@ export function skinRig(root: THREE.Object3D, joints: THREE.Object3D[], skip: Re
     mesh.castShadow = true;
     root.add(mesh);
     mesh.bind(skeleton, bind);
+    // the bounds of the bind pose, once: otherwise three works them out by skinning every vertex, in the first frame the person is drawn
+    geo.computeBoundingBox();
+    geo.computeBoundingSphere();
+    mesh.boundingBox = geo.boundingBox!.clone();
+    mesh.boundingSphere = geo.boundingSphere!.clone();
     meshes.push(mesh);
     if (kind === 'lit') box.setFromBufferAttribute(geo.attributes.position as THREE.BufferAttribute);
   });

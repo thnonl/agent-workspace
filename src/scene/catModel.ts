@@ -249,6 +249,11 @@ export function buildCat(look: CatLook): CatRig {
   root.add(skinned);
   root.updateMatrixWorld(true);
   skinned.bind(new THREE.Skeleton(bones));
+  // (the bounds of the bind pose, once: otherwise three skins every vertex to work them out in the first frame the cat is drawn)
+  skinned.geometry.computeBoundingBox();
+  skinned.geometry.computeBoundingSphere();
+  skinned.boundingBox = skinned.geometry.boundingBox!.clone();
+  skinned.boundingSphere = skinned.geometry.boundingSphere!.clone();
 
   // ---- head details (rigid, children of the head bone)
   const face = group();

@@ -64,7 +64,7 @@ function playMeowClip(c: AudioContext, out: AudioNode, t: number, pitch: number,
 }
 export type Sfx =
   | 'door' | 'pop' | 'talk' | 'ding' | 'chime' | 'key' | 'paper' | 'water' | 'sip' | 'page' | 'sizzle' | 'bite' | 'meow' | 'blip' | 'pour' | 'clink'
-  | 'doorbell' | 'inhale' | 'exhale' | 'thud' | 'huff' | 'clank' | 'pickup' | 'swipe' | 'ring' | 'mail' | 'ask'
+  | 'doorbell' | 'inhale' | 'exhale' | 'thud' | 'huff' | 'clank' | 'pickup' | 'swipe' | 'mail' | 'ask'
   | 'shutter' | 'fanfare' | 'confetti' | 'sparkle' | 'levelup' | 'achieve' | 'puff' | 'radio' | 'clap' | 'flush';
 
 const MUTE_KEY = 'claude-office:muted';
@@ -165,7 +165,7 @@ if (typeof window !== 'undefined') {
   window.addEventListener('keydown', unlockAudio);
 }
 
-const MIN_GAP: Partial<Record<Sfx, number>> = { shutter: 500, fanfare: 1500, confetti: 400, sparkle: 600, levelup: 2000, achieve: 1500, puff: 400, radio: 300, clap: 3000, key: 70, pop: 160, talk: 240, blip: 200, water: 500, sizzle: 1500, flush: 6000, doorbell: 4000, inhale: 2500, exhale: 2500, thud: 130, huff: 900, clank: 250, pickup: 3000, swipe: 2500, ring: 3000, mail: 2500, ask: 3000 };
+const MIN_GAP: Partial<Record<Sfx, number>> = { shutter: 500, fanfare: 1500, confetti: 400, sparkle: 600, levelup: 2000, achieve: 1500, puff: 400, radio: 300, clap: 3000, key: 70, pop: 160, talk: 240, blip: 200, water: 500, sizzle: 1500, flush: 6000, doorbell: 4000, inhale: 2500, exhale: 2500, thud: 130, huff: 900, clank: 250, pickup: 3000, swipe: 2500, mail: 2500, ask: 3000 };
 
 function tone(c: AudioContext, at: number, freq: number, dur: number, gain: number, type: OscillatorType = 'sine', to?: number, attack = 0.008) {
   const o = c.createOscillator();
@@ -289,12 +289,6 @@ export function sfx(name: Sfx, roomId?: string, pitch = 1) {
       // a phone picked up: two soft rising beeps
       tone(c, t, 720, 0.09, 0.03, 'sine', 900);
       tone(c, t + 0.13, 960, 0.12, 0.03, 'sine', 1120);
-      break;
-    case 'ring':
-      // a desk phone: two short ring bursts (a fast warble each), then the handset is picked up
-      for (let k = 0; k < 2; k++) for (let i = 0; i < 6; i++) tone(c, t + k * 0.6 + i * 0.05, i % 2 ? 1250 : 1000, 0.045, 0.03, 'square');
-      tone(c, t + 1.3, 720, 0.09, 0.03, 'sine', 900);
-      tone(c, t + 1.43, 960, 0.12, 0.03, 'sine', 1120);
       break;
     case 'mail':
       // new mail: a soft two-note chime

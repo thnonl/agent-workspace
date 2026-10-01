@@ -54,6 +54,8 @@ interface Item {
   placed?: Placed;
   lastA?: [number, number, number];
   tickAt?: number;
+  /** hidden, and nothing to do for it until its person is on screen again (people in the other rooms cost nothing per frame) */
+  off?: boolean;
 }
 /** "idle" bubbles that are said out loud rather than thought */
 const SPOKEN = new Set(['talk', 'wave', 'home', 'eat']);
@@ -170,6 +172,7 @@ function layoutLoop() {
     const a = anchors.get(key);
     // (no bubbles in a room that is not the active one: nobody speaks there)
     const live = !!a?.live && !frame.settling && sims.get(key)?.roomId === frame.activeId;
+    if (!live && it.off) continue;
     let show = live;
     let tx = 0;
     let ty = 0;
@@ -209,6 +212,7 @@ function layoutLoop() {
       by = (-projSm.y * 0.5 + 0.5) * view.height;
     }
     it.tick(show, now, live);
+    it.off = !live;
     if (!show) {
       hidden.push(key);
       it.sm = undefined;

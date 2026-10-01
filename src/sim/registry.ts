@@ -55,8 +55,8 @@ export interface SimState {
   msgVia?: 'call' | 'email';
   /** sits (or waits) without moving or typing: updated at a low rate, and alone it does not ask for the busy frame rate (see PersonActor, FrameSync) */
   calm?: boolean;
-  /** the director holds the handset of the desk phone (the one on the desk is hidden meanwhile; cleared by the actor every frame it is not) */
-  handsetUp?: boolean;
+  /** sits still but something shows: music with headphones, a video, a game… (the scene is then drawn a little faster, see IdleGovernor) */
+  lively?: boolean;
   /** while sitting down / getting up: how far the desk chair is pulled out from the desk (0 = tucked in, 1 = fully out) and its swivel relative to the desk (radians); the chair follows exactly */
   chairOut?: number;
   chairSwivel?: number;

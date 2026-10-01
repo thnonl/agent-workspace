@@ -6,7 +6,8 @@ import * as THREE from 'three';
  */
 
 const FONT = '"Baloo 2 Variable", system-ui, sans-serif';
-const CACHE_MAX = 30;
+/** (a house of 6 rooms keeps about 4 pictures per room, the maps are shared) */
+const CACHE_MAX = 40;
 const cache = new Map<string, THREE.CanvasTexture>();
 
 function recall(key: string) {
@@ -98,161 +99,160 @@ const LON1 = 180;
 const LAT0 = 84;
 const LAT1 = -60;
 
-/** Map style 0: a paper map (pale sea, warm land, a graticule); style 1: a dark screen of glowing dots. A round map shows a square cut of it. */
-export function worldMapTexture(style: number, accent: string, accent2: string, seed: number, round = false): THREE.CanvasTexture {
+/**
+ * The world map is two textures: the map itself, the same for every room (so the whole house keeps just a few of them in memory), and a
+ * small transparent layer on top of it with the pins and the routes of the room (see worldMapPins). Style 0 is a paper map (pale sea,
+ * warm land, a graticule), style 1 a dark screen of dots. A round map shows a square cut of it (crop 0..2).
+ */
+export function worldMapTexture(style: number, round = false, crop = 0): THREE.CanvasTexture {
   const s = style % 2;
-  if (!round) return made(`map|${s}|${accent}|${accent2}|${seed}`, 1200, 600, (g, W, H) => paintMap(g, W, H, s, accent, accent2, seed));
-  return made(`mapr|${s}|${accent}|${accent2}|${seed}`, 512, 512, (g, w, h) => {
+  if (!round) return made(`map|${s}`, 1200, 600, (g, W, H) => paintMap(g, W, H, s));
+  const c = crop % 3;
+  return made(`mapr|${s}|${c}`, 512, 512, (g, w, h) => {
     const off = document.createElement('canvas');
     off.width = 1200;
     off.height = 600;
-    paintMap(off.getContext('2d')!, 1200, 600, s, accent, accent2, seed, false);
-    g.drawImage(off, (seed % 3) * 300, 0, 600, 600, 0, 0, w, h);
+    paintMap(off.getContext('2d')!, 1200, 600, s);
+    g.drawImage(off, c * 300, 0, 600, 600, 0, 0, w, h);
   });
 }
 
-function paintMap(g: CanvasRenderingContext2D, W: number, H: number, s: number, accent: string, accent2: string, seed: number, label = true) {
-  {
-    const X = (lon: number) => ((lon - LON0) / (LON1 - LON0)) * W;
-    const Y = (lat: number) => ((LAT0 - lat) / (LAT0 - LAT1)) * H;
-    const land = (ctx: CanvasRenderingContext2D) => {
-      for (const poly of LAND) {
-        ctx.beginPath();
-        poly.forEach(([lo, la], i) => (i ? ctx.lineTo(X(lo), Y(la)) : ctx.moveTo(X(lo), Y(la))));
-        ctx.closePath();
-        ctx.fill();
-      }
-    };
-    // the pins a map of this room shows (a few, spread by the seed)
-    const pins = CITIES.map((c, i) => ({ c, k: (i * 7 + seed * 5) % 11 })).filter((p) => p.k < 7).map((p) => p.c);
-    const arcs = () => {
-      for (let i = 0; i + 1 < pins.length; i += 2) {
-        const [a, b] = [pins[i], pins[i + 1]];
-        const x0 = X(a[0]);
-        const y0 = Y(a[1]);
-        const x1 = X(b[0]);
-        const y1 = Y(b[1]);
-        g.beginPath();
-        g.moveTo(x0, y0);
-        g.quadraticCurveTo((x0 + x1) / 2, Math.min(y0, y1) - Math.abs(x1 - x0) * 0.22, x1, y1);
-        g.stroke();
-      }
-    };
-    if (s === 0) {
-      g.fillStyle = '#cdeaf6';
-      g.fillRect(0, 0, W, H);
-      // graticule
-      g.strokeStyle = 'rgba(80,140,175,0.28)';
-      g.lineWidth = 2;
-      for (let lo = -180; lo <= 180; lo += 30) {
-        g.beginPath();
-        g.moveTo(X(lo), 0);
-        g.lineTo(X(lo), H);
-        g.stroke();
-      }
-      for (let la = -60; la <= 80; la += 20) {
-        g.beginPath();
-        g.moveTo(0, Y(la));
-        g.lineTo(W, Y(la));
-        g.stroke();
-      }
-      g.fillStyle = '#e9d9ae';
-      g.strokeStyle = '#b79b62';
-      g.lineWidth = 3;
-      land(g);
-      for (const poly of LAND) {
-        g.beginPath();
-        poly.forEach(([lo, la], i) => (i ? g.lineTo(X(lo), Y(la)) : g.moveTo(X(lo), Y(la))));
-        g.closePath();
-        g.stroke();
-      }
-      g.fillStyle = '#cdeaf6';
-      for (const [lo, la, rx, ry] of SEAS) {
-        g.beginPath();
-        g.ellipse(X(lo), Y(la), (rx / 360) * W, (ry / 144) * H, 0, 0, Math.PI * 2);
-        g.fill();
-      }
-      g.strokeStyle = accent2;
-      g.globalAlpha = 0.65;
-      g.lineWidth = 4;
-      g.setLineDash([10, 8]);
-      arcs();
-      g.setLineDash([]);
-      g.globalAlpha = 1;
-      for (const [lo, la] of pins) {
+/** Where the pins of a room are (a few cities, spread by the seed). */
+function pinsOf(seed: number): LL[] {
+  return CITIES.map((c, i) => ({ c, k: (i * 7 + seed * 5) % 11 })).filter((p) => p.k < 7).map((p) => p.c);
+}
+
+/** The pins and routes of one room, on a transparent layer the size of the map (landscape) or of its cut (round) – at a quarter of the map's pixels. */
+export function worldMapPins(style: number, accent: string, accent2: string, seed: number, round = false, crop = 0): THREE.CanvasTexture {
+  const s = style % 2;
+  const c = crop % 3;
+  const [W, H] = round ? [256, 256] : [600, 300];
+  return made(`pins|${s}|${accent}|${accent2}|${seed}|${round ? c : 'w'}`, W, H, (g) => {
+    // map pixels (1200 x 600) to this layer
+    const sx = round ? W / 600 : W / 1200;
+    const sy = H / 600;
+    const x0 = round ? c * 300 : 0;
+    const X = (lon: number) => (((lon - LON0) / (LON1 - LON0)) * 1200 - x0) * sx;
+    const Y = (lat: number) => (((LAT0 - lat) / (LAT0 - LAT1)) * 600) * sy;
+    const pins = pinsOf(seed);
+    g.strokeStyle = s === 0 ? accent2 : accent;
+    g.globalAlpha = s === 0 ? 0.65 : 0.8;
+    g.lineWidth = (s === 0 ? 4 : 3) * sx;
+    if (s === 0) g.setLineDash([10 * sx, 8 * sx]);
+    for (let i = 0; i + 1 < pins.length; i += 2) {
+      const [pa, pb] = [pins[i], pins[i + 1]];
+      const xa = X(pa[0]);
+      const ya = Y(pa[1]);
+      const xb = X(pb[0]);
+      const yb = Y(pb[1]);
+      g.beginPath();
+      g.moveTo(xa, ya);
+      g.quadraticCurveTo((xa + xb) / 2, Math.min(ya, yb) - Math.abs(xb - xa) * 0.22, xb, yb);
+      g.stroke();
+    }
+    g.setLineDash([]);
+    g.globalAlpha = 1;
+    for (const [lo, la] of pins) {
+      const x = X(lo);
+      const y = Y(la);
+      if (x < -20 || x > W + 20) continue;
+      if (s === 0) {
         g.fillStyle = accent;
         g.beginPath();
-        g.arc(X(lo), Y(la), 11, 0, Math.PI * 2);
+        g.arc(x, y, 11 * sx, 0, Math.PI * 2);
         g.fill();
         g.fillStyle = '#ffffff';
         g.beginPath();
-        g.arc(X(lo), Y(la), 4, 0, Math.PI * 2);
+        g.arc(x, y, 4 * sx, 0, Math.PI * 2);
         g.fill();
-      }
-      if (label) {
-        g.fillStyle = 'rgba(255,255,255,0.8)';
-        g.beginPath();
-        g.roundRect(18, H - 74, 470, 54, 16);
-        g.fill();
-        g.fillStyle = 'rgba(70,90,110,0.9)';
-        g.font = `800 32px ${FONT}`;
-        g.textAlign = 'left';
-        g.textBaseline = 'middle';
-        g.fillText('THE WORLD IS OUR OFFICE', 36, H - 46);
-      }
-    } else {
-      g.fillStyle = '#10162b';
-      g.fillRect(0, 0, W, H);
-      // land into dots: paint the land on a small canvas and read it back
-      const gw = 120;
-      const gh = 60;
-      const m = document.createElement('canvas');
-      m.width = gw;
-      m.height = gh;
-      const mg = m.getContext('2d', { willReadFrequently: true })!;
-      mg.fillStyle = '#fff';
-      mg.scale(gw / W, gh / H);
-      land(mg);
-      mg.globalCompositeOperation = 'destination-out';
-      for (const [lo, la, rx, ry] of SEAS) {
-        mg.beginPath();
-        mg.ellipse(X(lo), Y(la), (rx / 360) * W, (ry / 144) * H, 0, 0, Math.PI * 2);
-        mg.fill();
-      }
-      const px = mg.getImageData(0, 0, gw, gh).data;
-      for (let j = 0; j < gh; j++) {
-        for (let i = 0; i < gw; i++) {
-          const on = px[(j * gw + i) * 4 + 3] > 110;
-          g.fillStyle = on ? accent2 : 'rgba(120,140,200,0.14)';
-          g.beginPath();
-          g.arc((i + 0.5) * (W / gw), (j + 0.5) * (H / gh), on ? 3.6 : 1.6, 0, Math.PI * 2);
-          g.fill();
-        }
-      }
-      g.strokeStyle = accent;
-      g.lineWidth = 3;
-      g.globalAlpha = 0.8;
-      arcs();
-      g.globalAlpha = 1;
-      for (const [lo, la] of pins) {
-        const grad = g.createRadialGradient(X(lo), Y(la), 0, X(lo), Y(la), 26);
+      } else {
+        const grad = g.createRadialGradient(x, y, 0, x, y, 26 * sx);
         grad.addColorStop(0, accent);
         grad.addColorStop(1, 'rgba(255,255,255,0)');
         g.fillStyle = grad;
         g.beginPath();
-        g.arc(X(lo), Y(la), 26, 0, Math.PI * 2);
+        g.arc(x, y, 26 * sx, 0, Math.PI * 2);
         g.fill();
         g.fillStyle = '#fff';
         g.beginPath();
-        g.arc(X(lo), Y(la), 5, 0, Math.PI * 2);
+        g.arc(x, y, 5 * sx, 0, Math.PI * 2);
         g.fill();
       }
-      if (label) {
-        g.fillStyle = 'rgba(190,205,255,0.8)';
-        g.font = `800 32px ${FONT}`;
-        g.textAlign = 'right';
-        g.textBaseline = 'alphabetic';
-        g.fillText('AGENTS ONLINE · WORLDWIDE', W - 28, H - 24);
+    }
+  });
+}
+
+function paintMap(g: CanvasRenderingContext2D, W: number, H: number, s: number) {
+  const X = (lon: number) => ((lon - LON0) / (LON1 - LON0)) * W;
+  const Y = (lat: number) => ((LAT0 - lat) / (LAT0 - LAT1)) * H;
+  const land = (ctx: CanvasRenderingContext2D) => {
+    for (const poly of LAND) {
+      ctx.beginPath();
+      poly.forEach(([lo, la], i) => (i ? ctx.lineTo(X(lo), Y(la)) : ctx.moveTo(X(lo), Y(la))));
+      ctx.closePath();
+      ctx.fill();
+    }
+  };
+  const seas = (ctx: CanvasRenderingContext2D) => {
+    for (const [lo, la, rx, ry] of SEAS) {
+      ctx.beginPath();
+      ctx.ellipse(X(lo), Y(la), (rx / 360) * W, (ry / 144) * H, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  };
+  if (s === 0) {
+    g.fillStyle = '#cdeaf6';
+    g.fillRect(0, 0, W, H);
+    // graticule
+    g.strokeStyle = 'rgba(80,140,175,0.28)';
+    g.lineWidth = 2;
+    for (let lo = -180; lo <= 180; lo += 30) {
+      g.beginPath();
+      g.moveTo(X(lo), 0);
+      g.lineTo(X(lo), H);
+      g.stroke();
+    }
+    for (let la = -60; la <= 80; la += 20) {
+      g.beginPath();
+      g.moveTo(0, Y(la));
+      g.lineTo(W, Y(la));
+      g.stroke();
+    }
+    g.fillStyle = '#e9d9ae';
+    g.strokeStyle = '#b79b62';
+    g.lineWidth = 3;
+    land(g);
+    for (const poly of LAND) {
+      g.beginPath();
+      poly.forEach(([lo, la], i) => (i ? g.lineTo(X(lo), Y(la)) : g.moveTo(X(lo), Y(la))));
+      g.closePath();
+      g.stroke();
+    }
+    g.fillStyle = '#cdeaf6';
+    seas(g);
+  } else {
+    g.fillStyle = '#10162b';
+    g.fillRect(0, 0, W, H);
+    // land into dots: paint the land on a small canvas and read it back
+    const gw = 120;
+    const gh = 60;
+    const m = document.createElement('canvas');
+    m.width = gw;
+    m.height = gh;
+    const mg = m.getContext('2d', { willReadFrequently: true })!;
+    mg.fillStyle = '#fff';
+    mg.scale(gw / W, gh / H);
+    land(mg);
+    mg.globalCompositeOperation = 'destination-out';
+    seas(mg);
+    const px = mg.getImageData(0, 0, gw, gh).data;
+    for (let j = 0; j < gh; j++) {
+      for (let i = 0; i < gw; i++) {
+        const on = px[(j * gw + i) * 4 + 3] > 110;
+        g.fillStyle = on ? '#7be0c3' : 'rgba(120,140,200,0.14)';
+        g.beginPath();
+        g.arc((i + 0.5) * (W / gw), (j + 0.5) * (H / gh), on ? 3.6 : 1.6, 0, Math.PI * 2);
+        g.fill();
       }
     }
   }

@@ -11,6 +11,7 @@ import { anchors, catsInRoom, enqueueSpeech, lastSpeech, queueLength, runtimeFor
 import { CALM_STEP, frame, roomStep, stepDt } from '../sim/frame';
 import { buildCharacter, buildHeadphones, RIG_SCALE, type Rig } from './character';
 import { burst } from '../sim/celebrate';
+import { walkMatrices } from './matrixWalk';
 import { buildLaptop } from './laptop';
 import { disposeOwned } from './bake';
 import { buildHeldItems, PHONE_GLOWS } from './heldItems';
@@ -157,7 +158,7 @@ export function PersonActor({ personKey, roomId, layout, frozen: frozenProp = fa
   const scale = RIG_SCALE * app.scale;
   const items = useMemo(() => {
     const it = buildHeldItems(layout.theme.accent);
-    rig.handHold.add(it.cup, it.book, it.can, it.bowl, it.parcel, it.pot, it.cig, it.phone, it.handset);
+    rig.handHold.add(it.cup, it.book, it.can, it.bowl, it.parcel, it.pot, it.cig, it.phone);
     return it;
   }, [rig, layout.theme]);
   const bells = useMemo(() => {
@@ -189,6 +190,9 @@ export function PersonActor({ personKey, roomId, layout, frozen: frozenProp = fa
   const settleN = useRef(0);
   /** the person has been animated live (so the rig shows a pose already: stopping them needs no settling) */
   const liveBefore = useRef(false);
+  /** frames the person has stood stopped, and whether their matrices are no longer worked out (a stopped person has none to change) */
+  const stoppedFor = useRef(0);
+  const matsOff = useRef(false);
   /** the person has been drawn in their pose since the room stopped being the active one */
   const posed = useRef(false);
   const workersAt = useRef(-1);
@@ -228,6 +232,14 @@ export function PersonActor({ personKey, roomId, layout, frozen: frozenProp = fa
       }
       if (settleN.current >= SETTLE_PASSES && (posed.current || !visible)) {
         hideAnchor(personKey);
+        // (a few frames after they stopped, the skeleton, the bag and the laptop are left alone until the person moves again)
+        if (!matsOff.current && visible && ++stoppedFor.current > 3) {
+          matsOff.current = true;
+          walkMatrices(rig.root, false);
+          walkMatrices(rig.bag, false);
+          walkMatrices(laptop.root, false);
+          walkMatrices(rig.folder, false);
+        }
         return;
       }
       settleN.current++;
@@ -235,6 +247,14 @@ export function PersonActor({ personKey, roomId, layout, frozen: frozenProp = fa
       settleN.current = 0;
       posed.current = false;
       liveBefore.current = true;
+      stoppedFor.current = 0;
+      if (matsOff.current) {
+        matsOff.current = false;
+        walkMatrices(rig.root, true);
+        walkMatrices(rig.bag, true);
+        walkMatrices(laptop.root, true);
+        walkMatrices(rig.folder, true);
+      }
     }
     let dt = 0;
     if (!frozen) {
@@ -285,6 +305,7 @@ export function PersonActor({ personKey, roomId, layout, frozen: frozenProp = fa
     // (time stands still in a room that is not the active one, the pose is only settled)
     actor.update(dt, c);
     const sim = actor.sim;
+    sim.lively = sim.onStage && actor.deskMode !== null;
     sim.calm = (sim.phase === 'working' || sim.phase === 'waiting') && !sim.walking && actor.typing < 0.2 && rt.cheerUntil < now;
     calm.current = !!sim.calm;
     // a celebration (run finished, commit, push): arms up, big smile, a little hop
@@ -521,7 +542,6 @@ export function PersonActor({ personKey, roomId, layout, frozen: frozenProp = fa
     items.cig.visible = held === 'cig';
     const phoneOn = held === 'phone';
     items.phone.visible = phoneOn;
-    items.handset.visible = held === 'handsetEar';
     if (phoneOn) {
       // the glow flickers a little while scrolling
       items.phoneScreen.material = PHONE_GLOWS[Math.floor(clockRef.current * 2.6) % PHONE_GLOWS.length];
@@ -534,8 +554,8 @@ export function PersonActor({ personKey, roomId, layout, frozen: frozenProp = fa
       rig.root.getWorldQuaternion(qRoot);
       qRel.copy(qHand).invert().multiply(qRoot);
       qTilt.setFromAxisAngle(tiltAxis, actor.heldTilt);
-      const item = phoneOn ? items.phone : held === 'handsetEar' ? items.handset : held === 'parcel' ? items.parcel : held === 'pot' ? items.pot : held === 'cig' ? items.cig : held === 'cup' ? items.cup : held === 'book' ? items.book : held === 'bowl' ? items.bowl : items.can;
-      const off = held === 'phone' ? vTmp.set(-0.03, 0.05, 0.05) : held === 'handsetEar' ? vTmp.set(-0.045, 0.05, 0) : held === 'parcel' ? vTmp.set(-0.2, -0.02, 0.14) : held === 'pot' ? vTmp.set(-0.2, -0.02, 0.14) : held === 'cig' ? vTmp.set(0, 0.03, 0.02) : held === 'cup' ? vTmp.set(0, 0.07, 0.03) : held === 'book' ? vTmp.set(-0.13, 0.03, 0.06) : held === 'bowl' ? vTmp.set(0, 0.05, 0.06) : vTmp.set(0, -0.03, 0.1);
+      const item = phoneOn ? items.phone : held === 'parcel' ? items.parcel : held === 'pot' ? items.pot : held === 'cig' ? items.cig : held === 'cup' ? items.cup : held === 'book' ? items.book : held === 'bowl' ? items.bowl : items.can;
+      const off = held === 'phone' ? vTmp.set(-0.03, 0.05, 0.05) : held === 'parcel' ? vTmp.set(-0.2, -0.02, 0.14) : held === 'pot' ? vTmp.set(-0.2, -0.02, 0.14) : held === 'cig' ? vTmp.set(0, 0.03, 0.02) : held === 'cup' ? vTmp.set(0, 0.07, 0.03) : held === 'book' ? vTmp.set(-0.13, 0.03, 0.06) : held === 'bowl' ? vTmp.set(0, 0.05, 0.06) : vTmp.set(0, -0.03, 0.1);
       item.position.copy(off).applyQuaternion(qRel);
       item.quaternion.copy(qRel).multiply(qTilt);
       if (held === 'book') {

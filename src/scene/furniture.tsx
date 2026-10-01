@@ -12,7 +12,6 @@ import { G, M, MB, shade } from './kit';
 import { textTexture } from './textures';
 import { StaticBake } from './StaticBake';
 import { GLOW, glowMat } from './glow';
-import { useBaked } from './bake';
 import { CHAIR_PULL, DESK_Y, SEAT_LIFT } from '../sim/actor';
 
 export const DESK_TOP = DESK_Y;
@@ -346,18 +345,8 @@ export function Chair({ x, z, rot, turn, color, roomId, deskIndex, big = false, 
 }
 
 // ------------------------------------------------------------------------ director desk
-/** The landline on the director's desk: base and cradle are static, the handset lifts off while the director holds it (a call from the user). */
-function DirectorPhone({ roomId }: { roomId: string }) {
-  const handset = useRef<THREE.Group>(null);
-  useBaked(handset);
-  useFrame(() => {
-    const g = handset.current;
-    if (!g || !frame.animRooms.has(roomId)) return;
-    const k = roomRuntime.get(roomId)?.directorKey;
-    const s = k ? sims.get(k) : undefined;
-    const shown = !(s && s.handsetUp && s.onStage);
-    if (g.visible !== shown) g.visible = shown;
-  });
+/** The landline on the director's desk (it only stands there: the user's messages come on the smartphone). */
+function DirectorPhone() {
   return (
     <group>
       <RB size={[0.15, 0.03, 0.26]} pos={[0, 0.015, 0]} color="#3a3d50" r={0.012} />
@@ -367,7 +356,7 @@ function DirectorPhone({ roomId }: { roomId: string }) {
       <RB size={[0.014, 0.05, 0.03]} pos={[-0.09, 0.045, 0.085]} color="#2a2c3b" r={0.005} cast={false} />
       <RB size={[0.014, 0.05, 0.03]} pos={[-0.09, 0.045, -0.085]} color="#2a2c3b" r={0.005} cast={false} />
       {/* the handset rests on the cradle */}
-      <group ref={handset} position={[-0.09, 0.075, 0]} userData={{ dynamic: true }}>
+      <group position={[-0.09, 0.075, 0]}>
         <RB size={[0.034, 0.03, 0.17]} color="#2f3244" r={0.012} />
         <RB size={[0.05, 0.036, 0.055]} pos={[0, -0.004, 0.09]} color="#2f3244" r={0.014} />
         <RB size={[0.05, 0.036, 0.055]} pos={[0, -0.004, -0.09]} color="#2f3244" r={0.014} />
@@ -376,7 +365,7 @@ function DirectorPhone({ roomId }: { roomId: string }) {
   );
 }
 
-export function DirectorDesk({ layout, reports, roomId }: { layout: RoomLayout; reports: number; roomId: string }) {
+export function DirectorDesk({ layout, reports }: { layout: RoomLayout; reports: number }) {
   const { theme, director } = layout;
   const wood = shade(theme.desk, -0.14);
   const gold = '#ffd166';
@@ -437,7 +426,7 @@ export function DirectorDesk({ layout, reports, roomId }: { layout: RoomLayout; 
         <DeskItem kind="pencils" theme={theme} seed={4} />
       </group>
       <group position={[-0.55, DESK_TOP + 0.02, -0.33]} rotation={[0, 0.5, 0]}>
-        <DirectorPhone roomId={roomId} />
+        <DirectorPhone />
       </group>
       {/* report tray + pile */}
       <group position={[0.95, DESK_TOP + 0.02, 0.1]}>
