@@ -25,6 +25,7 @@ import type { Season } from '../season';
 import { CatView } from './CatView';
 import { CatToys } from './CatToys';
 import { MovableProps } from './MovableProps';
+import { LateProps } from './LateProps';
 import { shade } from './kit';
 import { RestroomShell, RestroomWalls } from './restroom';
 
@@ -141,12 +142,12 @@ const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle, season,
       ) : null}
       {stage >= STAGE.props ? (
         <StaticBake ready={stage >= STAGE.props + PROP_STEPS - 1}>
-          {layout.props.map((p, i) => (i < propCount && !layout.movable.includes(i) ? <PropItem key={i} p={p} theme={theme} roomId={roomId} /> : null))}
+          {layout.props.map((p, i) => (i < propCount && !layout.movable.includes(i) && layout.lateRank[i] < 0 ? <PropItem key={i} p={p} theme={theme} roomId={roomId} /> : null))}
           {layout.restroom && stage >= STAGE.props + PROP_STEPS - 1 ? <RestroomShell rr={layout.restroom} /> : null}
         </StaticBake>
       ) : null}
       {/* festive decorations (Halloween, Christmas, Tết): baked again when the season changes */}
-      {stage < STAGE.chairs || season === 'none' ? null : (
+      {stage < STAGE.toys || season === 'none' ? null : (
         <StaticBake key={season}>
           <SeasonDecor layout={layout} season={season} />
         </StaticBake>
@@ -159,24 +160,54 @@ const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle, season,
  * A room is not built in one go (that froze the page for a few hundred milliseconds when a session appeared): its parts come one
  * build stage at a time, each in a frame of its own, so no single frame has much to do. Stage 0 is the empty room.
  */
-const STAGE = { floor: 1, back: 2, left: 3, desks: 4, props: 6, chairs: 10, director: 11, people: 12, toys: 20, movables: 21, board: 22, cats: 23, light: 27, party: 28 } as const;
+// (the room comes first – walls, furniture, props – and the people follow one after the other, the cats last)
+const STAGE = { floor: 1, back: 2, left: 3, desks: 4, chairs: 6, director: 7, props: 8, toys: 12, movables: 13, board: 14, light: 15, people: 16, cats: 24, party: 28 } as const;
 const BUILD_STAGES = STAGE.party;
 const BUILD_GAP_MS = 6;
+/** pause before each person / cat is built: they walk into the finished room one by one */
+const CHARACTER_GAP_MS = 140;
 /** stages per baked group that is mounted a part at a time (the group is merged once its last part is in) */
 const DESK_STEPS = 2;
 const PROP_STEPS = 4;
-function useBuildStage() {
+/** the build of a room starts this long after it was put into the scene (the camera starts to glide to it meanwhile) and waits for the camera to arrive */
+const BUILD_START_MS = 120;
+/** ...but not for longer than this in all (a screensaver camera never stops) */
+const CAMERA_WAIT_MS = 3500;
+function useBuildStage(people: number, cats: number, active: boolean) {
   const [stage, setStage] = useState(0);
+  const waited = useRef(0);
+  const count = useRef({ people, cats });
+  count.current = { people, cats };
+  // a room that is not the one on screen is built up to the room itself (the next ones are loaded ahead, see Preload in Scene.tsx);
+  // the people and cats come when it is looked at – and go again when it is left
+  const cap = active ? BUILD_STAGES : STAGE.people - 1;
   useEffect(() => {
-    if (stage >= BUILD_STAGES) return;
+    if (active) waited.current = 0;
+    else setStage((n) => Math.min(n, STAGE.people - 1));
+  }, [active]);
+  useEffect(() => {
+    if (stage >= cap) return;
     const w = host();
-    const t = w.setTimeout(() => setStage((n) => n + 1), BUILD_GAP_MS);
+    let t = 0;
+    const next = () => {
+      // switching rooms: the camera glides first, the room is built once it has arrived (a build during the glide made it stutter)
+      if (frame.cameraBusy && waited.current < CAMERA_WAIT_MS) {
+        waited.current += 50;
+        t = w.setTimeout(next, 50);
+        return;
+      }
+      setStage((n) => n + 1);
+    };
+    // (a stage that builds a person or a cat is preceded by a pause; stages with nobody to build go by quickly)
+    const n = stage + 1;
+    const character = (n >= STAGE.people && n - STAGE.people < Math.min(count.current.people, 8)) || (n >= STAGE.cats && n - STAGE.cats < Math.min(count.current.cats, 4));
+    t = w.setTimeout(next, stage === 0 ? BUILD_START_MS : character ? CHARACTER_GAP_MS : BUILD_GAP_MS);
     return () => w.clearTimeout(t);
-  }, [stage]);
-  return stage;
+  }, [stage, cap]);
+  return { stage, cap };
 }
 
-export const RoomView = memo(function RoomView({ roomId }: { roomId: string }) {
+export const RoomView = memo(function RoomView({ roomId, active }: { roomId: string; active: boolean }) {
   // narrow selectors: the room record changes on every event (timestamps, counters) but only these matter here
   const exists = useStore((s) => !!s.rooms[roomId]);
   const index = useStore((s) => s.rooms[roomId]?.index ?? 0);
@@ -199,10 +230,10 @@ export const RoomView = memo(function RoomView({ roomId }: { roomId: string }) {
   );
   const layout = useMemo(() => getLayout(seed, themeIndex), [seed, themeIndex]);
   const { theme } = layout;
-  const stage = useBuildStage();
+  const { stage, cap } = useBuildStage(personKeys.length, layout.catCount ? layout.catCount + extraCats : 0, active);
   const built = useRef(false);
-  built.current = stage >= BUILD_STAGES;
-  const done = built.current;
+  built.current = active && stage >= BUILD_STAGES;
+  const done = stage >= cap;
   useEffect(() => {
     if (done) return;
     frame.building++;
@@ -214,11 +245,33 @@ export const RoomView = memo(function RoomView({ roomId }: { roomId: string }) {
   const group = useRef<THREE.Group>(null);
   // "ready": the static bake ran in the mount commit; two drawn frames later the room counts as loaded (staged loading waits for it)
   const framesSeen = useRef(0);
-  useEffect(() => () => void frame.readyRooms.delete(roomId), [roomId]);
+  useEffect(() => {
+    // (left again: it will be ready once more when it is built up again)
+    if (!active) {
+      framesSeen.current = 0;
+      frame.readyRooms.delete(roomId);
+    }
+  }, [active, roomId]);
+  useEffect(() => {
+    frame.mountedRooms.add(roomId);
+    return () => {
+      frame.mountedRooms.delete(roomId);
+      frame.readyRooms.delete(roomId);
+      frame.litRooms.delete(roomId);
+    };
+  }, [roomId]);
+  // a room that is only loaded ahead has nobody to wait for: its lamps may be on once it is built
+  useEffect(() => {
+    if (!active && stage >= cap) frame.litRooms.add(roomId);
+  }, [active, stage, cap, roomId]);
   useFrame(() => {
     const g = group.current;
     if (!g) return;
-    if (built.current && framesSeen.current < 2 && ++framesSeen.current === 2) frame.readyRooms.add(roomId);
+    if (built.current && framesSeen.current < 2 && ++framesSeen.current === 2) {
+      frame.readyRooms.add(roomId);
+      // everybody is there: the lamps come on
+      frame.litRooms.add(roomId);
+    }
     const on = frame.visibleRooms.has(roomId);
     if (g.visible === on) return;
     g.visible = on;
@@ -247,20 +300,21 @@ export const RoomView = memo(function RoomView({ roomId }: { roomId: string }) {
       {stage >= STAGE.chairs && layout.restroom ? <RestroomWalls roomId={roomId} layout={layout} rr={layout.restroom} /> : null}
       {stage >= STAGE.toys ? <CatToys roomId={roomId} layout={layout} /> : null}
       {stage >= STAGE.movables ? <MovableProps roomId={roomId} layout={layout} /> : null}
+      {stage >= STAGE.movables ? <LateProps roomId={roomId} layout={layout} /> : null}
 
       {/* the office cats */}
       {Array.from({ length: layout.catCount ? layout.catCount + extraCats : 0 }, (_, i) => (
-        stage >= STAGE.cats + Math.min(i, 3) ? <CatView key={i} catKey={`${roomId}::cat${i}`} roomId={roomId} layout={layout} seed={seed + i * 977} /> : null
+        active && stage >= STAGE.cats + Math.min(i, 3) ? <CatView key={i} catKey={`${roomId}::cat${i}`} roomId={roomId} layout={layout} seed={seed + i * 977} /> : null
       ))}
 
       {stage >= STAGE.board ? <PropHits roomId={roomId} layout={layout} /> : null}
       {stage >= STAGE.board ? <Radio roomId={roomId} layout={layout} /> : null}
-      {stage >= STAGE.party ? <CelebrationFx roomId={roomId} layout={layout} /> : null}
+      {active && stage >= STAGE.party ? <CelebrationFx roomId={roomId} layout={layout} /> : null}
       {stage >= STAGE.light ? <RoomLightFx layout={layout} roomId={roomId} halos={quality !== 'low'} dust={quality !== 'low'} /> : null}
 
       {/* people */}
       {personKeys.map((k, i) => (
-        stage >= STAGE.people + Math.min(i, 7) ? <PersonActor key={k} personKey={k} roomId={roomId} layout={layout} /> : null
+        active && stage >= STAGE.people + Math.min(i, 7) ? <PersonActor key={k} personKey={k} roomId={roomId} layout={layout} /> : null
       ))}
     </group>
   );

@@ -107,6 +107,9 @@ export interface RoomRuntime {
   parcelAt: number;
   /** key of the character who is fetching the parcel */
   parcelBy: string | null;
+  /** what is in the parcel: its place in layout.late (-1: nothing) and whether it is a big box */
+  parcelRank: number;
+  parcelBig: boolean;
   /** the main agent waits for the user's answer since then (performance.now()/1000, 0 = no question pending): the director waves for attention */
   askAt: number;
   /** everybody who stands or sits cheers until then (performance.now()/1000; see sim/celebrate.ts) */
@@ -121,7 +124,8 @@ export const roomRuntime = new Map<string, RoomRuntime>();
 export interface MovedProp {
   /** index into layout.props */
   prop: number;
-  state: 'placed' | 'carried';
+  /** 'gone': a carton that was opened (what was in it stands in the room now, see commitDelivery) */
+  state: 'placed' | 'carried' | 'gone';
   x: number;
   z: number;
   rot: number;
@@ -168,6 +172,84 @@ export function notifyMoved(roomId: string) {
   c.listeners.forEach((f) => f());
 }
 
+// ---------------------------------------------------------------- deliveries
+/** What the room has been sent: the things of `layout.late` that are claimed (on their way) and the moment they arrived. */
+interface DeliveryEntry {
+  layout: import('../world/layout').RoomLayout;
+  claims: Set<number>;
+  at: Map<number, number>;
+  version: number;
+  listeners: Set<() => void>;
+}
+const deliveryByRoom = new Map<string, DeliveryEntry>();
+
+function deliveryEntry(roomId: string, layout: import('../world/layout').RoomLayout): DeliveryEntry {
+  let c = deliveryByRoom.get(roomId);
+  if (!c || c.layout !== layout) {
+    c = { layout, claims: new Set(), at: new Map(), version: (c?.version ?? 0) + 1, listeners: c?.listeners ?? new Set() };
+    deliveryByRoom.set(roomId, c);
+  }
+  return c;
+}
+
+/** Is this prop in the room (it was there from the start, or has been delivered)? */
+export function propHere(layout: import('../world/layout').RoomLayout, idx: number): boolean {
+  const k = layout.lateRank[idx];
+  return k < 0 || layout.lateDone[k];
+}
+
+/** Is there a thing that has not been sent yet and is not on its way? */
+export function lateAvailable(roomId: string, layout: import('../world/layout').RoomLayout): boolean {
+  const c = deliveryEntry(roomId, layout);
+  return layout.late.some((_, k) => !layout.lateDone[k] && !c.claims.has(k));
+}
+
+/** Takes the next thing that is to be delivered (it is on its way from now on): its place in `layout.late`, or -1 when everything is sent already. */
+export function claimLate(roomId: string, layout: import('../world/layout').RoomLayout): number {
+  const c = deliveryEntry(roomId, layout);
+  for (let k = 0; k < layout.late.length; k++) {
+    if (layout.lateDone[k] || c.claims.has(k)) continue;
+    c.claims.add(k);
+    return k;
+  }
+  return -1;
+}
+
+/** The delivery was called off: the thing is next in line again. */
+export function releaseLate(roomId: string, layout: import('../world/layout').RoomLayout, rank: number) {
+  deliveryEntry(roomId, layout).claims.delete(rank);
+}
+
+/** The parcel is open: the thing stands in the room from now on (drawn, in the way of the walkers, its stations and seats usable). */
+export function commitDelivery(roomId: string, layout: import('../world/layout').RoomLayout, rank: number) {
+  if (rank < 0 || rank >= layout.late.length || layout.lateDone[rank]) return;
+  const c = deliveryEntry(roomId, layout);
+  const pi = layout.late[rank];
+  layout.lateDone[rank] = true;
+  layout.blockProp(pi);
+  for (const st of layout.stations) if (st.propIdx === pi) st.off = false;
+  for (const sp of layout.spots) if (sp.propIdx === pi) sp.off = false;
+  c.claims.delete(rank);
+  c.at.set(rank, performance.now());
+  c.version++;
+  c.listeners.forEach((f) => f());
+}
+
+export function subscribeDelivery(roomId: string, layout: import('../world/layout').RoomLayout, fn: () => void): () => void {
+  const c = deliveryEntry(roomId, layout);
+  c.listeners.add(fn);
+  return () => c.listeners.delete(fn);
+}
+
+export function deliveryVersion(roomId: string, layout: import('../world/layout').RoomLayout): number {
+  return deliveryEntry(roomId, layout).version;
+}
+
+/** performance.now() (ms) at which the thing of this place in `layout.late` arrived (0: before this page knew about it) */
+export function deliveredAt(roomId: string, layout: import('../world/layout').RoomLayout, rank: number): number {
+  return deliveryEntry(roomId, layout).at.get(rank) ?? 0;
+}
+
 export function subscribeMoved(roomId: string, fn: () => void): () => void {
   const c = movedByRoom.get(roomId);
   if (!c) return () => {};
@@ -179,19 +261,36 @@ export function movedVersion(roomId: string): number {
   return movedByRoom.get(roomId)?.version ?? 0;
 }
 
-/** Schedules and delivers the parcels of a room: a first one soon after somebody is on stage, then one every 2-5 minutes once it is collected. Only numbers are compared. Returns true at the moment a parcel arrives. */
-export function tickParcel(rt: RoomRuntime, now: number): boolean {
-  if (rt.parcelAt === 0) rt.parcelAt = now + 40 + Math.random() * 50;
+/** Seconds until the first parcel of a room, and between a parcel that was opened and the next one. */
+const FIRST_PARCEL_S: [number, number] = [8, 18];
+const NEXT_PARCEL_S: [number, number] = [18, 40];
+
+/**
+ * Schedules and delivers the parcels of a room: a first one soon after somebody is on stage, then the next one shortly after a parcel
+ * was opened. What is in the box is the next thing of `layout.late` (big things come in big boxes); once everything is sent there are no more.
+ * Only numbers are compared. Returns true at the moment a parcel arrives.
+ */
+export function tickParcel(rt: RoomRuntime, now: number, roomId: string, layout: import('../world/layout').RoomLayout): boolean {
+  if (rt.parcelAt === 0) rt.parcelAt = now + FIRST_PARCEL_S[0] + Math.random() * (FIRST_PARCEL_S[1] - FIRST_PARCEL_S[0]);
   if (rt.parcel !== 'none' || now < rt.parcelAt) return false;
+  const rank = claimLate(roomId, layout);
+  if (rank < 0) {
+    rt.parcelAt = now + 30;
+    return false;
+  }
+  rt.parcelRank = rank;
+  rt.parcelBig = layout.lateBig[rank];
   rt.parcel = 'waiting';
   return true;
 }
 
-/** The parcel was taken in: the next delivery is 2-5 minutes away. */
+/** The parcel was opened: the next delivery is not far. */
 export function parcelDone(rt: RoomRuntime, now: number) {
   rt.parcel = 'none';
   rt.parcelBy = null;
-  rt.parcelAt = now + 120 + Math.random() * 180;
+  rt.parcelRank = -1;
+  rt.parcelBig = false;
+  rt.parcelAt = now + NEXT_PARCEL_S[0] + Math.random() * (NEXT_PARCEL_S[1] - NEXT_PARCEL_S[0]);
 }
 
 export function runtimeFor(roomId: string): RoomRuntime {
@@ -200,7 +299,7 @@ export function runtimeFor(roomId: string): RoomRuntime {
     rt = {
       doorFreeAt: 0, walkFreeAt: 0, walkBy: null, visitors: [null, null, null], directorSeated: false, directorKey: null, receivedAt: -99,
       burstKey: null, burstStart: 0, lastToolAt: 0, burstSeq: 0, prompt: '', idleSince: 0, leaving: false, wasBusy: false, lastHire: 0, runStart: 0, lastText: '', knownFinal: '', talkDeadline: 0,
-      parcel: 'none', parcelAt: 0, parcelBy: null, askAt: 0, cheerUntil: 0, summaryDue: false,
+      parcel: 'none', parcelAt: 0, parcelBy: null, parcelRank: -1, parcelBig: false, askAt: 0, cheerUntil: 0, summaryDue: false,
     };
     roomRuntime.set(roomId, rt);
   }
@@ -344,6 +443,7 @@ export function dropRuntime(key: string) {
 
 export function dropRoomRuntime(roomId: string) {
   roomRuntime.delete(roomId);
+  deliveryByRoom.delete(roomId);
   simLists.delete(roomId);
   catLists.delete(roomId);
 }

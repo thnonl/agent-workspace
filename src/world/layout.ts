@@ -147,6 +147,9 @@ export type StationKind = 'drink' | 'read' | 'fish' | 'wash' | 'water' | 'cook' 
 export interface Station {
   kind: StationKind;
   prop: PropKind;
+  /** index into `props` of the thing it is at; `off` while that thing has not been delivered yet (see RoomLayout.late) */
+  propIdx: number;
+  off?: boolean;
   /** where the person stands */
   stand: V2;
   /** yaw while standing there (looking at the thing) */
@@ -171,6 +174,9 @@ export interface Toy {
 
 /** Places to sit / lie down: sofas, beanbags, the director's desk, a patch of sun. */
 export interface Spot {
+  /** index into `props` of the furniture it belongs to; `off` while that has not been delivered yet (see RoomLayout.late) */
+  propIdx?: number;
+  off?: boolean;
   kind: 'sofa' | 'armchair' | 'beanbag' | 'desk' | 'sun' | 'box' | 'toilet' | 'chair';
   x: number;
   z: number;
@@ -234,6 +240,21 @@ export interface RoomLayout {
   toys: Toy[];
   /** indices into `props` of the plants and cartons that people carry to a tidier place (see sim/tidy.ts) */
   movable: number[];
+  /**
+   * A new room is sparse: most of its things (indices into `props`, in the order they were chosen to arrive) come by delivery, in a
+   * parcel from the porch or in one of the cartons that stand in the room. `lateDone[k]`: the k-th of them is in the room now (see
+   * commitDelivery in sim/registry.ts). Until then a late prop is not drawn, does not block the walking grid, and the stations and
+   * seats that belong to it are `off`.
+   */
+  late: number[];
+  /** per entry of `late`: arrives in a big parcel (a big thing) or a small one */
+  lateBig: boolean[];
+  /** per prop: its place in `late`, -1 when it was there from the start */
+  lateRank: number[];
+  lateDone: boolean[];
+  /** the walking grid takes the prop in / lets it go (counted, like every other block) */
+  blockProp: (idx: number) => void;
+  unblockProp: (idx: number) => void;
   stations: Station[];
   catCount: number;
   nav: NavGrid;
@@ -953,20 +974,21 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
     n++;
   }
 
-  /** the walking grid under a prop (a round table blocks its top and its chairs, not the whole square) */
-  const blockProp = (nv: NavGrid, p: Prop) => {
+  /** the walking grid under a prop (a round table blocks its top and its chairs, not the whole square); `delta` -1 takes it back */
+  const blockProp = (nv: NavGrid, p: Prop, delta: 1 | -1 = 1) => {
     if (p.kind === 'toilet') return; // (the cubicle is blocked as a whole)
+    const mark = delta > 0 ? nv.blockOriented.bind(nv) : nv.unblockOriented.bind(nv);
     if (p.kind === 'meetingSet') {
-      nv.blockOriented(p.x, p.z, 1.4, 1.4, p.rot, 0.1);
+      mark(p.x, p.z, 1.4, 1.4, p.rot, 0.1);
       for (let i = 0; i < 4; i++) {
         const a = (i / 4) * Math.PI * 2 + 0.25;
         const c = rot2(Math.sin(a) * TABLE_CHAIR_R, Math.cos(a) * TABLE_CHAIR_R, p.rot);
-        nv.blockOriented(p.x + c.x, p.z + c.z, 0.5, 0.5, p.rot + a + Math.PI, 0.08);
+        mark(p.x + c.x, p.z + c.z, 0.5, 0.5, p.rot + a + Math.PI, 0.08);
       }
       return;
     }
     const [w, d] = FOOT[p.kind];
-    nv.blockOriented(p.x, p.z, w, d, p.rot, 0.2);
+    mark(p.x, p.z, w, d, p.rot, 0.2);
   };
 
   // ------------------------------------------------------------------- rug
@@ -1199,7 +1221,7 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
       const ap = rot2(ax, az, p.rot);
       const a = freeNear({ x: p.x + ap.x, z: p.z + ap.z });
       // (a seat nobody can walk up to is no seat)
-      if (a && nav.reachable(door.inside, a)) spots.push({ kind: (p.kind === 'loungeSet' ? 'sofa' : p.kind) as Spot['kind'], x: p.x + c.x, z: p.z + c.z, y, yaw: p.rot, approach: a });
+      if (a && nav.reachable(door.inside, a)) spots.push({ kind: (p.kind === 'loungeSet' ? 'sofa' : p.kind) as Spot['kind'], x: p.x + c.x, z: p.z + c.z, y, yaw: p.rot, approach: a, propIdx: props.indexOf(p) });
     }
   }
   // the chairs of the round tables
@@ -1212,7 +1234,7 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
       const ap = chairApproach(nav, cs);
       if (!ap) continue;
       seats.push(spots.length);
-      spots.push({ kind: 'chair', x: cs.x, z: cs.z, y: TABLE_SEAT_Y, yaw: cs.yaw, approach: ap, table: tables.length });
+      spots.push({ kind: 'chair', x: cs.x, z: cs.z, y: TABLE_SEAT_Y, yaw: cs.yaw, approach: ap, table: tables.length, propIdx: props.indexOf(p) });
     }
     if (seats.length) tables.push({ x: p.x, z: p.z, seats });
   }
@@ -1267,7 +1289,7 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
     const stand = options.find((o) => Math.abs(o.x) < W / 2 - 0.5 && Math.abs(o.z) < D / 2 - 0.5 && !nav.isBlocked(o.x, o.z) && nav.findPath(door.inside, o));
     if (!stand) continue;
     const st: Station = {
-      kind: kindSt, prop: pr.kind, stand, target: { x: pr.x, z: pr.z },
+      kind: kindSt, prop: pr.kind, propIdx: props.indexOf(pr), stand, target: { x: pr.x, z: pr.z },
       yaw: kindSt === 'water' ? Math.atan2(pr.x - stand.x, pr.z - stand.z) : pr.rot + Math.PI,
     };
     if (pr.kind === 'sink') {
@@ -1334,9 +1356,32 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
     if (mouse) toys.push({ kind: 'mouse', x: mouse.x, z: mouse.z, rot: r.range(0, Math.PI * 2) });
   }
 
+  // ------------- a new room is sparse: the coat rack, the toilet, its sink, the cartons and one file cabinet, bin and plant are there from the
+  // start, everything else arrives by delivery (the cartons are parcels people open when they carry them to their place) (own generator: the rest of the room is unaffected)
+  const keep = new Set<number>();
+  props.forEach((p, i) => {
+    if (p.kind === 'coatRack' || p.kind === 'toilet' || p.kind === 'boxes' || p === restSink) keep.add(i);
+  });
+  for (const k of ['fileCabinet', 'bin', 'plant'] as const) {
+    const i = props.findIndex((p, j) => p.kind === k && !keep.has(j));
+    if (i >= 0) keep.add(i);
+  }
+  const late = new Rng((seed ^ 0x3c6ef372) >>> 0).shuffle(props.map((_, i) => i).filter((i) => !keep.has(i)));
+  const lateRank: number[] = props.map(() => -1);
+  late.forEach((pi, k) => (lateRank[pi] = k));
+  // big things come in big parcels
+  const lateBig = late.map((pi) => {
+    const [fw, fd, fh] = FOOT[props[pi].kind];
+    return fw * fd >= 0.9 || fh >= 1.4;
+  });
+  for (const pi of late) blockProp(nav, props[pi], -1);
+  for (const st of stations) st.off = lateRank[st.propIdx] >= 0;
+  for (const sp of spots) if (sp.propIdx !== undefined) sp.off = lateRank[sp.propIdx] >= 0;
+
   // ------------- plants and cartons that nobody's break depends on: they can be carried to a tidier place
   const movable: number[] = [];
   props.forEach((pr, i) => {
+    if (lateRank[i] >= 0) return;
     if (pr.kind !== 'plant' && pr.kind !== 'tallPlant' && pr.kind !== 'cactus' && pr.kind !== 'boxes') return;
     if (stations.some((st) => Math.hypot(st.target.x - pr.x, st.target.z - pr.z) < 0.05)) return;
     movable.push(i);
@@ -1344,6 +1389,7 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
 
   return {
     seed, kind: kind.name, seating, width: W, depth: D, wallHeight, theme, door, windows, desks, director, props, wallDecor, decals, rug, signPos, catWindows, spots, restroom, tables, toys, movable, stations, catCount, nav,
+    late, lateBig, lateRank, lateDone: late.map(() => false), blockProp: (i) => blockProp(nav, props[i], 1), unblockProp: (i) => blockProp(nav, props[i], -1),
     fitDistance: Math.hypot(W, D) * 1.2 + 3.5,
   };
 }

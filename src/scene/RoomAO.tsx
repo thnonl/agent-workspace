@@ -44,7 +44,8 @@ function buildAO(layout: RoomLayout): THREE.BufferGeometry {
   if (layout.restroom) for (const pc of restroomPieces(layout, layout.restroom)) rects.push({ x: pc.x, z: pc.z, w: Math.max(pc.w, 0.1), d: Math.max(pc.d, 0.1), rot: 0, m: 0.22 });
   rects.push({ x: layout.director.desk.x, z: layout.director.desk.z, w: 3.0, d: 1.2, rot: 0, m: 0.4 });
   for (const [pi, p] of layout.props.entries()) {
-    if (NO_AO.has(p.kind) || layout.movable.includes(pi)) continue;
+    // (the movable ones and the things that come by delivery have a floor shadow of their own)
+    if (NO_AO.has(p.kind) || layout.movable.includes(pi) || layout.lateRank[pi] >= 0) continue;
     const [fw, fd] = FOOT[p.kind];
     const k = SHRINK[p.kind] ?? 1;
     const small = Math.min(fw, fd);

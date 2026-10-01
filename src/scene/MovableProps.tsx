@@ -18,7 +18,7 @@ export function MovableProps({ roomId, layout }: { roomId: string; layout: RoomL
   return (
     <>
       {items.map((it, i) => {
-        if (it.state === 'carried') return null;
+        if (it.state === 'carried' || it.state === 'gone') return null;
         const prop = layout.props[it.prop];
         const [w, d] = FOOT[prop.kind];
         const moved = { ...prop, x: it.x, z: it.z, rot: it.rot };

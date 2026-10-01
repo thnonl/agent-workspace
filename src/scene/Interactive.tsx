@@ -5,6 +5,8 @@ import { FOOT, type PropKind, type RoomLayout } from '../world/layout';
 import { useStore } from '../store';
 import { burst } from '../sim/celebrate';
 import { frame } from '../sim/frame';
+import { propHere } from '../sim/registry';
+import { useDeliveryVersion } from './useDelivery';
 import { sfx } from '../audio';
 import { G, M, MB } from './kit';
 import { DESK_TOP, Ms, RB } from './furniture';
@@ -56,11 +58,10 @@ function Hit({ roomId, kind, x, z, rot }: { roomId: string; kind: PropKind; x: n
 
 /** Invisible click boxes over the things in the office that react when they are poked (coffee machine, cooler, fish tank...). */
 export function PropHits({ roomId, layout }: { roomId: string; layout: RoomLayout }) {
+  useDeliveryVersion(roomId, layout); // (a thing that has just been delivered can be poked)
   return (
     <>
-      {layout.props.filter((p) => POKE[p.kind]).map((p, i) => (
-        <Hit key={i} roomId={roomId} kind={p.kind} x={p.x} z={p.z} rot={p.rot} />
-      ))}
+      {layout.props.map((p, i) => (POKE[p.kind] && propHere(layout, i) ? <Hit key={i} roomId={roomId} kind={p.kind} x={p.x} z={p.z} rot={p.rot} /> : null))}
     </>
   );
 }

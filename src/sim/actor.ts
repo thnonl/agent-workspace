@@ -1,5 +1,5 @@
 import type { PersonRec, SpeechKind, TaskRec } from '../types';
-import { rot2, type RoomLayout, type Spot, type Station, type StationKind } from '../world/layout';
+import { FOOT, rot2, type RoomLayout, type Spot, type Station, type StationKind } from '../world/layout';
 import type { V2 } from '../world/nav';
 import { sfx, type Sfx } from '../audio';
 import { env } from '../env';
@@ -7,7 +7,7 @@ import { SLOW_MAX_DT } from './frame';
 import { CHAT_SCRIPTS, TABLE_LINES, eatLine, goodbyeLine, greetingLine, reportLine, serveLine, thoughts } from './phrases';
 import { kickDummy, takeDumbbells } from './gym';
 import { notePet } from '../progress';
-import { debugFlags, movedIfAny, movedOf, notifyMoved, dismissIdle, enqueueSpeech, greet, parcelDone, roomRuntime, tickParcel, sims, simsInRoom, spotOwners, type CatSim, type Phase, type RoomRuntime, type SimState } from './registry';
+import { claimLate, commitDelivery, debugFlags, lateAvailable, movedIfAny, movedOf, notifyMoved, dismissIdle, enqueueSpeech, greet, parcelDone, releaseLate, roomRuntime, tickParcel, sims, simsInRoom, spotOwners, type CatSim, type Phase, type RoomRuntime, type SimState } from './registry';
 import { commitMove, findTidySpot, standBeside, untidyProps, type Place } from './tidy';
 
 export interface Pose {
@@ -216,6 +216,8 @@ interface Activity {
   /** tidy: index into the room's moved-props list of the plant / carton to carry, and where to */
   tidy?: number;
   tidyTo?: Place;
+  /** tidy: the carton is a parcel – it is carried to `tidyTo` (where this thing of layout.late stands) and opened there; -1 when it was opened */
+  openRank?: number;
   /** toilet: what is done in there, and whether it is an emergency (fast walk, short visit) */
   toiletMode?: 'phone' | 'book' | 'none';
   hurry?: boolean;
@@ -412,6 +414,10 @@ export class Actor {
   private served = false;
   /** a person restored by a page load was put at their desk already (later arrivals walk in) */
   private restoredDone = false;
+  /** the delivery run: where the thing in the parcel goes (the parcel is opened there); null: the parcel is opened at the desk */
+  private deliverTo: V2 | null = null;
+  /** the room was built (again) while this person was already in the office: they sit at their desk from the first frame, like after a page load */
+  warm = false;
   /** key of the task the current work timers belong to */
   private curTask = '';
   /** the last "what I am doing" bubble, so the same words are not said twice in a row */
@@ -423,7 +429,11 @@ export class Actor {
   /** arm angles that put the hands on the laptop keys (see deskReach) */
   private readonly reach: { arm: number; fore: number };
 
+  /** the layout of the room (the runs that have to give a claim back need it) */
+  private layoutRef: RoomLayout;
+
   constructor(key: string, roomId: string, isDirector: boolean, layout: RoomLayout, desk: number, scale: number) {
+    this.layoutRef = layout;
     this.isDirector = isDirector;
     this.hip = HIP * scale;
     this.reach = deskReach(scale, isDirector, SEAT_LIFT);
@@ -699,7 +709,7 @@ export class Actor {
     this.typing = 0;
     s.busy = false;
     // deliveries: one timer per room, compared with the clock (whoever is on stage advances it)
-    if (s.onStage && tickParcel(rt, ctx.now)) sfx('doorbell', s.roomId);
+    if (s.onStage && tickParcel(rt, ctx.now, s.roomId, layout)) sfx('doorbell', s.roomId);
     // a nap only lasts in the chair; a finished break leaves nothing of the smoke behind
     if (s.phase !== 'working') this.wake();
     if (s.phase !== 'activity') this.smoke = 0;
@@ -718,8 +728,8 @@ export class Actor {
         s.walkWait = 0;
         if (!person.present) break;
         if (!this.isDirector && s.desk < 0) break;
-        if (person.restored && !this.restoredDone) {
-          // the page opened while the session was already working: they have been at their desk all along
+        if ((person.restored || this.warm) && !this.restoredDone) {
+          // the page opened (or the room was built) while the session was already working: they have been at their desk all along
           this.restoredDone = true;
           const seat = this.seatOf(ctx);
           s.x = seat.x;
@@ -1218,6 +1228,8 @@ export class Actor {
       return;
     }
     this.restT += dt;
+    // the doorbell rang: whoever sits at the desk without work goes for the parcel soon
+    if (ctx.rt.parcel === 'waiting' && !ctx.rt.parcelBy && this.nextIdleAt > this.restT + 6) this.nextIdleAt = this.restT + 2 + Math.random() * 4;
     if (this.restT < this.nextIdleAt) return;
     const a = this.pickActivity(ctx);
     if (!a) {
@@ -1360,6 +1372,11 @@ export class Actor {
       if (spotOwners.get(k) === this.sim.key) spotOwners.delete(k);
     }
     if (this.act?.stationKey && spotOwners.get(this.act.stationKey) === this.sim.key) spotOwners.delete(this.act.stationKey);
+    // an interrupted carton run: the thing in it is next in line again
+    if (this.act?.openRank !== undefined && this.act.openRank >= 0 && this.layoutRef) {
+      releaseLate(this.sim.roomId, this.layoutRef, this.act.openRank);
+      this.act.openRank = undefined;
+    }
     // an interrupted delivery run: the box goes back on the porch for the next one to fetch
     const prt = roomRuntime.get(this.sim.roomId);
     if (prt && prt.parcelBy === this.sim.key) {
@@ -1428,20 +1445,22 @@ export class Actor {
     const from = { x: s.x, z: s.z };
     const free = (p: V2) => !layout.nav.isBlocked(p.x, p.z);
     const pick = <T,>(arr: readonly T[]) => arr[Math.floor(Math.random() * arr.length)];
-    const seats = layout.spots.map((sp, i) => ({ sp, i })).filter(({ sp, i }) => (sp.kind === 'sofa' || sp.kind === 'armchair') && !spotOwners.has(`${s.roomId}#${i}`));
+    const seats = layout.spots.map((sp, i) => ({ sp, i })).filter(({ sp, i }) => (sp.kind === 'sofa' || sp.kind === 'armchair') && !sp.off && !spotOwners.has(`${s.roomId}#${i}`));
     // a cat asleep on the director's desk can only be reached from the director's chair
     const petCats = cats.filter((c) => c.onStage && c.still && c.petUntil < ctx.now && (this.isDirector || layout.spots[c.spot]?.kind !== 'desk'));
     const watchable = workers.filter((w) => w.desk >= 0 && w.busy && w.key !== s.key);
     const staff = !this.isDirector;
     const chatters = ctx.idlers.filter((w) => w.key !== s.key && !w.chatBy && !w.asleep && w.onStage && w.phase === 'working' && !w.busy && w.desk >= 0);
     const untidy = layout.movable.length ? untidyProps(s.roomId, layout, ctx.now) : [];
+    // (cartons to open: they are parcels that have been waiting in the room)
+    const openable = untidy.length > 0 && lateAvailable(s.roomId, layout) && movedOf(s.roomId, layout).some((it, i) => untidy.includes(i) && layout.props[it.prop].kind === 'boxes');
     const parcelFree = ctx.rt.parcel === 'waiting' && (!ctx.rt.parcelBy || !sims.get(ctx.rt.parcelBy)?.onStage);
     const rr = layout.restroom;
     const toiletFree = !!rr && !spotOwners.has(`${s.roomId}#${rr.spot}`);
-    const chairsFree = layout.spots.map((sp, i) => ({ sp, i })).filter(({ sp, i }) => sp.kind === 'chair' && !spotOwners.has(`${s.roomId}#${i}`));
+    const chairsFree = layout.spots.map((sp, i) => ({ sp, i })).filter(({ sp, i }) => sp.kind === 'chair' && !sp.off && !spotOwners.has(`${s.roomId}#${i}`));
     /** people already sitting at round table `ti` (a table with company is more inviting) */
     const seated = (ti: number) => layout.tables[ti].seats.filter((i) => spotOwners.has(`${s.roomId}#${i}`)).length;
-    const stationsOf = (k: StationKind) => layout.stations.map((st, i) => ({ st, i })).filter(({ st, i }) => st.kind === k && !spotOwners.has(`${s.roomId}@${i}`));
+    const stationsOf = (k: StationKind) => layout.stations.map((st, i) => ({ st, i })).filter(({ st, i }) => st.kind === k && !st.off && !spotOwners.has(`${s.roomId}@${i}`));
     const options: [ActivityKind, number][] = [
       ['wander', staff ? 1.5 : 3], ['sofa', seats.length ? (staff ? 4 : 3) : 0], ['watch', watchable.length ? (staff ? 1.5 : 4) : 0],
       ['window', layout.catWindows.length ? (staff ? 1.5 : 2.5) : 0], ['pet', petCats.length ? (staff ? 4.5 : 5) : 0], ['stay', staff ? 5 : 0],
@@ -1452,7 +1471,7 @@ export class Actor {
       ['chat', chatters.length ? (staff ? 4 : 2.5) : 0],
       ['toilet', toiletFree ? (staff ? 3 : 2) : 0], ['table', chairsFree.length ? (staff ? 3.5 : 2.5) * (1 + 0.9 * Math.max(...chairsFree.map(({ sp }) => seated(sp.table ?? 0)))) : 0],
       // a box on the porch: the first to roll it goes (nobody else is on the way); a nap is likelier at night
-      ['parcel', parcelFree ? 25 : 0], ['tidy', untidy.length ? (staff ? 4 : 2.5) : 0], ['sleep', staff || !ctx.rt.visitors.some((v) => v !== null) ? 2 * (1 + env.night) : 0],
+      ['parcel', parcelFree ? 150 : 0], ['tidy', untidy.length ? (openable ? (staff ? 9 : 6) : staff ? 4 : 2.5) : 0], ['sleep', staff || !ctx.rt.visitors.some((v) => v !== null) ? 2 * (1 + env.night) : 0],
     ];
     let roll = Math.random() * options.reduce((a, [, w]) => a + w, 0);
     let kind: ActivityKind = 'wander';
@@ -1543,6 +1562,20 @@ export class Actor {
       case 'tidy': {
         // a plant or carton that stands in the middle of the room goes to a tidier place along a wall
         const items = movedOf(s.roomId, layout);
+        // a carton that waits to be opened is carried to the place of the thing that is in it (it stands there as soon as the carton is open)
+        for (const idx of untidy.filter((i) => layout.props[items[i].prop].kind === 'boxes').sort(() => Math.random() - 0.5)) {
+          if (!lateAvailable(s.roomId, layout)) break;
+          const it = items[idx];
+          const stand = standBeside(layout, 'boxes', it.x, it.z, from);
+          if (!stand) continue;
+          const rank = claimLate(s.roomId, layout);
+          if (rank < 0) break;
+          const lp = layout.props[layout.late[rank]];
+          const to: Place = { x: lp.x, z: lp.z, rot: lp.rot };
+          it.by = s.key;
+          it.to = to;
+          return { kind, target: stand, yaw: Math.atan2(it.x - stand.x, it.z - stand.z), dur: 0, tidy: idx, tidyTo: to, openRank: rank };
+        }
         for (const idx of untidy.sort(() => Math.random() - 0.5).slice(0, 3)) {
           const it = items[idx];
           const to = findTidySpot(s.roomId, layout, idx);
@@ -1948,7 +1981,7 @@ export class Actor {
   private leaveSeat(ctx: ActorCtx, a: Activity, back: boolean) {
     if (a.kind === 'toilet' && !back) {
       if (this.startWash(ctx)) return;
-      if (ctx.layout.stations.some((st) => st.kind === 'wash')) {
+      if (ctx.layout.stations.some((st) => st.kind === 'wash' && !st.off)) {
         // all sinks busy: wait here, politely
         this.actStage = 3;
         this.t = 0;
@@ -1966,7 +1999,7 @@ export class Actor {
     let pick = -1;
     let bestD = Infinity;
     L.stations.forEach((st, i) => {
-      if (st.kind !== 'wash' || spotOwners.has(`${s.roomId}@${i}`)) return;
+      if (st.kind !== 'wash' || st.off || spotOwners.has(`${s.roomId}@${i}`)) return;
       const d = Math.hypot(st.stand.x - s.x, st.stand.z - s.z) - (rr && rr.wash === i ? 3 : 0);
       if (d < bestD) {
         bestD = d;
@@ -2435,17 +2468,19 @@ export class Actor {
   }
 
   /**
-   * The delivery run (stage 0: bend down for the box on the porch, 1: carry it in to the desk, 2: shake it, have a
-   * look inside and put it away). Anything that cuts the run short sends the person home; the box goes back on the porch.
+   * The delivery run (stage 0: bend down for the box on the porch, 1: carry it in to the place of the thing that is in it, 2: shake
+   * it, have a look inside and open it – the thing stands there from then on). Anything that cuts the run short sends the person
+   * home; the box goes back on the porch.
    */
   private parcelRun(dt: number, ctx: ActorCtx, pose: Pose, a: Activity, back: boolean) {
     const s = this.sim;
     const rt = ctx.rt;
     const t = this.t;
     const c = this.clock;
+    const L = ctx.layout;
     if (back || rt.parcelBy !== s.key || ctx.task) {
-      // (a box that is already inside is put away rather than carried out again)
-      if (this.actStage === 2) parcelDone(rt, ctx.now);
+      // (a box that is already inside is opened where it is rather than carried out again)
+      if (this.actStage === 2) this.openParcel(ctx);
       this.goHome(ctx);
       return;
     }
@@ -2459,13 +2494,25 @@ export class Actor {
       pose.bob = -0.04 * crouch;
       this.cue('paper', 1.6);
       if (t >= 1.6 && this.held !== 'parcel') {
-        // the box is in the arms: it is gone from the porch
+        // the box is in the arms: it is gone from the porch (a big thing comes in a big box)
         this.held = 'parcel';
+        this.heldScale = rt.parcelBig ? 1.7 : 1;
         rt.parcel = 'carried';
       }
       if (t >= 2.7) {
+        // carry it to the spot where the thing in it is going to stand
+        this.deliverTo = null;
+        let route: V2[] | null = null;
+        const prop = rt.parcelRank >= 0 ? L.props[L.late[rt.parcelRank]] : null;
+        if (prop) {
+          const stand = standBeside(L, prop.kind, prop.x, prop.z, L.door.inside);
+          if (stand) {
+            this.deliverTo = { x: prop.x, z: prop.z };
+            route = this.routeIn(ctx, stand);
+          }
+        }
         this.actStage = 1;
-        this.startPath(this.routeIn(ctx, this.approachOf(ctx)));
+        this.startPath(route ?? this.routeIn(ctx, this.approachOf(ctx)));
         this.setPhase('activity');
       }
     } else if (this.actStage === 1) {
@@ -2477,27 +2524,41 @@ export class Actor {
         this.setPhase('activity');
       }
     } else {
-      const seat = this.seatOf(ctx);
+      const seat = this.deliverTo ?? this.seatOf(ctx);
       this.faceYaw(Math.atan2(seat.x - s.x, seat.z - s.z), dt, 6);
       this.idlePose(pose);
       this.holdBoxPose(pose);
-      const shake = t < 1.2 ? Math.sin(c * 18) : 0;
-      const peek = seg(t, 1.2, 1.7) * (1 - seg(t, 2.6, 3.0));
-      pose.armRx += shake * 0.07 - 0.15 * peek;
-      pose.lean = 0.25 * peek;
-      pose.headX = 0.35 * peek;
-      pose.happy = peek;
-      if (peek > 0.5) pose.mouth = 'o';
-      this.heldTilt = shake * 0.12 - 0.5 * peek;
+      this.openBoxPose(pose, t, c);
       this.cue('paper', 1.4);
       if (t >= 3.3) {
-        // put away: the room waits 2-5 minutes for the next delivery
-        this.held = 'none';
-        this.heldTilt = 0;
-        parcelDone(rt, ctx.now);
+        // opened: the thing stands there now
+        this.openParcel(ctx);
         this.goHome(ctx);
       }
     }
+  }
+
+  /** shake the box, have a look inside (the arms, the lean and the look of someone who opens a parcel) */
+  private openBoxPose(pose: Pose, t: number, c: number) {
+    const shake = t < 1.2 ? Math.sin(c * 18) : 0;
+    const peek = seg(t, 1.2, 1.7) * (1 - seg(t, 2.6, 3.0));
+    pose.armRx += shake * 0.07 - 0.15 * peek;
+    pose.lean = 0.25 * peek;
+    pose.headX = 0.35 * peek;
+    pose.happy = peek;
+    if (peek > 0.5) pose.mouth = 'o';
+    this.heldTilt = shake * 0.12 - 0.5 * peek;
+  }
+
+  /** the parcel of the porch is open: its thing is delivered, the next parcel is on its way */
+  private openParcel(ctx: ActorCtx) {
+    const rt = ctx.rt;
+    this.held = 'none';
+    this.heldTilt = 0;
+    this.heldScale = 1;
+    this.deliverTo = null;
+    if (rt.parcelRank >= 0) commitDelivery(this.sim.roomId, ctx.layout, rt.parcelRank);
+    parcelDone(rt, ctx.now);
   }
 
   /**
@@ -2516,6 +2577,8 @@ export class Actor {
     }
     const prop = ctx.layout.props[it.prop];
     const kind: HeldKind = prop.kind === 'boxes' ? 'parcel' : 'pot';
+    // (a carton that is a parcel: it goes to the place of the thing that is in it, and is opened there)
+    const open = a.openRank !== undefined && a.openRank >= 0;
     if (this.actStage === 0) {
       this.faceYaw(Math.atan2(it.x - s.x, it.z - s.z), dt, 8);
       this.idlePose(pose);
@@ -2533,7 +2596,7 @@ export class Actor {
         notifyMoved(s.roomId);
       }
       if (t >= 2.7) {
-        const stand = standBeside(ctx.layout, prop.kind, to.x, to.z, { x: s.x, z: s.z });
+        const stand = standBeside(ctx.layout, open ? ctx.layout.props[ctx.layout.late[a.openRank!]].kind : prop.kind, to.x, to.z, { x: s.x, z: s.z });
         if (!stand) {
           this.goHome(ctx);
           return;
@@ -2549,6 +2612,35 @@ export class Actor {
         this.actStage = 2;
         s.walking = false;
         this.setPhase('activity');
+      }
+    } else if (open) {
+      // at the place: shake the carton, look inside, open it – the thing is there
+      this.faceYaw(Math.atan2(to.x - s.x, to.z - s.z), dt, 7);
+      this.idlePose(pose);
+      if (this.held === kind) {
+        this.holdBoxPose(pose);
+        this.openBoxPose(pose, t, this.clock);
+        this.cue('paper', 1.4);
+        if (t >= 3.3) {
+          const [fw, fd] = FOOT[prop.kind];
+          this.held = 'none';
+          this.heldTilt = 0;
+          this.heldScale = 1;
+          // the carton is used up: gone from the room, and what was in it stands where it goes
+          ctx.layout.nav.unblockOriented(it.x, it.z, fw, fd, it.rot, 0.2);
+          it.state = 'gone';
+          it.by = null;
+          it.to = null;
+          notifyMoved(s.roomId);
+          commitDelivery(s.roomId, ctx.layout, a.openRank!);
+          a.openRank = undefined;
+        }
+      } else {
+        pose.armLx = pose.armRx = 0.1;
+        pose.armLz = pose.armRz = 0.14;
+        pose.foreLx = pose.foreRx = -0.2;
+        pose.happy = seg(t, 3.4, 3.8);
+        if (t >= 4.6) this.goHome(ctx);
       }
     } else {
       this.faceYaw(Math.atan2(to.x - s.x, to.z - s.z), dt, 7);

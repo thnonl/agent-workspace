@@ -154,7 +154,7 @@ export class CatBrain {
     this.curlDir = this.rng.chance(0.5) ? 1 : -1;
     this.sim = { key, roomId, x: 0, y: 0, z: 0, yaw: 0, phase: 'away', onStage: false, still: false, petUntil: 0, spot: -1 };
     // half of the cats are already napping when you open the room
-    const nap = layout.spots.map((_, i) => i).filter((i) => layout.spots[i].kind !== 'toilet' && !spotOwners.has(`${roomId}#${i}`));
+    const nap = layout.spots.map((_, i) => i).filter((i) => layout.spots[i].kind !== 'toilet' && !layout.spots[i].off && !spotOwners.has(`${roomId}#${i}`));
     if (nap.length && this.rng.chance(0.55)) {
       const i = this.rng.pick(nap);
       this.claim(i);
@@ -334,7 +334,7 @@ export class CatBrain {
       this.setPhase('toWindow');
       return;
     }
-    const free = layout.spots.map((_, i) => i).filter((i) => layout.spots[i].kind !== 'toilet' && !spotOwners.has(`${s.roomId}#${i}`));
+    const free = layout.spots.map((_, i) => i).filter((i) => layout.spots[i].kind !== 'toilet' && !layout.spots[i].off && !spotOwners.has(`${s.roomId}#${i}`));
     const movers = layout.toys.map((t, i) => (t.kind === 'yarn' || t.kind === 'mouse' ? i : -1)).filter((i) => i >= 0);
     const posts = layout.toys.map((t, i) => (t.kind === 'post' ? i : -1)).filter((i) => i >= 0);
     const pick = this.rng.weighted<'wander' | 'sit' | 'groom' | 'stretch' | 'nap' | 'trot' | 'play' | 'scratch'>([

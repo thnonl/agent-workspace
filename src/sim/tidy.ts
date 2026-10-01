@@ -1,6 +1,6 @@
 import { FOOT, type RoomLayout } from '../world/layout';
 import type { V2 } from '../world/nav';
-import { movedOf, notifyMoved, type MovedProp } from './registry';
+import { lateAvailable, movedOf, notifyMoved, type MovedProp } from './registry';
 
 /** clear floor kept all round a prop that is set down (the nav grid pad used for props) */
 const PAD = 0.2;
@@ -25,8 +25,14 @@ function wallGap(layout: RoomLayout, x: number, z: number, kind: keyof typeof FO
 export function untidyProps(roomId: string, layout: RoomLayout, now: number): number[] {
   const items = movedOf(roomId, layout);
   const out: number[] = [];
+  // (a carton is a parcel: with something left to deliver it is carried to where that thing goes and opened there, wherever it stands)
+  const parcels = lateAvailable(roomId, layout);
   items.forEach((it, i) => {
     if (it.state !== 'placed' || it.by) return;
+    if (parcels && layout.props[it.prop].kind === 'boxes') {
+      out.push(i);
+      return;
+    }
     if (it.movedAt && now - it.movedAt < REST_S) return;
     if (wallGap(layout, it.x, it.z, layout.props[it.prop].kind) > OPEN_GAP) out.push(i);
   });

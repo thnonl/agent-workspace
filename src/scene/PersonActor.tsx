@@ -19,6 +19,9 @@ import { DESK_TOP } from './furniture';
 import { sfx } from '../audio';
 import { blobGeometry, FX, initFx } from './fx';
 
+/** a person who has been in the office this long is not shown walking in when their room is built */
+const WARM_AFTER_MS = 6000;
+
 const qHand = new THREE.Quaternion();
 const qRoot = new THREE.Quaternion();
 const qRel = new THREE.Quaternion();
@@ -131,7 +134,13 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
   const rig = useMemo(() => buildCharacter(app), [app]);
   // (the laptop model follows the person's seed: everybody keeps their own)
   const laptop = useMemo(() => buildLaptop(layout.theme.accent, layout.theme.accent3, seed), [layout.theme, seed]);
-  const actor = useMemo(() => new Actor(personKey, roomId, isDirector, layout, desk, app.scale), [personKey, roomId, isDirector, layout, desk, app.scale]);
+  const actor = useMemo(() => {
+    const a = new Actor(personKey, roomId, isDirector, layout, desk, app.scale);
+    // somebody who walked in a while ago (the room was out of the scene meanwhile) is at their desk already; a new arrival walks in
+    const p = useStore.getState().people[personKey];
+    a.warm = !!p && p.present && !p.leaveAt && Date.now() - p.joinedAt > WARM_AFTER_MS;
+    return a;
+  }, [personKey, roomId, isDirector, layout, desk, app.scale]);
   const scale = RIG_SCALE * app.scale;
   const items = useMemo(() => {
     const it = buildHeldItems(layout.theme.accent);

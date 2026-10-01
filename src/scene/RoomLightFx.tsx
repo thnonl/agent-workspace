@@ -4,6 +4,8 @@ import { useFrame } from '@react-three/fiber';
 import type { RoomLayout } from '../world/layout';
 import { DESK_TOP } from './furniture';
 import { frame } from '../sim/frame';
+import { propHere } from '../sim/registry';
+import { useDeliveryVersion } from './useDelivery';
 import { env } from '../env';
 import { DUST, FX, HALO, initFx } from './fx';
 
@@ -24,7 +26,9 @@ export interface LampSpot {
 export function lampsOf(layout: RoomLayout): LampSpot[] {
   const out: LampSpot[] = [];
   const { width: W, depth: D } = layout;
-  for (const p of layout.props) if (p.kind === 'floorLamp') out.push({ x: p.x, y: 1.58, z: p.z, pool: 1.7, floor: 0.036 });
+  layout.props.forEach((p, i) => {
+    if (p.kind === 'floorLamp' && propHere(layout, i)) out.push({ x: p.x, y: 1.58, z: p.z, pool: 1.7, floor: 0.036 });
+  });
   for (const d of layout.desks) {
     for (const it of d.items) {
       if (it.kind !== 'lamp') continue;
@@ -70,7 +74,9 @@ const MOTES_PER_WINDOW = 9;
 /** Light effects of a room: pools of lamp light on the floor / desks, a glow around every bulb at night and dust drifting through the window light by day. */
 export function RoomLightFx({ layout, roomId, halos, dust }: { layout: RoomLayout; roomId: string; halos: boolean; dust: boolean }) {
   initFx();
-  const lamps = useMemo(() => lampsOf(layout), [layout]);
+  // (a floor lamp that has just been delivered gets its light pool)
+  const delivered = useDeliveryVersion(roomId, layout);
+  const lamps = useMemo(() => lampsOf(layout), [layout, delivered]); // eslint-disable-line react-hooks/exhaustive-deps
   const pools = useMemo(() => buildPools(lamps), [lamps]);
   useEffect(() => () => pools?.dispose(), [pools]);
   const haloGeo = useMemo(() => {

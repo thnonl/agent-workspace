@@ -168,7 +168,14 @@ export function DoorView({ door, theme, roomId, localX }: { door: DoorSpec; them
   const parcelSlot = useRef<THREE.Group>(null);
   useFrame((_, dt) => {
     if (!leaf.current || !frame.animRooms.has(roomId)) return;
-    if (parcelSlot.current) parcelSlot.current.visible = runtimeFor(roomId).parcel === 'waiting';
+    if (parcelSlot.current) {
+      const rt = runtimeFor(roomId);
+      parcelSlot.current.visible = rt.parcel === 'waiting';
+      // (a big thing comes in a big box, which stands on the floor all the same)
+      const sc = rt.parcelBig ? 1.7 : 1;
+      parcelSlot.current.scale.setScalar(sc);
+      parcelSlot.current.position.y = 0.135 * sc;
+    }
     let near = false;
     for (const s of simsInRoom(roomId)) {
       if (!s.onStage) continue;

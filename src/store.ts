@@ -16,7 +16,7 @@ import { resolveSeason, SEASON_MODES, type Season, type SeasonMode } from './sea
 import { doneLines, pickAck } from './sim/phrases';
 import { celebrate } from './sim/celebrate';
 import { noteCue, notePeople, noteReport, noteRun, noteTask } from './progress';
-import { bufferTaskSpeech, clearTalk, debugFlags, dropRoomRuntime, dropRuntime, dropTaskSpeech, enqueueSpeech, hasQueuedTool, runtimeFor, sims, takeTaskSpeech, talkPending } from './sim/registry';
+import { claimLate, commitDelivery, bufferTaskSpeech, clearTalk, debugFlags, dropRoomRuntime, dropRuntime, dropTaskSpeech, enqueueSpeech, hasQueuedTool, runtimeFor, sims, takeTaskSpeech, talkPending } from './sim/registry';
 
 export type Connection = 'connecting' | 'live' | 'offline';
 export type TimeMode = 'auto' | 'day' | 'dusk' | 'night';
@@ -362,6 +362,13 @@ function makeBatcher(rawSet: (p: Partial<State>) => void, rawGet: Get): { set: B
 type SpeechIn = Omit<Speech, 'id' | 'at'>;
 
 const peopleOf = (s: State, roomId: string) => Object.values(s.people).filter((p) => p.sessionId === roomId);
+/**
+ * Rooms the user has looked at since this page was opened. Until then a working room is run by its director alone: no staff is hired
+ * (nobody would see them), and the jobs that come in are only counted (see headlessRoom).
+ */
+const enteredRooms = new Set<string>();
+export const hasEntered = (roomId: string) => enteredRooms.has(roomId);
+
 const tasksOf = (s: State, roomId: string) => Object.values(s.tasks).filter((t) => t.sessionId === roomId);
 const clip = (t: string, n: number) => {
   const x = t.replace(/\s+/g, ' ').trim();
@@ -525,6 +532,7 @@ function callTask(get: Get, set: SetFn, roomId: string, c: { label: string; orig
 
 /** Give waiting tasks to people: hire until the team has a decent size, then let the staff take turns. */
 function dispatchRoom(get: Get, set: SetFn, roomId: string) {
+  if (!enteredRooms.has(roomId)) return; // (only the director works in a room nobody has looked at)
   const queued = tasksOf(get(), roomId).filter((t) => !t.assignee && !t.done).sort((a, b) => a.startedAt - b.startedAt);
   for (const t of queued) {
     const staff = peopleOf(get(), roomId).filter((p) => p.role === 'staff');
@@ -682,11 +690,68 @@ function followActiveRoom(get: Get, set: SetFn, now: number) {
   set({ activeRoomId: best, selectedKey: null, summaryOpen: null });
 }
 
+/** A finished job of a room that is not in the 3D scene is reported after this long (a character would walk to the director first). */
+const HEADLESS_REPORT_MS = 3500;
+
+/**
+ * A room that is not the one on screen has nobody to walk the reports to the director (the scene may keep the room itself built
+ * ahead, but never its people, see Preload in scene/Scene.tsx): its characters only exist as records. The story goes on all the same – jobs that are done are reported
+ * and handed in, so the staff become free for the next one and the numbers (tasks, reports, who is in) stay true. When the room
+ * is built again its people simply sit at their desks (Actor.warm).
+ */
+function headlessRoom(get: Get, set: SetFn, roomId: string, now: number) {
+  const room = get().rooms[roomId];
+  if (!room) return;
+  // a room nobody has been in has no staff: its jobs are done by themselves (a tool call takes a few seconds, a sub-agent run is over when the agent says so)
+  if (!enteredRooms.has(roomId)) {
+    for (const t of tasksOf(get(), roomId)) {
+      if (t.assignee) continue;
+      const over = t.source === 'main' ? now - t.startedAt >= MAIN_TASK_MS : t.done && now - t.finishedAt >= HEADLESS_REPORT_MS;
+      if (!over) continue;
+      const boss = get().people[directorKeyOf(roomId)];
+      const entry: TaskLogEntry = {
+        key: t.key, label: t.label, source: t.source, agentType: t.agentType, who: boss?.name ?? 'Director', startedAt: t.startedAt, finishedAt: now,
+        failed: t.failed, reported: true, summary: t.summary, origin: t.origin, tool: t.tool, steps: t.steps, first: t.first,
+      };
+      removeTask(get, set, t.key);
+      const cur = get();
+      const r = cur.rooms[roomId];
+      if (r) {
+        set({
+          rooms: { ...cur.rooms, [roomId]: { ...r, tasksDone: r.tasksDone + 1, reports: t.source === 'sub' ? r.reports + 1 : r.reports } },
+          finished: { ...cur.finished, [roomId]: [entry, ...(cur.finished[roomId] ?? [])].slice(0, 300) },
+        });
+      }
+    }
+  }
+  // deliveries: a room that works gets its parcels all the same, nobody needs to see them being carried (see tickParcel in sim/registry.ts)
+  if (room.mainActive || tasksOf(get(), roomId).length > 0) {
+    const rt = runtimeFor(roomId);
+    const nowS = performance.now() / 1000;
+    if (rt.parcelAt === 0) rt.parcelAt = nowS + 8 + Math.random() * 10;
+    if (nowS >= rt.parcelAt && rt.parcel === 'none') {
+      rt.parcelAt = nowS + 18 + Math.random() * 22;
+      const layout = getLayout(room.seed, room.themeIndex);
+      const k = claimLate(roomId, layout);
+      if (k >= 0) commitDelivery(roomId, layout, k);
+    }
+  }
+  for (const p of peopleOf(get(), roomId)) {
+    if (!p.taskKey) continue;
+    const t = get().tasks[p.taskKey];
+    if (!t || !t.done) continue;
+    if (t.source === 'sub' && now - t.finishedAt < HEADLESS_REPORT_MS) continue;
+    if (t.source === 'sub') get().reportTask(p.key);
+    get().releaseTask(p.key);
+  }
+}
+
 /** One housekeeping step for a room. */
 function tickRoom(get: Get, set: SetFn, roomId: string, now: number) {
   const room = get().rooms[roomId];
   if (!room) return;
   const rt = runtimeFor(roomId);
+  if (get().activeRoomId !== roomId) headlessRoom(get, set, roomId, now);
   // tool calls are short jobs: they end on their own
   const waiting: TaskRec[] = [];
   for (const t of tasksOf(get(), roomId)) {
@@ -1266,6 +1331,11 @@ export const useStore = create<State>()((rawSet, rawGet) => {
 
 // Idle rooms always sit behind the working ones: when a room starts or stops working (or asks, or is read), the list is
 // sorted again after a short pause, so a burst of changes moves the buttons once and a button is not pulled from under the pointer.
+// (the room on screen counts as entered; a room that is only loaded ahead does not)
+useStore.subscribe((s, prev) => {
+  if (s.activeRoomId && s.activeRoomId !== prev.activeRoomId) enteredRooms.add(s.activeRoomId);
+});
+
 const SORT_DELAY_MS = 1200;
 let sortTimer: ReturnType<typeof setTimeout> | undefined;
 let watched: unknown[] = [];

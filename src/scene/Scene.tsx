@@ -21,18 +21,28 @@ const IDLE_FPS = 12;
 /** ...and when nobody has touched the page for CALM_AFTER ms it drops to this (only the slow decor is left to draw) */
 const CALM_FPS = 6;
 const CALM_AFTER = 15_000;
-/** a room that is off screen, not working and empty is taken out of the scene after this long (ms), checked every EVICT_CHECK */
-const EVICT_AFTER = 3 * 60_000;
-const EVICT_CHECK = 10_000;
-/** staged loading: pause after a room reported ready, and after the render resolution had to be lowered (ms) */
-const STAGE_GAP = 1500;
-const STAGE_DPR_PAUSE = 6000;
+const EVICT_CHECK = 2_000;
+/**
+ * The room on screen is built completely. Once it is, the next rooms of the room list (a question first, then unread summaries, then
+ * the working rooms, in the order of arrival) are loaded ahead, one at a time, up to PRELOAD_ROOMS: the room itself, but never its
+ * cats and people – they come when the room is looked at. Every other session only exists in the store (its tasks go on, see
+ * headlessRoom in store.ts).
+ */
+const PRELOAD_ROOMS = 5;
+/** pause between two rooms that are loaded ahead (ms) */
+const PRELOAD_GAP = 1500;
+/** a built room that is neither the active one nor among the preloaded ones stays this long (ms) – a glance at the next room and back must not rebuild it – unless the camera sees it */
+const OVER_BUDGET_MS = 8_000;
 /** frame rate while characters move but the camera does not (the app usually sits on a second screen) */
 const BUSY_FPS = 30;
 /** the render resolution is lowered when the busy scene cannot hold this frame rate */
 const LOW_FPS = 40;
 const HIGH_FPS = 57;
 const MIN_DPR = 1;
+/** busy frames (30 per second when all is well) that come in slower than this for SLOW_WINDOWS windows of SLOW_WINDOW seconds lower the resolution */
+const SLOW_FPS = 22;
+const SLOW_WINDOW = 3;
+const SLOW_WINDOWS = 2;
 /** highest render resolution (device pixels per CSS pixel) of each quality level */
 const QUALITY_DPR = { low: 1, medium: 1.5, high: 2 } as const;
 
@@ -148,8 +158,6 @@ const tmpMat = new THREE.Matrix4();
 const tmpSphere = new THREE.Sphere();
 /** when a background room's decor last animated (performance.now ms) */
 const lastAnim = new Map<string, number>();
-/** performance.now of the last time the render resolution was lowered (staged loading waits after that) */
-let dprDropAt = -1e9;
 
 /**
  * Runs before everything else in a frame: publishes the shared per-frame facts (`frame`) – the camera
@@ -157,7 +165,7 @@ let dprDropAt = -1e9;
  * frame rate.
  */
 function FrameSync() {
-  const q = useRef({ acc: 0, frames: 0, good: 0, dpr: 0, max: 0, quality: '' });
+  const q = useRef({ acc: 0, frames: 0, good: 0, dpr: 0, max: 0, quality: '', bAcc: 0, bFrames: 0, slow: 0 });
   useFrame((state, dt) => {
     frame.n++;
     const st = useStore.getState();
@@ -235,7 +243,6 @@ function FrameSync() {
         if (fps < LOW_FPS && r.dpr > Math.min(MIN_DPR, r.max)) {
           r.dpr = Math.max(Math.min(MIN_DPR, r.max), r.dpr * 0.85);
           r.good = 0;
-          dprDropAt = performance.now();
           state.setDpr(r.dpr);
         } else if (fps > HIGH_FPS && r.dpr < r.max) {
           if (++r.good >= 3) {
@@ -248,6 +255,28 @@ function FrameSync() {
     } else if (!frame.cameraBusy) {
       r.acc = 0;
       r.frames = 0;
+    }
+    // the same for the usual busy state (people moving, camera still): this is the frame rate people really see, and a retina screen
+    // with a modest GPU cannot always hold it at full resolution. Frames of a room that is still being built do not count.
+    if (!frame.cameraBusy && frame.dynamic && frame.building === 0 && !st.pip && dt < 0.5) {
+      r.bAcc += dt;
+      r.bFrames++;
+      if (r.bAcc >= SLOW_WINDOW) {
+        const fps = r.bFrames / r.bAcc;
+        r.bAcc = 0;
+        r.bFrames = 0;
+        if (fps < SLOW_FPS && r.dpr > Math.min(MIN_DPR, r.max)) {
+          if (++r.slow >= SLOW_WINDOWS) {
+            r.slow = 0;
+            r.dpr = Math.max(Math.min(MIN_DPR, r.max), r.dpr * 0.85);
+              state.setDpr(r.dpr);
+          }
+        } else r.slow = 0;
+      }
+    } else {
+      r.bAcc = 0;
+      r.bFrames = 0;
+      if (frame.building > 0) r.slow = 0;
     }
   }, -100);
   return null;
@@ -310,6 +339,8 @@ function PipDriver() {
     const w = floatingWindow();
     if (!pip || !w) return;
     setFrameloop('never');
+    // (frames queued before the switch would still run, with a timestamp in milliseconds for a clock that counts seconds)
+    get().internal.frames = 0;
     // (the canvas measures itself with an observer of the page it was made in, which does not notice the other window: tell it)
     const fit = () => {
       if (w.innerWidth > 8 && w.innerHeight > 8) setSize(w.innerWidth, w.innerHeight);
@@ -327,8 +358,15 @@ function PipDriver() {
       if (w.innerWidth > 8 && w.innerHeight > 8 && (cur.width !== w.innerWidth || cur.height !== w.innerHeight)) fit();
       const every = frame.cameraBusy ? 0 : 1000 / (frame.busy ? BUSY_FPS : CALM_FPS) - 4;
       if (t - last >= every) {
+        const before = seconds;
         seconds += Math.min(0.25, (t - last) / 1000);
         last = t;
+        // (R3F hands the frame a delta of "time we pass in minus clock.elapsedTime", and clock.elapsedTime is only ours as long as nobody else
+        // touches it. A frame that R3F's own loop had already queued when the mode switched runs with the raw rAF timestamp in ms instead, which
+        // leaves elapsedTime at ~100000: the next delta is minus that, the lights and the sky damping compute exp(+huge) = Infinity and fill the
+        // scene with NaN – everything black, for good. So state the previous time ourselves before every frame: delta is exactly the step.)
+        clock.elapsedTime = before;
+        clock.oldTime = performance.now();
         advance(seconds);
       }
     };
@@ -359,15 +397,6 @@ function CameraRig() {
   /** vertical view shift (px) that keeps the followed character clear of a bottom sheet (the agent panel on a phone) */
   const lift = useRef({ now: 0, want: 0, n: 0 });
 
-  useEffect(() => {
-    const a = activeCenter();
-    if (!a) return;
-    // (a canvas that was just moved to another window briefly reports no size at all: framing a room into nothing would give a camera of NaNs)
-    if (size.width < 8 || size.height < 8) return;
-    const aspect = size.width / Math.max(1, size.height);
-    if (framedRoom) fit.current.dist = frameRoom(framedRoom, (camera as THREE.PerspectiveCamera).fov, aspect, size.width, viewShift, pip);
-    else {
-      viewShift.set(0, 0, 0);
   // (on a touch screen the height also changes with the address bar and the keyboard: that is no reason to frame the room again and undo a pinch)
   const framedSize = useRef({ w: size.width, h: size.height });
   const touch = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
@@ -377,6 +406,15 @@ function CameraRig() {
     f.h = size.height;
   }
 
+  useEffect(() => {
+    const a = activeCenter();
+    if (!a) return;
+    // (a canvas that was just moved to another window briefly reports no size at all: framing a room into nothing would give a camera of NaNs)
+    if (size.width < 8 || size.height < 8) return;
+    const aspect = size.width / Math.max(1, size.height);
+    if (framedRoom) fit.current.dist = frameRoom(framedRoom, (camera as THREE.PerspectiveCamera).fov, aspect, size.width, viewShift, pip);
+    else {
+      viewShift.set(0, 0, 0);
       fit.current.dist = a.fit;
     }
     // R / the reset button: back to the default angles too, not only the distance
@@ -384,6 +422,9 @@ function CameraRig() {
       lastTick.current = resetTick;
       fit.current.angles = true;
     }
+    // (a narrow screen needs a camera further away than the usual limit: with the limit in the way the framing pushed outwards and the controls
+    // pulled back on every single frame, so the picture trembled between the two)
+    if (controls.current) controls.current.maxDistance = Math.max(MAX_DISTANCE, fit.current.dist * 1.3);
     fit.current.active = true;
     frame.cameraBusy = true;
   }, [activeRoomId, resetTick, focused, f.w, f.h, pip]);
@@ -393,9 +434,6 @@ function CameraRig() {
     if (!c || !frame.hasActive) {
       frame.cameraBusy = false;
       return;
-    // (a narrow screen needs a camera further away than the usual limit: with the limit in the way the framing pushed outwards and the controls
-    // pulled back on every single frame, so the picture trembled between the two)
-    if (controls.current) controls.current.maxDistance = Math.max(MAX_DISTANCE, fit.current.dist * 1.3);
     }
     // a camera that has ever become NaN stays NaN: start it again from the framing
     if (!Number.isFinite(camera.position.x + c.target.x)) fit.current.snap = true;
@@ -539,7 +577,7 @@ function EnvSync() {
   const last = useRef({ lamps: -1, day: -1, night: -1, overcast: -1 });
   useFrame((_, dt) => {
     const st = useStore.getState();
-    stepEnv(envForHour(st.hour), Math.min(dt, 0.1), OVERCAST[st.weather]);
+    stepEnv(envForHour(st.hour), Math.min(Math.max(dt, 0), 0.1), OVERCAST[st.weather]);
     const l = last.current;
     // the materials only need a refresh while the time of day (or the weather) is actually changing
     if (Math.abs(l.lamps - env.lamps) + Math.abs(l.day - env.day) + Math.abs(l.night - env.night) + Math.abs(l.overcast - env.overcast) > 1e-5) {
@@ -586,7 +624,8 @@ function RoomLights() {
         .sort((p, q) => p.d - q.d)
         .slice(0, POOL);
     }
-    const k = 1 - Math.exp(-5 * dt);
+    // (a negative or huge delta must never reach exp(): the lights would become NaN and stay so)
+    const k = 1 - Math.exp(-5 * Math.min(Math.max(dt, 0), 0.5));
     for (let i = 0; i < POOL; i++) {
       const l = refs.current[i];
       if (!l) continue;
@@ -596,7 +635,8 @@ function RoomLights() {
         l.intensity = 0; // fade in again at the new room
         l.position.set(r.x - 0.3, 7.6, r.z + 0.4);
       }
-      const target = r ? env.lamps * 22 : 0;
+      // (a room that is built for the first time stays dark until its people are there, see litRooms)
+      const target = r && frame.litRooms.has(r.id) ? env.lamps * 22 : 0;
       l.intensity += (target - l.intensity) * k;
       l.visible = l.intensity > 0.5;
     }
@@ -626,7 +666,7 @@ function Lights() {
     const l = light.current;
     if (!l || !frame.hasActive) return;
     const p = lightParams();
-    const k = 1 - Math.exp(-4 * dt);
+    const k = 1 - Math.exp(-4 * Math.min(Math.max(dt, 0), 0.5));
     l.target.position.lerp(center, k);
     l.position.lerp(tmpA.copy(center).add(p.dirOffset), k);
     l.target.updateMatrixWorld();
@@ -651,42 +691,42 @@ function Lights() {
   );
 }
 
-/** Is the session of this room doing anything (the main agent runs, or a task of it is open)? */
-function isWorking(st: StoreState, id: string): boolean {
-  if (st.rooms[id]?.mainActive) return true;
-  for (const t of Object.values(st.tasks)) if (t.sessionId === id) return true;
-  return false;
+/** The rooms that are loaded ahead: the first PRELOAD_ROOMS of the room list after the one on screen. */
+function preloadTargets(st: StoreState): string[] {
+  const out: string[] = [];
+  for (const id of st.listOrder) {
+    if (out.length >= PRELOAD_ROOMS) break;
+    if (id !== st.activeRoomId && st.rooms[id]) out.push(id);
+  }
+  return out;
 }
 
 /**
- * Takes a room out of the scene (its meshes, textures and actors are disposed) once it has been off screen,
- * not working and without anybody on stage for EVICT_AFTER. It comes back the way it came the first time:
- * as the active room, or staged in when it starts working. Runs on a timer, not on frames, so a hidden tab frees
- * its rooms too.
+ * Takes a built room out of the scene (its meshes, textures and actors are disposed) once it is neither the one on screen nor one
+ * of the rooms that are loaded ahead, for OVER_BUDGET_MS, and the camera does not see it. It comes back when it is looked at or
+ * loaded ahead again. Runs on a timer, not on frames, so a hidden tab frees its rooms too.
  */
 function Evictor({ evict }: { evict: (ids: string[]) => void }) {
   useEffect(() => {
-    const quietSince = new Map<string, number>();
+    const overSince = new Map<string, number>();
     const t = setInterval(() => {
       const st = useStore.getState();
       const now = performance.now();
-      const onStage = new Set<string>();
-      for (const s of sims.values()) if (s.onStage) onStage.add(s.roomId);
+      const keep = new Set(preloadTargets(st));
       const gone: string[] = [];
-      for (const id of frame.readyRooms) {
-        const quiet = id !== st.activeRoomId && !frame.visibleRooms.has(id) && !onStage.has(id) && !isWorking(st, id);
-        if (!quiet) {
-          quietSince.delete(id);
+      for (const id of frame.mountedRooms) {
+        if (id === st.activeRoomId || keep.has(id) || frame.visibleRooms.has(id)) {
+          overSince.delete(id);
           continue;
         }
-        const since = quietSince.get(id) ?? now;
-        quietSince.set(id, since);
-        if (now - since >= EVICT_AFTER) gone.push(id);
+        const first = overSince.get(id) ?? now;
+        overSince.set(id, first);
+        if (now - first >= OVER_BUDGET_MS) gone.push(id);
       }
-      for (const id of quietSince.keys()) if (!frame.readyRooms.has(id)) quietSince.delete(id);
+      for (const id of overSince.keys()) if (!frame.mountedRooms.has(id)) overSince.delete(id);
       if (gone.length) {
         for (const id of gone) {
-          quietSince.delete(id);
+          overSince.delete(id);
           lastAnim.delete(id);
         }
         evict(gone);
@@ -698,13 +738,13 @@ function Evictor({ evict }: { evict: (ids: string[]) => void }) {
 }
 
 /**
- * Staged loading: once the active room is ready, the other sessions that are working are mounted one at a
- * time (in list order), each after the previous one reported ready plus STAGE_GAP. Nothing is started while
- * the camera moves, the user drags, or the render resolution was just lowered. Idle rooms load on demand.
+ * Loading ahead: once the room on screen is completely built, the next rooms (see preloadTargets) are put into the scene one at a
+ * time – only the room itself, no cats and no people – each after the previous one is built plus PRELOAD_GAP. Nothing is started
+ * while the camera moves or the user drags.
  */
-function Staging({ mount }: { mount: (id: string) => void }) {
+function Preload({ mount }: { mount: (id: string) => void }) {
   const gl = useThree((s) => s.gl);
-  const s = useRef({ loading: null as string | null, readyAt: 0, down: false });
+  const s = useRef({ at: 0, down: false });
   useEffect(() => {
     const el = gl.domElement;
     const down = () => (s.current.down = true);
@@ -719,21 +759,12 @@ function Staging({ mount }: { mount: (id: string) => void }) {
   useFrame(() => {
     const r = s.current;
     const st = useStore.getState();
+    if (st.pip || !st.activeRoomId || !frame.readyRooms.has(st.activeRoomId)) return;
     const now = performance.now();
-    if (r.loading) {
-      if (!st.rooms[r.loading]) r.loading = null; // released while loading
-      else if (frame.readyRooms.has(r.loading)) {
-        r.loading = null;
-        r.readyAt = now;
-      } else return;
-    }
-    if (!st.activeRoomId || !frame.readyRooms.has(st.activeRoomId)) return;
-    if (frame.cameraBusy || r.down || now - r.readyAt < STAGE_GAP || now - dprDropAt < STAGE_DPR_PAUSE) return;
-    for (const id of st.visibleOrder) {
-      const room = st.rooms[id];
-      if (!room || frame.readyRooms.has(id)) continue;
-      if (!isWorking(st, id)) continue;
-      r.loading = id;
+    if (frame.cameraBusy || r.down || frame.building > 0 || now - r.at < PRELOAD_GAP) return;
+    for (const id of preloadTargets(st)) {
+      if (frame.mountedRooms.has(id)) continue;
+      r.at = now;
       mount(id);
       return;
     }
@@ -744,12 +775,11 @@ function Staging({ mount }: { mount: (id: string) => void }) {
 export function Scene() {
   const quality = useStore((s) => s.quality);
   const roomOrder = useStore((s) => s.visibleOrder);
-  // rooms are built lazily: a room is put into the scene the first time it becomes the active one (or, staged one at a time, when it is working; see Staging) and stays after that
+  // rooms are built lazily: a room is put into the scene when it becomes the active one, or when it is loaded ahead (see Preload), and stays a little after that (see Evictor)
   const activeRoomId = useStore((s) => s.activeRoomId);
   const [visited, setVisited] = useState<ReadonlySet<string>>(() => new Set());
   if (activeRoomId && !visited.has(activeRoomId)) setVisited(new Set(visited).add(activeRoomId));
-  // (the staged rooms join through the callback below; the functional update keeps them apart from the render-time one)
-  const stage = useCallback((id: string) => setVisited((v) => (v.has(id) ? v : new Set(v).add(id))), []);
+  const preload = useCallback((id: string) => setVisited((v) => (v.has(id) ? v : new Set(v).add(id))), []);
   const evict = useCallback(
     (ids: string[]) =>
       setVisited((v) => {
@@ -779,9 +809,9 @@ export function Scene() {
       <Lights />
       <RoomLights />
       <CameraRig />
-      <Staging mount={stage} />
       <Evictor evict={evict} />
-      {roomOrder.map((id) => (visited.has(id) ? <RoomView key={id} roomId={id} /> : null))}
+      <Preload mount={preload} />
+      {roomOrder.map((id) => (visited.has(id) ? <RoomView key={id} roomId={id} active={id === activeRoomId} /> : null))}
     </Canvas>
   );
 }
