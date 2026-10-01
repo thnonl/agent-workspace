@@ -91,12 +91,16 @@ function build(): Engine | null {
     src.buffer = noise;
     src.loop = true;
     const f = ctx.createBiquadFilter();
-    f.type = 'lowpass';
-    f.frequency.value = 420;
-    f.Q.value = 0.7;
+    // a steady hiss, like many drops at once (a low-pass alone only rumbles)
+    f.type = 'bandpass';
+    f.frequency.value = 3200;
+    f.Q.value = 0.35;
+    const lo = ctx.createBiquadFilter();
+    lo.type = 'highpass';
+    lo.frequency.value = 700;
     const lv = ctx.createGain();
-    lv.gain.value = 0.1;
-    src.connect(f).connect(lv).connect(rainGain);
+    lv.gain.value = 0.16;
+    src.connect(f).connect(lo).connect(lv).connect(rainGain);
     src.start(0, Math.random() * 1.5);
   }
 
@@ -162,27 +166,27 @@ function hit(e: Engine, t: number, dur: number, gain: number, type: BiquadFilter
   s.stop(t + dur + 0.02);
 }
 
-/** one drop of rain: a tiny soft tick, a little different every time */
+/** one drop of rain: a very short, soft, wide-band patter. Many of them close together blur into rain (a few sparse ones sound like key clicks). */
 function drop(e: Engine, t: number) {
   const s = e.ctx.createBufferSource();
   s.buffer = e.noise;
   const f = e.ctx.createBiquadFilter();
   f.type = 'bandpass';
-  f.frequency.value = 1500 + Math.random() * 2600;
-  f.Q.value = 1.6;
+  f.frequency.value = 2500 + Math.random() * 4500;
+  f.Q.value = 0.6;
   const g = e.ctx.createGain();
-  const peak = 0.12 + Math.random() * 0.2;
+  const peak = 0.04 + Math.random() * 0.1;
   g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(peak, t + 0.004);
-  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.03 + Math.random() * 0.05);
+  g.gain.exponentialRampToValueAtTime(peak, t + 0.008);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.04 + Math.random() * 0.06);
   s.connect(f).connect(g).connect(e.rainGain);
   s.start(t, Math.random() * 1.5);
-  s.stop(t + 0.1);
+  s.stop(t + 0.14);
 }
 
 let rainTimer = 0;
 let rainNext = 0;
-/** schedules the drops of the next half second: sparse – a heavier rain only a little denser */
+/** schedules the drops of the next half second: dense (roughly 12–25 a second) so they read as rain, denser when it pours */
 function scheduleDrops() {
   const e = eng;
   if (!e) return;
@@ -190,7 +194,7 @@ function scheduleDrops() {
   if (rainNext < now) rainNext = now;
   while (rainNext < now + 0.5) {
     drop(e, rainNext);
-    rainNext += (0.5 + Math.random() * 1.5) / Math.max(0.5, want.rain);
+    rainNext += (0.03 + Math.random() * 0.1) / Math.max(0.5, want.rain);
   }
 }
 
@@ -286,7 +290,7 @@ function sync() {
   const audible = pageActive() && e.ctx.state === 'running';
   const t = e.ctx.currentTime;
   e.musicGain.gain.setTargetAtTime(want.music && audible ? MUSIC_LEVEL : 0, t, 0.6);
-  e.rainGain.gain.setTargetAtTime(audible ? want.rain * 0.5 : 0, t, 0.8);
+  e.rainGain.gain.setTargetAtTime(audible ? want.rain * 0.05 : 0, t, 0.8);
   if (audible && want.rain > 0.02) {
     if (!rainTimer) rainTimer = window.setInterval(scheduleDrops, 200);
   } else if (rainTimer) {

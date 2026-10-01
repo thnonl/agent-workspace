@@ -356,8 +356,8 @@ export function sfx(name: Sfx, roomId?: string, pitch = 1) {
       break;
     case 'thunder':
       // far away: a low rumble that rolls out
-      noise(c, t, 2.6, 0.08, 'lowpass', 260, 70, 0.7);
-      tone(c, t + 0.05, 62, 1.8, 0.05, 'sine', 38, 0.15);
+      noise(c, t, 2.6, 0.045, 'lowpass', 260, 70, 0.7);
+      tone(c, t + 0.05, 62, 1.8, 0.028, 'sine', 38, 0.15);
       break;
     case 'meow':
       loadMeowClips(c);
