@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { orderedRooms, useStore } from '../store';
 import { themeFor } from '../world/palettes';
@@ -420,6 +420,32 @@ export function RoomSwitcher() {
   useEffect(() => {
     listRef.current?.querySelector('.room-card.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [active]);
+  // when the order changes (a read summary sorts the list) the cards glide to their new places: FLIP, transform only, so the compositor does the work
+  const orderKey = order.join('\n');
+  const placed = useRef<{ key: string; at: Map<string, [number, number]> }>({ key: orderKey, at: new Map() });
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const cards = list.querySelectorAll<HTMLElement>('.room-card');
+    const prev = placed.current;
+    const at = new Map<string, [number, number]>();
+    for (const el of cards) at.set(el.dataset.room ?? '', [el.offsetLeft, el.offsetTop]);
+    if (prev.key !== orderKey && prev.at.size && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      let moved = false;
+      for (const el of cards) {
+        const from = prev.at.get(el.dataset.room ?? '');
+        const to = at.get(el.dataset.room ?? '');
+        if (!from || !to || (from[0] === to[0] && from[1] === to[1])) continue;
+        moved = true;
+        el.animate(
+          [{ transform: `translate(${from[0] - to[0]}px, ${from[1] - to[1]}px)` }, { transform: 'translate(0, 0)' }],
+          { duration: 380, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
+        );
+      }
+      if (moved) listRef.current?.querySelector('.room-card.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+    }
+    placed.current = { key: orderKey, at };
+  }, [orderKey, show]);
   if (!order.length || !show) return null;
   const idleCount = order.filter((id) => !(status[id] ?? NO_STATUS).working).length;
   return (
@@ -432,7 +458,7 @@ export function RoomSwitcher() {
           const theme = themeFor(r.themeIndex);
           const ctx = contextShare(r.context, ctxPref);
           return (
-            <button key={id} className={`room-card${id === active ? ' active' : ''}`} style={{ ['--accent' as string]: theme.accent, ['--wall' as string]: theme.wall }} onClick={() => setActive(id)} aria-current={id === active ? 'true' : undefined} title={`${r.title} · ${PROVIDER_NAME[r.provider]}${i < 9 ? ` (${i + 1})` : ''}`}>
+            <button key={id} data-room={id} className={`room-card${id === active ? ' active' : ''}`} style={{ ['--accent' as string]: theme.accent, ['--wall' as string]: theme.wall }} onClick={() => setActive(id)} aria-current={id === active ? 'true' : undefined} title={`${r.title} · ${PROVIDER_NAME[r.provider]}${i < 9 ? ` (${i + 1})` : ''}`}>
               <span className="room-card-side">
                 <span className="room-card-logo" title={PROVIDER_NAME[r.provider]}>
                   <ProviderLogo provider={r.provider} />
@@ -796,7 +822,7 @@ export function Help() {
       </ul>
       <h3>Sessions and summaries</h3>
       <ul className="help-list">
-        <li><Icon name="archive" size={16} /><span>The green <b>Live</b> pill in the top bar shows or hides the session list. The room buttons keep the order in which the sessions showed up. A room stays until you <b>release</b> it (Release room on the summary paper, or Release idle rooms under the list) or until its session has stood still for an hour. Releasing only takes it off the list – continue the session in its agent and it comes back.</span></li>
+        <li><Icon name="archive" size={16} /><span>The green <b>Live</b> pill in the top bar shows or hides the session list. The room buttons keep the order in which the sessions showed up, but idle rooms always sit behind the working ones: a moment after a session starts or stops working (or you have read its summary) the list sorts itself and the buttons glide to their new places. A room stays until you <b>release</b> it (Release room on the summary paper, or Release idle rooms under the list) or until its session has stood still for an hour. Releasing only takes it off the list – continue the session in its agent and it comes back.</span></li>
         <li><i className="help-dot" aria-hidden="true" /><span>When a session is done the director announces it and a blue dot blinks on its button until you have read the summary. Stepping into a finished room lays its summary on the screen as a sheet of paper; <b>Summary</b> in the header brings it back.</span></li>
         <li><Icon name="help" size={16} /><span>When the agent waits for your answer, its room shows an amber badge and the director waves a question bubble.</span></li>
         <li><Icon name="users" size={16} /><span><b>Names</b> gives the director and the staff real names (saved in this browser). Sound effects only play for the room on screen; the browser allows them after your first click.</span></li>

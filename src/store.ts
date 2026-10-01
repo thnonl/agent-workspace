@@ -30,6 +30,8 @@ interface State {
   roomOrder: string[];
   /** the rooms that are shown: a session is working, or was active less than 5 minutes ago */
   visibleOrder: string[];
+  /** the order of the room buttons (and of the number and arrow keys): the order the sessions showed up, idle rooms behind the working ones */
+  listOrder: string[];
   /** the characters: one director per room plus the staff */
   people: Record<string, PersonRec>;
   /** open tasks (waiting for somebody, being worked on, or being handed over) */
@@ -232,11 +234,28 @@ function isStale(s: State, id: string, now: number): boolean {
 }
 
 /**
- * The order of the room buttons: the order in which the sessions showed up. It never changes when a session starts or
- * stops working, so a card (and its number key) stays where it is. (The number keys and the arrow keys follow the same order.)
+ * The order of the room buttons: the order in which the sessions showed up, with the idle rooms behind the working ones
+ * (sorted again shortly after a room starts or stops working, see the subscription at the end of this file, and at once
+ * when a summary is closed). (The number keys and the arrow keys follow the same order.)
  */
-export function orderedRooms(s: Pick<State, 'visibleOrder'>): string[] {
-  return [...s.visibleOrder];
+export function orderedRooms(s: Pick<State, 'listOrder'>): string[] {
+  return [...s.listOrder];
+}
+
+/** A question first, then the working rooms, then the idle ones (a finished room with an unread summary leads the idle ones); ties keep the order of arrival. */
+function sortedList(s: State, ids: string[]): string[] {
+  const busy = new Set<string>();
+  for (const t of Object.values(s.tasks)) busy.add(t.sessionId);
+  const rank = new Map(ids.map((id) => [id, s.asks[id] ? 0 : s.rooms[id]?.mainActive || busy.has(id) ? 1 : s.unseen[id] ? 2 : 3] as const));
+  const at = new Map(s.roomOrder.map((id, i) => [id, i] as const));
+  return [...ids].sort((a, b) => rank.get(a)! - rank.get(b)! || at.get(a)! - at.get(b)!);
+}
+
+/** `listOrder` follows `visibleOrder`: rooms that closed leave it, new rooms join at the end. */
+function reconcileList(list: string[], vis: string[]): string[] {
+  const kept = list.filter((id) => vis.includes(id));
+  const next = [...kept, ...vis.filter((id) => !kept.includes(id))];
+  return next.length === list.length && next.every((id, i) => id === list[i]) ? list : next;
 }
 
 /** Keep `visibleOrder` (and the active room) in line with what is going on. */
@@ -276,9 +295,10 @@ function refreshVisible(get: Get, set: SetFn) {
     const from = active ? s.roomOrder.indexOf(active) : 0;
     active = [...vis].sort((a, b) => Math.abs(s.roomOrder.indexOf(a) - from) - Math.abs(s.roomOrder.indexOf(b) - from))[0] ?? null;
   }
-  if (same && active === s.activeRoomId && released === s.released && unseen === s.unseen && unread === s.unread) return;
+  const listOrder = reconcileList(s.listOrder, vis);
+  if (same && listOrder === s.listOrder && active === s.activeRoomId && released === s.released && unseen === s.unseen && unread === s.unread) return;
   set({
-    released, unseen, unread,
+    released, unseen, unread, listOrder,
     visibleOrder: same ? s.visibleOrder : vis, activeRoomId: active,
     selectedKey: active === s.activeRoomId ? s.selectedKey : null,
     summaryOpen: active === s.activeRoomId ? s.summaryOpen : null,
@@ -922,6 +942,7 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
   rooms: {},
   roomOrder: [],
   visibleOrder: [],
+  listOrder: [],
   people: {},
   tasks: {},
   logs: {},
@@ -1067,13 +1088,16 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
     if (st.summaryOpen) get().closeSummary();
   },
   // the paper is read: the blue dot stops blinking and the paper does not come back until the session has worked again
+  // and the list is sorted again at once, so the read room drops behind the ones that still need attention
   closeSummary: () =>
     set((st) => {
       const id = st.summaryOpen;
       if (!id) return { releaseAsk: null };
+      const next = { ...st, unseen: { ...st.unseen, [id]: false } };
       return {
         summaryOpen: null, releaseAsk: null,
-        unread: { ...st.unread, [id]: false }, unseen: { ...st.unseen, [id]: false }, dismissed: { ...st.dismissed, [id]: true },
+        unread: { ...st.unread, [id]: false }, unseen: next.unseen, dismissed: { ...st.dismissed, [id]: true },
+        listOrder: st.unseen[id] ? sortedList(next, st.listOrder) : st.listOrder,
       };
     }),
   askRelease: () => set((st) => (st.summaryOpen ? { releaseAsk: { roomId: st.summaryOpen } } : {})),
@@ -1211,4 +1235,30 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
 export const useStore = create<State>()((rawSet, rawGet) => {
   const b = makeBatcher(rawSet, rawGet);
   return createStore(b.set, b.get, b.run);
+});
+
+// Idle rooms always sit behind the working ones: when a room starts or stops working (or asks, or is read), the list is
+// sorted again after a short pause, so a burst of changes moves the buttons once and a button is not pulled from under the pointer.
+const SORT_DELAY_MS = 1200;
+let sortTimer: ReturnType<typeof setTimeout> | undefined;
+let watched: unknown[] = [];
+useStore.subscribe((s) => {
+  // (the store changes many times a second: only look again when something that decides the order has changed)
+  const seen = [s.listOrder, s.rooms, s.tasks, s.asks, s.unseen, s.roomOrder];
+  if (seen.every((v, i) => v === watched[i])) return;
+  watched = seen;
+  const sorted = sortedList(s, s.listOrder);
+  const settled = sorted.every((id, i) => id === s.listOrder[i]);
+  if (settled) {
+    if (sortTimer !== undefined) clearTimeout(sortTimer);
+    sortTimer = undefined;
+    return;
+  }
+  if (sortTimer !== undefined) return;
+  sortTimer = setTimeout(() => {
+    sortTimer = undefined;
+    const now = useStore.getState();
+    const next = sortedList(now, now.listOrder);
+    if (!next.every((id, i) => id === now.listOrder[i])) useStore.setState({ listOrder: next });
+  }, SORT_DELAY_MS);
 });
