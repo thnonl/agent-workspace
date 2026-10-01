@@ -145,6 +145,8 @@ export function CatView({ catKey, roomId, layout, seed }: Props) {
   const pending = useRef(0);
   /** the cat has been posed once since its room stopped being the active one (a room that is not active stands still) */
   const settled = useRef(false);
+  /** the cat has been animated live (the rig shows a pose already) */
+  const liveBefore = useRef(false);
 
   // R3F does not dispose <primitive>: free the body/head geometry and bone texture this cat owns
   useEffect(() => () => disposeOwned(rig.root), [rig]);
@@ -163,11 +165,15 @@ export function CatView({ catKey, roomId, layout, seed }: Props) {
   useFrame((state, rawDt) => {
     const visible = frame.visibleRooms.has(roomId);
     // a room that is not the one on screen stands still: the cat is posed once as it is, and time does not pass for it
-    const frozen = roomId !== frame.activeId;
+    const frozen = roomId !== frame.activeId || frame.settling;
     if (frozen) {
       pending.current = 0;
+      if (liveBefore.current) settled.current = true; // (stopped in the middle of it: the rig keeps its pose)
       if (settled.current || !visible) return;
-    } else settled.current = false;
+    } else {
+      settled.current = false;
+      liveBefore.current = true;
+    }
     let dt = 10;
     const now = performance.now() / 1000;
     if (!frozen) {
@@ -178,7 +184,7 @@ export function CatView({ catKey, roomId, layout, seed }: Props) {
       dt = stepDt(pending.current, step);
       pending.current = 0;
       clock.current += dt;
-      brain.update(dt, { layout, now, chars: simsInRoom(roomId), cats: catsInRoom(roomId), hold: frame.holding });
+      brain.update(dt, { layout, now, chars: simsInRoom(roomId), cats: catsInRoom(roomId) });
       calm.current = brain.sim.still && brain.sim.phase !== 'groom' && brain.sim.petUntil < now;
       if (!visible) return; // off screen: the cat lives on, but it is not posed
     } else settled.current = true;

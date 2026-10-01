@@ -198,7 +198,7 @@ function useBuildStage(people: number, cats: number, active: boolean) {
         t = w.setTimeout(next, 50);
         return;
       }
-      // a room that is loaded ahead is built further while the walkers of the room on screen stand still (see updateLoadGate)
+      // a room that is loaded ahead is built further only while nobody in the room on screen is on the move
       if (!activeRef.current && !frame.loadOk) {
         t = w.setTimeout(next, 100);
         return;

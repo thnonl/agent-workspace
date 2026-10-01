@@ -114,11 +114,18 @@ const SMOKE_KEYS: Key[] = [
 ];
 /** at most this many people of a room are away from their desk on a break at the same time */
 const MAX_WALKERS = 2;
-/** minimum gap (seconds) between the start of one walk and the start of the next one in the same room: after a priority walk (in, out, report) / after an idle one */
-const WALK_GAP_PRIORITY = 1;
-const WALK_GAP_IDLE = 3;
+/**
+ * No movement inside the room (a walk, sitting down, getting up) starts within this many seconds of the last one. Coming in and going out
+ * have a gap of their own (ENTRY_GAP_MIN: they are not counted here, and this gap does not hold them back). Rooms are loaded ahead in
+ * the quiet moments between any movements (see frame.loadOk).
+ */
+const MOTION_GAP_S = 5;
+/** ...and this one (also for going home) once no other room is left to load ahead (frame.loading) */
+const MOTION_GAP_FREE_S = 1;
+/** ...except the next step of the same person's own action (stand up, then walk away): within this many seconds */
+const MOTION_CONTINUE_S = 3;
 /** a walk that has been held back this long (seconds) starts anyway, so nobody can wait for ever */
-const WALK_WAIT_MAX = 8;
+const WALK_WAIT_MAX = 120;
 /** chance that somebody on the sofa scrolls a phone instead of just resting */
 const SOFA_PHONE_CHANCE = 0.45;
 /** seconds between two smile bumps / swipe sounds while scrolling the phone */
@@ -130,8 +137,7 @@ const CHAT_LINE_S = 3.6;
 /** how long the greeting at the door stays up before the task is shown */
 const GREET_MS = 5000;
 /** the door lets the next person in this long (seconds) after the previous one, so a room fills up one by one */
-/** a stop on the way (while another room is loaded) lasts at least this long (s) */
-const PAUSE_MIN_S = 1.4;
+/** at least this long (s) between two people coming in or going out of a room, in either direction */
 const ENTRY_GAP_MIN = 15;
 const ENTRY_GAP_SPAN = 8;
 
@@ -434,9 +440,10 @@ export class Actor {
   private deskAct: DeskAct | null = null;
   private deskActT = 0;
   private deskActDur = 0;
-  /** a stop on the way while another room is loaded (frame.holding): seconds so far (-1: not stopped) and what was in the hands */
-  private pauseT = -1;
-  private pauseHeld: HeldKind = 'none';
+  /** standing and waiting for a free walking slot with the phone in the hand (set by walkPose) */
+  private phoneWait = false;
+  /** the phone in the hand is the one the user's message came on (see messagePose) */
+  private msgPhone = false;
   /** nothing to do and no break planned: what the laptop is used for meanwhile (changes now and then), and when it was last needed */
   private idleAct: DeskAct = 'browse';
   private idleActAt = -1;
@@ -621,17 +628,43 @@ export class Actor {
       if (o.walking) walkers++;
       else if (o.walkWait === 2) priorityWaits = true;
     }
-    // (the person who started the last walk is not held back by the gap they started themselves)
-    const spaced = ctx.rt.walkBy === s.key || ctx.now >= ctx.rt.walkFreeAt;
+    // (no other movement within MOTION_GAP_S of the last one in the room; the next step of one's own action goes on at once;
+    // the way in and out has its own spacing, see ENTRY_GAP_MIN)
+    const quiet = ctx.now - ctx.rt.motionAt >= this.motionGap();
+    const goingOn = ctx.rt.motionBy === s.key && ctx.now - ctx.rt.motionAt < MOTION_CONTINUE_S;
+    const spaced = quiet || goingOn || this.atDoor();
     const open = spaced && walkers < MAX_WALKERS && (priority || !priorityWaits);
     s.walkWait = open ? 0 : priority ? 2 : 1;
     return open;
   }
 
+  /** On the way in or out (these walks are spaced by the door gap, not by the one inside the room). */
+  private atDoor(): boolean {
+    const p = this.sim.phase;
+    return p === 'waiting' || p === 'entering' || p === 'leaving';
+  }
+
+  /** The gap between two movements in the room: short once nothing is left to load ahead. */
+  private motionGap(): number {
+    return frame.loading ? MOTION_GAP_S : MOTION_GAP_FREE_S;
+  }
+
+  /** May a movement start now? Not within the motion gap of the last one in the room, nor while rooms are being loaded ahead. */
+  private motionOpen(ctx: ActorCtx): boolean {
+    if (frame.aheadBuilding > 0 && this.sim.roomId === frame.activeId) return false;
+    return ctx.now - ctx.rt.motionAt >= this.motionGap();
+  }
+
+  private claimMotion(ctx: ActorCtx) {
+    ctx.rt.motionAt = ctx.now;
+    ctx.rt.motionBy = this.sim.key;
+  }
+
   /** Claims the next walking slot (and starts the gap for everybody else) when one is open; a walk held back for WALK_WAIT_MAX starts anyway. */
   private takeWalkSlot(ctx: ActorCtx, dt: number, priority = this.priorityWalk()): boolean {
     const s = this.sim;
-    if (frame.holding && s.roomId === frame.activeId) return false; // (another room is being loaded: no new walk starts, see the stop in update)
+    // (rooms are being loaded ahead: no walk starts meanwhile, they only take a moment)
+    if (frame.aheadBuilding > 0 && s.roomId === frame.activeId && dt > 0) return false;
     let open = this.walkSlotOpen(ctx, s, priority);
     if (!open) {
       this.gatedFor += dt;
@@ -640,8 +673,10 @@ export class Actor {
     if (!open) return false;
     this.gatedFor = 0;
     s.walkWait = 0;
-    ctx.rt.walkFreeAt = ctx.now + (priority ? WALK_GAP_PRIORITY : WALK_GAP_IDLE);
-    ctx.rt.walkBy = s.key;
+    if (!this.atDoor()) {
+      ctx.rt.motionAt = ctx.now;
+      ctx.rt.motionBy = s.key;
+    }
     return true;
   }
 
@@ -748,29 +783,10 @@ export class Actor {
     if (s.phase !== 'working') this.wake();
     if (s.phase !== 'activity') this.smoke = 0;
 
-    // another room is being loaded (frame.holding): whoever is on their feet stops of their own accord and has a look at the phone for a moment
-    if (this.pauseT >= 0 || (dt > 0 && frame.holding && s.walking && s.roomId === frame.activeId)) {
-      if (this.pauseT < 0) {
-        this.pauseT = 0;
-        this.pauseHeld = this.held;
-        s.walking = false;
-        this.gated = false;
-      }
-      this.pauseT += dt;
-      this.t -= dt; // (the walk's own clock waits too)
-      if (!frame.holding && this.pauseT >= PAUSE_MIN_S) {
-        this.pauseT = -1;
-        this.held = this.pauseHeld;
-        this.heldTilt = 0;
-        this.gatedFor = WALK_WAIT_MAX + 1; // (on their way again at once, without waiting for a free slot)
-      } else {
-        if (this.pauseHeld === 'none') {
-          this.held = 'phone';
-          this.standPhonePose(pose);
-        } else this.idlePose(pose);
-        this.copyPose(pose);
-        return;
-      }
+    // the room notes the last movement (walking, sitting down, getting up): no other one starts within MOTION_GAP_S of it
+    if (dt > 0 && s.onStage && !this.atDoor() && (s.walking || s.phase === 'sitting' || s.phase === 'standing' || (s.sitT > 0.01 && s.sitT < 0.99))) {
+      rt.motionAt = ctx.now;
+      rt.motionBy = s.key;
     }
 
     switch (s.phase) {
@@ -1005,13 +1021,14 @@ export class Actor {
           this.workPose(pose, ctx);
           if (task.done && this.workTime >= (task.source === 'sub' ? MIN_WORK : MIN_CALL)) {
             if (ctx.queueLen > 0 && this.drain < 4) this.drain += dt; // let the last bubbles finish first
-            else if (task.source === 'sub') {
-              // hand the report to the director
+            else if (task.source === 'sub' && this.motionOpen(ctx)) {
+              // hand the report to the director (once no one else is on the move, see MOTION_GAP_S)
+              this.claimMotion(ctx);
               this.failed = task.failed;
               this.reporting = true;
               this.strolling = true;
               this.setPhase('standing');
-            } else ctx.onRelease();
+            } else if (task.source !== 'sub') ctx.onRelease();
           }
         } else {
           // nothing to do until the next task comes round: sit tight, or take a little break
@@ -1045,7 +1062,11 @@ export class Actor {
           pose.armRz = 0.7;
           pose.headX = 0.25;
         }
-        if (t >= 1.8) {
+        // going home: while rooms are loaded ahead the way in and out is spaced together (ENTRY_GAP_MIN), afterwards people go home one second after another
+        if (t >= 1.8 && this.motionOpen(ctx) && ctx.now >= (frame.loading ? rt.doorFreeAt : rt.leaveFreeAt)) {
+          this.claimMotion(ctx);
+          rt.leaveFreeAt = ctx.now + MOTION_GAP_FREE_S;
+          if (frame.loading) rt.doorFreeAt = ctx.now + ENTRY_GAP_MIN + Math.random() * ENTRY_GAP_SPAN; // (the next one in or out waits for this one)
           this.lapP = 0;
           this.lid = 0;
           this.setPhase('standing');
@@ -1228,12 +1249,13 @@ export class Actor {
       }
     }
 
-    // the director deals with the user's message while it is on screen: a call on the desk phone (in the chair, or wherever a break has brought him) or an email read at the laptop
+    // the director deals with the user's message while it is on screen: a message scrolled on the smartphone (in the chair, or wherever a break has brought him) or an email read at the laptop
     const msgOn = this.isDirector && (s.msgUntil ?? 0) > ctx.now && !s.walking;
-    if (msgOn && s.msgVia !== 'email' && (s.phase === 'working' || s.phase === 'activity')) this.callPose(pose);
+    if (msgOn && s.msgVia !== 'email' && (s.phase === 'working' || s.phase === 'activity')) this.messagePose(pose);
     else {
-      if (this.held === 'handsetEar') {
-        this.held = 'none';
+      if (this.msgPhone) {
+        this.msgPhone = false;
+        if (this.held === 'phone') this.held = 'none';
         this.heldTilt = 0;
       }
       s.handsetUp = false;
@@ -1304,6 +1326,7 @@ export class Actor {
     // the doorbell rang: whoever sits at the desk without work goes for the parcel soon
     if (ctx.rt.parcel === 'waiting' && !ctx.rt.parcelBy && this.nextIdleAt > this.restT + 6) this.nextIdleAt = this.restT + 2 + Math.random() * 4;
     if (this.restT < this.nextIdleAt) return;
+    if (!this.motionOpen(ctx)) return; // (somebody else is on the move, or was a moment ago)
     const a = this.pickActivity(ctx);
     if (!a) {
       this.nextIdleAt = this.restT + 3 + Math.random() * 3;
@@ -1330,6 +1353,7 @@ export class Actor {
       this.sim.asleep = true;
     } else {
       this.strolling = true;
+      this.claimMotion(ctx);
       // claim a break slot at once, so nobody else decides on one in the same frame (a parcel run is no break)
       this.sim.onBreak = a.kind !== 'parcel';
       this.setPhase('standing');
@@ -2168,25 +2192,13 @@ export class Actor {
     p.bob = Math.sin(c * 1.3) * 0.004;
   }
 
-  /** the handset of the desk phone at the right ear: small nods, the free hand gestures a little (over any other arm pose) */
-  private callPose(p: Pose) {
-    const c = this.clock;
-    this.held = 'handsetEar';
-    this.sim.handsetUp = true;
+  /** the user's message on the smartphone: head down over it, a thumb scrolling (arms and head only, so it fits sitting and standing, over any other arm pose) */
+  private messagePose(p: Pose) {
+    this.held = 'phone';
+    this.msgPhone = true;
     this.heldTilt = 0;
     this.typing = 0;
-    p.armRx = -0.75 + Math.sin(c * 1.1) * 0.03;
-    p.armRz = -0.1;
-    p.foreRx = -2.35;
-    p.armLx = this.reach.arm + Math.sin(c * 1.7) * 0.03; // the free hand rests on the desk beside the laptop
-    p.armLz = 0.3;
-    p.foreLx = this.reach.fore + 0.1 + Math.sin(c * 2.1 + 1) * 0.03;
-    p.headX = 0.03 + Math.sin(c * 2.4) * 0.05;
-    p.headY = Math.sin(c * 0.5) * 0.06;
-    p.headZ = 0.14;
-    p.lean = -0.02;
-    p.happy = 0.35;
-    p.mouth = 'smile';
+    this.standPhonePose(p);
   }
 
   /** waiting for an answer: the head up, the right arm raised in a slow wave for about 2 s of every 4 (arms and head only, so it fits sitting and standing) */
@@ -2854,7 +2866,20 @@ export class Actor {
   }
 
   private walkPose(p: Pose, amp: number) {
-    if (this.gated) return; // held back, standing
+    if (this.gated) {
+      // held back (the motion gap, or rooms being loaded), standing: has a look at the phone meanwhile (or, with something in the hands, just waits)
+      if (this.held === 'none') {
+        this.held = 'phone';
+        this.phoneWait = true;
+      }
+      if (this.held === 'phone') this.standPhonePose(p);
+      else this.idlePose(p);
+      return;
+    }
+    if (this.phoneWait) {
+      this.phoneWait = false;
+      if (this.held === 'phone') this.held = 'none';
+    }
     const w = this.walkPhase;
     const sn = Math.sin(w);
     p.thighLx = -sn * 0.8 * amp;

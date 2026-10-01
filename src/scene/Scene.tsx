@@ -5,7 +5,7 @@ import { OrbitControls } from '@react-three/drei';
 import { useStore } from '../store';
 import { getLayout } from '../world/layout';
 import { anchors, cats, sims, view } from '../sim/registry';
-import { afterRender, frame, updateLoadGate } from '../sim/frame';
+import { afterRender, frame, PRELOAD_ROOMS, PRE_ROLL_MS } from '../sim/frame';
 import { env, envForHour, stepEnv } from '../env';
 import { OVERCAST } from '../weather';
 import { photoHooks } from '../photo';
@@ -17,9 +17,9 @@ import { RoomView, roomOrigin } from './RoomView';
 const AZIMUTH = 0.72;
 const POLAR = 0.8;
 /** frame rate while nothing moves in the active room (a calm office is not worth a laptop fan; still well above the background rooms' tick rate) */
-const IDLE_FPS = 12;
+const IDLE_FPS = 18;
 /** ...and when nobody has touched the page for CALM_AFTER ms it drops to this (only the slow decor is left to draw) */
-const CALM_FPS = 6;
+const CALM_FPS = 10;
 const CALM_AFTER = 15_000;
 const EVICT_CHECK = 2_000;
 /**
@@ -28,7 +28,6 @@ const EVICT_CHECK = 2_000;
  * cats and people – they come when the room is looked at. Every other session only exists in the store (its tasks go on, see
  * headlessRoom in store.ts).
  */
-const PRELOAD_ROOMS = 5;
 /** pause between two rooms that are loaded ahead (ms) */
 const PRELOAD_GAP = 1500;
 /** a built room that is neither the active one nor among the preloaded ones stays this long (ms) – a glance at the next room and back must not rebuild it – unless the camera sees it */
@@ -122,6 +121,15 @@ function spherical(dist: number, out: THREE.Vector3, az = AZIMUTH, pol = POLAR) 
 
 type StoreState = ReturnType<typeof useStore.getState>;
 
+// The moment the user picks another room – before React has rendered it and long before the camera starts to move – everything stops
+// (see frame.settling and the pre-roll of the camera).
+useStore.subscribe((s, prev) => {
+  if (s.activeRoomId === prev.activeRoomId) return;
+  frame.settleFor = s.activeRoomId;
+  frame.switchAt = performance.now();
+  frame.settling = true;
+});
+
 /** Writes the centre of the active room (a bit above the floor) into `out`; returns the camera fit distance, 0 when no room is active. */
 function computeActive(st: StoreState, out: THREE.Vector3): number {
   const { activeRoomId, rooms, selectedKey, people } = st;
@@ -167,6 +175,7 @@ function FrameSync() {
   const q = useRef({ acc: 0, frames: 0, good: 0, dpr: 0, max: 0, quality: '', bAcc: 0, bFrames: 0, slow: 0 });
   useFrame((state, dt) => {
     frame.n++;
+    frame.at = performance.now();
     const st = useStore.getState();
     const fit = computeActive(st, center);
     frame.hasActive = fit > 0;
@@ -180,6 +189,13 @@ function FrameSync() {
     frame.activeId = st.activeRoomId;
     frame.visibleRooms.clear();
     frame.animRooms.clear();
+    // switching rooms: from the moment of the switch nobody moves; once the old room has stopped (PRE_ROLL_MS, the camera starts to glide then) the new room moves
+    const tNow = performance.now();
+    if (st.activeRoomId !== frame.settleFor) {
+      frame.settleFor = st.activeRoomId;
+      frame.switchAt = tNow;
+      frame.settling = true;
+    } else if (frame.settling && tNow - frame.switchAt >= PRE_ROLL_MS) frame.settling = false;
     for (const id of st.visibleOrder) {
       const room = st.rooms[id];
       if (!room) continue;
@@ -190,7 +206,7 @@ function FrameSync() {
       if (id === st.activeRoomId || tmpFrustum.intersectsSphere(tmpSphere)) {
         frame.visibleRooms.add(id);
         // (a room that is not the active one stands still: its decor does not animate)
-        if (id === st.activeRoomId) frame.animRooms.add(id);
+        if (id === st.activeRoomId && !frame.settling) frame.animRooms.add(id);
       }
     }
 
@@ -199,19 +215,27 @@ function FrameSync() {
     let moving = false;
     for (const s of sims.values()) {
       if (!s.onStage || s.roomId !== st.activeRoomId) continue;
-      if (s.walking) moving = true;
+      // on the move: on their feet, or in the middle of sitting down / getting up (the rest of the room is loaded only while nobody is)
+      if (s.walking || s.phase === 'sitting' || s.phase === 'standing' || (s.sitT > 0.01 && s.sitT < 0.99)) moving = true;
       // (somebody who sits still does not ask for the busy frame rate)
       if (!s.calm) dynamic = true;
     }
-    for (const c of cats.values()) {
-      if (c.onStage && !c.still && c.roomId === st.activeRoomId) {
-        dynamic = true;
-        moving = true;
-        break;
+    if (!dynamic) {
+      for (const c of cats.values()) {
+        if (c.onStage && !c.still && c.roomId === st.activeRoomId) {
+          dynamic = true;
+          break;
+        }
       }
     }
+    if (frame.settling) {
+      // (everybody stands still: nothing to draw at the busy rate, nobody is on the move)
+      dynamic = false;
+      moving = false;
+    }
     frame.moving = moving;
-    updateLoadGate(performance.now());
+    frame.loadOk = !moving && !frame.settling && !frame.cameraBusy;
+    frame.loading = !st.pip && !!st.activeRoomId && (frame.aheadBuilding > 0 || preloadTargets(st).some((id) => !frame.mountedRooms.has(id)));
     frame.dynamic = dynamic;
     frame.busy = dynamic || frame.cameraBusy || st.cinema;
 
@@ -428,6 +452,11 @@ function CameraRig() {
     const c = controls.current;
     if (!c || !frame.hasActive) {
       frame.cameraBusy = false;
+      return;
+    }
+    // a room has just been picked: the camera waits for a moment, so that everything has stopped before the picture starts to move
+    if (performance.now() - frame.switchAt < PRE_ROLL_MS) {
+      frame.cameraBusy = true;
       return;
     }
     // a camera that has ever become NaN stays NaN: start it again from the framing
@@ -752,15 +781,11 @@ function Preload({ mount }: { mount: (id: string) => void }) {
   useFrame(() => {
     const r = s.current;
     const st = useStore.getState();
-    frame.preloadPending = false;
-    if (st.pip || !st.activeRoomId || !frame.readyRooms.has(st.activeRoomId)) return;
     const now = performance.now();
-    const next = preloadTargets(st).find((id) => !frame.mountedRooms.has(id));
-    if (!next) return;
-    if (frame.cameraBusy || r.down || frame.building > 0 || now - r.at < PRELOAD_GAP) return;
-    // (the walkers of the room on screen stop for a moment while a room is loaded, see updateLoadGate)
-    frame.preloadPending = true;
-    if (!frame.loadOk) return;
+    const next = st.pip || !st.activeRoomId ? undefined : preloadTargets(st).find((id) => !frame.mountedRooms.has(id));
+    if (!next || !st.activeRoomId || !frame.readyRooms.has(st.activeRoomId)) return;
+    // (nothing is loaded ahead while somebody in the room on screen walks, sits down or gets up)
+    if (frame.cameraBusy || !frame.loadOk || r.down || frame.building > 0 || now - r.at < PRELOAD_GAP) return;
     r.at = now;
     mount(next);
   });

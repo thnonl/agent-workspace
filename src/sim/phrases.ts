@@ -241,10 +241,10 @@ const ACK = [
   'Understood. Sit back, we’ve got this.', 'Sounds good. Let me get started.', 'Right, I’ll brief the team.', 'Perfect, that’s clear. On it!',
   'Thanks! Let me look into it.', 'Okay, I’m on it. Stay tuned!',
 ];
-/** spoken into the phone */
+/** said after reading a message on the smartphone */
 const ACK_CALL = [
-  'Yes, I’ve got it. I’ll get the team on it.', 'Understood — I’ll call you back if anything comes up.', 'Okay, noted. We’re starting now.',
-  'Yes, yes, I hear you. Leave it with me.', 'Got it, thanks for calling. We’re on it!', 'Alright, I’ll brief the team right away.',
+  'Yes, I’ve got it. I’ll get the team on it.', 'Understood — I’ll message you if anything comes up.', 'Okay, noted. We’re starting now.',
+  'Yes, yes, I see it. Leave it with me.', 'Got it, thanks for the message. We’re on it!', 'Alright, I’ll brief the team right away.',
   'Sure, no problem. Talk soon!',
 ];
 export const pickAck = (via: 'call' | 'email' = 'email') => pick(via === 'call' ? ACK_CALL : ACK);
@@ -451,8 +451,8 @@ ACK.push(
   'I’ll add it to the list – at the top, in bold, in red.', 'Say no more. Well, say a bit more, but I’ll manage.', 'Roger, roger. Wait, which one was Roger?',
 );
 ACK_CALL.push(
-  'Yes, hello? Yes. Uh-huh. Yes. Mhm. Got it, bye!', 'Hello? Bad reception… just kidding, I heard you.', 'Okay okay okay okay okay – on it!',
-  'Yes boss, no boss, sure boss, bye boss.', 'You’re breaking up… no, it’s fine. Got it.',
+  'Ping! Yes. Uh-huh. Yes. Mhm. Got it, thanks!', 'New notification… oh, that is for me. Got it.', 'Okay okay okay okay okay – on it!',
+  'Yes boss, no boss, sure boss, thumbs up.', 'Read receipt sent. Working on it.',
 );
 SERVE.push('Michelin star? Probably.', 'Noodles: deployed.', 'Soup’s up, nerds!', 'It’s giving gourmet.', 'Seasoned with pure optimism.', 'Order up! No refunds.');
 EAT.push(

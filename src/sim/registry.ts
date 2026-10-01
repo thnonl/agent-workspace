@@ -69,9 +69,12 @@ export const sims = new Map<string, SimState>();
 export interface RoomRuntime {
   /** seconds (performance.now()/1000) after which the next character may enter */
   doorFreeAt: number;
+  /** earliest moment the next person may go home while no room is being loaded ahead */
+  leaveFreeAt: number;
   /** seconds (sim clock) before which nobody else may start a walk, and who started the last one (see Actor.walkSlotOpen) */
-  walkFreeAt: number;
-  walkBy: string | null;
+  /** when somebody in the room was last on the move (walking, sitting down, getting up), and who; no other movement starts within MOTION_GAP_S of it */
+  motionAt: number;
+  motionBy: string | null;
   visitors: (string | null)[];
   /** the director is seated and awake */
   directorSeated: boolean;
@@ -301,7 +304,7 @@ export function runtimeFor(roomId: string): RoomRuntime {
   let rt = roomRuntime.get(roomId);
   if (!rt) {
     rt = {
-      doorFreeAt: 0, walkFreeAt: 0, walkBy: null, visitors: [null, null, null], directorSeated: false, directorKey: null, receivedAt: -99,
+      doorFreeAt: 0, leaveFreeAt: 0, motionAt: -99, motionBy: null, visitors: [null, null, null], directorSeated: false, directorKey: null, receivedAt: -99,
       burstKey: null, burstStart: 0, lastToolAt: 0, burstSeq: 0, prompt: '', idleSince: 0, leaving: false, wasBusy: false, lastHire: 0, runStart: 0, lastText: '', knownFinal: '', talkDeadline: 0,
       parcel: 'none', parcelAt: 0, parcelBy: null, parcelRank: -1, parcelBig: false, askAt: 0, cheerUntil: 0, summaryDue: false,
     };

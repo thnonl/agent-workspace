@@ -75,8 +75,6 @@ export interface CatCtx {
   chars: readonly SimState[];
   /** all cats of the room */
   cats: readonly CatSim[];
-  /** another room is being loaded: a cat on the move sits down for a moment */
-  hold?: boolean;
 }
 
 type Phase =
@@ -374,13 +372,6 @@ export class CatBrain {
     const s = this.sim;
     const p = resetCatPose(this.scratch);
     const petted = s.petUntil > ctx.now;
-    if (ctx.hold && dt > 0 && s.onStage && (this.phase === 'wander' || this.phase === 'toSpot' || this.phase === 'toToy' || this.phase === 'toPost')) {
-      // sits down on the spot, as if it had thought of something
-      this.v = 0;
-      this.facing = s.yaw;
-      this.timer = this.rng.range(2.2, 3.2);
-      this.setPhase('sit');
-    }
     if (s.onStage && this.phase !== 'away') this.awake += dt;
     let moving = false;
 

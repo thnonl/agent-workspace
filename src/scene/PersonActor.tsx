@@ -66,6 +66,7 @@ function hideAnchor(key: string) {
   if (a) a.live = false;
 }
 const SETTLE_PASSES = 3;
+const vBagHand = new THREE.Vector3();
 const k = (rate: number, dt: number) => 1 - Math.exp(-rate * dt);
 /** damping factors of applyPose: the same six rates for every person, so they are computed once per distinct dt */
 const dk = { dt: -1, r24: 0, r18: 0, r30: 0, r8: 0, r12: 0 };
@@ -133,9 +134,9 @@ interface Props {
   frozen?: boolean;
 }
 
-export function PersonActor({ personKey, roomId, layout, frozen = false }: Props) {
+export function PersonActor({ personKey, roomId, layout, frozen: frozenProp = false }: Props) {
   initFx();
-  const frozenAtStart = useRef(frozen);
+  const frozenAtStart = useRef(frozenProp);
   const seed = useStore((s) => s.people[personKey]?.seed ?? 0);
   const role = useStore((s) => s.people[personKey]?.role ?? 'staff');
   const desk = useStore((s) => s.people[personKey]?.desk ?? -1);
@@ -186,6 +187,8 @@ export function PersonActor({ personKey, roomId, layout, frozen = false }: Props
   const pending = useRef(0);
   /** passes made over the person since the room stopped being the active one (a few are needed to set the pose; then nothing moves) */
   const settleN = useRef(0);
+  /** the person has been animated live (so the rig shows a pose already: stopping them needs no settling) */
+  const liveBefore = useRef(false);
   /** the person has been drawn in their pose since the room stopped being the active one */
   const posed = useRef(false);
   const workersAt = useRef(-1);
@@ -213,9 +216,16 @@ export function PersonActor({ personKey, roomId, layout, frozen = false }: Props
 
   useFrame((_, rawDt) => {
     const visible = frame.visibleRooms.has(roomId);
+    // (also the room on screen stands still while a room is being switched to, see frame.settling)
+    const frozen = frozenProp || frame.settling || roomId !== frame.activeId;
     // a room that is not the one on screen stands still: the person is posed as they are, then nothing changes until the room is active
     if (frozen) {
       pending.current = 0;
+      if (liveBefore.current) {
+        // stopped in the middle of what they were doing: the rig keeps the pose it has
+        settleN.current = SETTLE_PASSES;
+        posed.current = true;
+      }
       if (settleN.current >= SETTLE_PASSES && (posed.current || !visible)) {
         hideAnchor(personKey);
         return;
@@ -224,6 +234,7 @@ export function PersonActor({ personKey, roomId, layout, frozen = false }: Props
     } else {
       settleN.current = 0;
       posed.current = false;
+      liveBefore.current = true;
     }
     let dt = 0;
     if (!frozen) {
@@ -334,6 +345,15 @@ export function PersonActor({ personKey, roomId, layout, frozen = false }: Props
       if (d < -Math.PI) d += Math.PI * 2;
       glance = Math.max(-0.7, Math.min(0.7, d * 0.55));
     }
+    // a bag carried by the hand: that arm hardly swings (the hand holds the handle); the bag follows the hand, see below
+    const handBag = !!rig.bagCarry.byHand;
+    const holding = handBag ? 1 - ease(actor.bagT) : 0;
+    if (holding > 0.01 && sim.onStage) {
+      const hp = actor.pose;
+      hp.armRx += (0.12 - hp.armRx) * 0.85 * holding;
+      hp.armRz += (0.16 - hp.armRz) * holding;
+      hp.foreRx += (-0.1 - hp.foreRx) * holding;
+    }
     applyPose(rig, actor.pose, frozen ? 10 : dt, actor.eyeOpen(), clockRef.current, sim.walking, glance);
 
     // ---- props (room space)
@@ -369,6 +389,27 @@ export function PersonActor({ personKey, roomId, layout, frozen = false }: Props
     bag.rotation.set(bt * 0.15, carryYaw + toFloor * bt, 0);
     bag.scale.setScalar(scale * carry.scale);
     rig.bagStraps.visible = sim.onStage && bt < 0.4;
+    // a bag in the hand hangs from the hand wherever it goes (a case on wheels only follows it sideways)
+    if (handBag && bt < 0.4 && sim.onStage && outer.current) {
+      rig.root.updateMatrixWorld(true);
+      rig.handHold.getWorldPosition(vBagHand);
+      outer.current.worldToLocal(vBagHand);
+      const k = 1 - Math.min(1, bt * 2.5);
+      if (carry.pulled) {
+        // the grip of the handle is a little behind the case (bag space), under the hand
+        const gz = -0.06 * scale;
+        const cy = Math.cos(carryYaw);
+        const sy = Math.sin(carryYaw);
+        const gx = gz * sy;
+        const gzz = gz * cy;
+        bag.position.x += (vBagHand.x - gx - bag.position.x) * k;
+        bag.position.z += (vBagHand.z - gzz - bag.position.z) * k;
+      } else {
+        bag.position.x += (vBagHand.x - bag.position.x) * k;
+        bag.position.z += (vBagHand.z - bag.position.z) * k;
+        bag.position.y += (vBagHand.y - 0.19 * scale - bag.position.y) * k;
+      }
+    }
 
     // laptop
     const lp = actor.lapP;

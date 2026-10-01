@@ -18,6 +18,10 @@ export interface BagCarry {
   scale: number;
   /** height of its centre when it stands on the floor */
   floorY: number;
+  /** carried by the right hand (at the handle) rather than on the body */
+  byHand?: boolean;
+  /** ...and rolling on its wheels on the floor, pulled by the handle (it follows the hand sideways only) */
+  pulled?: boolean;
 }
 
 export interface BagBuild {
@@ -97,7 +101,7 @@ export function buildBag(kind: BagKind, color: string): BagBuild {
       add(mesh(G.rbox(0.302, 0.03, 0.102, 0.012), dark, 0, -0.06, 0, { cast: false }));
       for (const z of [-0.03, 0.03]) add(mesh(G.torus(0.085, 0.013, Math.PI, 6, 16), dark, 0, 0.115, z));
       add(mesh(G.rbox(0.13, 0.11, 0.02, 0.012), light, 0, -0.03, 0.055, { cast: false }));
-      return { model: m, carry: { x: 0.31, y: 0.26, z: 0.0, yaw: Math.PI / 2, scale: 1.0, floorY: 0.16 } };
+      return { model: m, carry: { x: 0.31, y: 0.26, z: 0.0, yaw: Math.PI / 2, scale: 1.0, floorY: 0.16, byHand: true } };
     }
     case 'suitcase': {
       // a small cabin case on wheels, pulled beside the person by its extended handle
@@ -109,7 +113,7 @@ export function buildBag(kind: BagKind, color: string): BagBuild {
       for (const x of [-0.08, 0.08]) add(mesh(G.cyl(0.008, 0.008, 0.3, 6), metal, x, 0.3, -0.06, { cast: false }));
       add(mesh(G.rbox(0.2, 0.026, 0.03, 0.012), black, 0, 0.455, -0.06));
       add(mesh(G.rbox(0.06, 0.02, 0.02, 0.008), light, 0, 0.0, 0.1, { cast: false }));
-      return { model: m, carry: { x: 0.37, y: 0.27, z: -0.04, yaw: Math.PI / 2, scale: 1.0, floorY: 0.27 } };
+      return { model: m, carry: { x: 0.37, y: 0.27, z: -0.04, yaw: Math.PI / 2, scale: 1.0, floorY: 0.27, byHand: true, pulled: true } };
     }
     case 'briefcase':
     default: {
@@ -118,7 +122,7 @@ export function buildBag(kind: BagKind, color: string): BagBuild {
       for (const x of [-0.19, 0.19]) for (const y of [-0.135, 0.135]) add(mesh(G.sphere(0.02, 8, 6), GOLD(), x, y, 0.0, { cast: false }));
       for (const x of [-0.1, 0.1]) add(mesh(G.rbox(0.045, 0.03, 0.02, 0.008), GOLD(), x, 0.1, 0.055, { cast: false }));
       add(mesh(G.rbox(0.36, 0.008, 0.102, 0.003), dark, 0, 0.0, 0, { cast: false }));
-      return { model: m, carry: { x: 0.31, y: 0.3, z: 0.0, yaw: Math.PI / 2, scale: 1.0, floorY: 0.17 } };
+      return { model: m, carry: { x: 0.31, y: 0.3, z: 0.0, yaw: Math.PI / 2, scale: 1.0, floorY: 0.17, byHand: true } };
     }
   }
 }

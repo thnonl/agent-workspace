@@ -23,7 +23,7 @@ function iconFor(s: Speech): string {
     case 'idle':
     case 'thinking':
     case 'text': return '';
-    case 'task': return s.tool === 'call' ? '☎️' : s.tool === 'email' ? '✉️' : '📥';
+    case 'task': return s.tool === 'call' ? '📱' : s.tool === 'email' ? '✉️' : '📥';
     case 'done': return s.tool === 'failed' ? '😵' : '🎉';
     case 'error': return '⚠️';
     default:
@@ -169,7 +169,7 @@ function layoutLoop() {
     }
     const a = anchors.get(key);
     // (no bubbles in a room that is not the active one: nobody speaks there)
-    const live = !!a?.live && sims.get(key)?.roomId === frame.activeId;
+    const live = !!a?.live && !frame.settling && sims.get(key)?.roomId === frame.activeId;
     let show = live;
     let tx = 0;
     let ty = 0;
@@ -399,9 +399,9 @@ const BubbleItem = memo(function BubbleItem({ personKey }: { personKey: string }
       const roomId = useStore.getState().people[personKey]?.sessionId;
       const sim = sims.get(personKey);
       if (next.tool === 'call' || next.tool === 'email') {
-        // the user's message arrives as a call on the desk phone (rings, is picked up) or as an email (new-mail chime) with the first chunk; the director is busy with it until the last chunk (and the answer) is shown
+        // the user's message arrives as a message on the smartphone (a soft blip, the director scrolls it) or as an email (new-mail chime) with the first chunk; the director is busy with it until the last chunk (and the answer) is shown
         const fresh = !sim || (sim.msgUntil ?? 0) * 1000 < now || sim.msgVia !== next.tool;
-        sfx(fresh ? (next.tool === 'call' ? 'ring' : 'mail') : 'blip', roomId);
+        sfx(fresh && next.tool === 'email' ? 'mail' : 'blip', roomId);
         if (sim) {
           sim.msgVia = next.tool;
           sim.msgUntil = (hideAt.current + 700) / 1000;
@@ -409,7 +409,7 @@ const BubbleItem = memo(function BubbleItem({ personKey }: { personKey: string }
       } else if (next.tool === 'talk') sfx('talk', roomId);
       else if (next.kind === 'done') sfx('ding', roomId);
       else if (next.kind !== 'tool' && next.tool !== 'wave') sfx('pop', roomId);
-      // the answer to the call / email: the handset stays at the ear (the director stays at the laptop) until it has been read
+      // the answer to the message / email: the phone stays in the hand (the director stays at the laptop) until it has been read
       if (next.tool === 'ack' && sim && (sim.msgUntil ?? 0) * 1000 > now) sim.msgUntil = hideAt.current / 1000;
       curRef.current = next;
       if (taskRef.current !== lastTitled.current && next.kind !== 'idle') {
@@ -480,7 +480,7 @@ const BubbleItem = memo(function BubbleItem({ personKey }: { personKey: string }
             {outline}
             <div className="bubble-head">
               <span className="bubble-dot" />
-              <span className="bubble-name">{via ? (via === 'call' ? '☎️ You (phone)' : '✉️ Email from You') : <>{role === 'director' ? <Crown /> : null}<span className="nm">{name}</span>{task && cur.kind !== 'idle' && titledId.current === cur.id ? <em className="nm"> · {task}</em> : null}</>}</span>
+              <span className="bubble-name">{via ? (via === 'call' ? '📱 You (message)' : '✉️ Email from You') : <>{role === 'director' ? <Crown /> : null}<span className="nm">{name}</span>{task && cur.kind !== 'idle' && titledId.current === cur.id ? <em className="nm"> · {task}</em> : null}</>}</span>
             </div>
             <div className={`bubble-body${cur.kind === 'tool' ? ' mono' : ''}`}>
               {icon ? <span className="bubble-icon">{icon}</span> : null}

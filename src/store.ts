@@ -15,6 +15,7 @@ import { resolveWeather, WEATHER_MODES, type Weather, type WeatherMode } from '.
 import { resolveSeason, SEASON_MODES, type Season, type SeasonMode } from './season';
 import { doneLines, pickAck } from './sim/phrases';
 import { celebrate } from './sim/celebrate';
+import { frame } from './sim/frame';
 import { noteCue, notePeople, noteReport, noteRun, noteTask } from './progress';
 import { bufferTaskSpeech, clearTalk, debugFlags, dropRoomRuntime, dropRuntime, dropTaskSpeech, enqueueSpeech, hasQueuedTool, runtimeFor, sims, takeTaskSpeech, talkPending } from './sim/registry';
 
@@ -159,6 +160,8 @@ const directorKeyOf = (sessionId: string) => `${sessionId}::director`;
 const GRACE_MS = 5000;
 /** gap between two people walking out */
 const LEAVE_STAGGER_MS = 15000;
+/** ...and this once no other room is left to load ahead */
+const LEAVE_STAGGER_FREE_MS = 1000;
 /** every tool call of the main agent is a task of its own; whoever gets it works on it for this long */
 const MAIN_TASK_MS = 4500;
 /** tool calls waiting for a free person: beyond this many the oldest are dropped (the office cannot keep up) */
@@ -531,6 +534,18 @@ function callTask(get: Get, set: SetFn, roomId: string, c: { label: string; orig
 }
 
 /** Give waiting tasks to people: hire until the team has a decent size, then let the staff take turns. */
+/** Has the person arrived at their desk (or been there all along)? Somebody who has just been hired and is still on the way in has not. */
+function arrived(p: PersonRec): boolean {
+  const s = sims.get(p.key);
+  if (!s) return !!p.restored || Date.now() - p.joinedAt > 20_000;
+  return s.onStage && s.phase !== 'entering';
+}
+
+/** Is another room still being loaded, or waiting to be (see frame.loading)? Not when nobody is looking at the scene. */
+function loadingAhead(): boolean {
+  return performance.now() - frame.at < 3000 && frame.loading;
+}
+
 function dispatchRoom(get: Get, set: SetFn, roomId: string) {
   if (!enteredRooms.has(roomId)) return; // (only the director works in a room nobody has looked at)
   const queued = tasksOf(get(), roomId).filter((t) => !t.assignee && !t.done).sort((a, b) => a.startedAt - b.startedAt);
@@ -544,10 +559,15 @@ function dispatchRoom(get: Get, set: SetFn, roomId: string) {
     const rt = runtimeFor(roomId);
     const now = Date.now();
     let who: PersonRec | null = null;
-    if (staff.length < Math.min(MIN_TEAM, cap)) who = hireStaff(get, set, roomId);
-    if (!who && free.length) who = free[0];
-    if (!who && now - rt.lastHire >= HIRE_GAP_MS) who = hireStaff(get, set, roomId);
-    if (!who) break; // everybody is busy – the task waits for the next free person
+    // the work goes to the staff who are in the office already; people who have just been hired (and are still walking in) get some only
+    // once no other room is left to load, so that the walking in and the loading do not pile up
+    const loading = loadingAhead();
+    const inOffice = free.find(arrived) ?? null;
+    let hired: PersonRec | null = null;
+    if (staff.length < Math.min(MIN_TEAM, cap)) hired = hireStaff(get, set, roomId); // (a new one joins the team; whether they get this task depends on the rest)
+    if (inOffice) who = inOffice;
+    else if (!loading) who = hired ?? free[0] ?? (now - rt.lastHire >= HIRE_GAP_MS ? hireStaff(get, set, roomId) : null);
+    if (!who) break; // nobody in the office is free (or rooms are still being loaded) – the task waits
     if (staff.length >= Math.min(MIN_TEAM, cap) && !staff.some((p) => p.key === who!.key)) rt.lastHire = now;
     patchPeople(get, set, { [who.key]: { taskKey: t.key, present: true, leaveAt: 0 } });
     // a long queue makes the calls shorter, so the office keeps up
@@ -779,7 +799,7 @@ function tickRoom(get: Get, set: SetFn, roomId: string, now: number) {
     here.sort((a, b) => (a.role === 'director' ? 1 : 0) - (b.role === 'director' ? 1 : 0) || a.joinedAt - b.joinedAt);
     const patches: Record<string, Partial<PersonRec>> = {};
     here.forEach((p, i) => {
-      if (p.role !== 'director') patches[p.key] = { leaveAt: now + 400 + i * LEAVE_STAGGER_MS };
+      if (p.role !== 'director') patches[p.key] = { leaveAt: now + 400 + i * (loadingAhead() ? LEAVE_STAGGER_MS : LEAVE_STAGGER_FREE_MS) };
     });
     patchPeople(get, set, patches);
   }
@@ -788,7 +808,7 @@ function tickRoom(get: Get, set: SetFn, roomId: string, now: number) {
     const boss = get().people[directorKeyOf(roomId)];
     if (boss?.present && !boss.leaveAt && !directorTalking(get, roomId, now)) {
       const lastStaff = peopleOf(get(), roomId).reduce((m, p) => (p.role === 'staff' ? Math.max(m, p.leaveAt) : m), 0);
-      patchPeople(get, set, { [boss.key]: { leaveAt: Math.max(now + 400, lastStaff + LEAVE_STAGGER_MS) } });
+      patchPeople(get, set, { [boss.key]: { leaveAt: Math.max(now + 400, lastStaff + (loadingAhead() ? LEAVE_STAGGER_MS : LEAVE_STAGGER_FREE_MS)) } });
     }
   }
   const due: Record<string, Partial<PersonRec>> = {};
