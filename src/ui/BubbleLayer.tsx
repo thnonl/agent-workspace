@@ -6,6 +6,7 @@ import { sfx } from '../audio';
 import type { Speech } from '../types';
 import { afterRender } from '../sim/frame';
 import { floatingWindow } from '../pipHost';
+import { bubbleText } from './richText';
 import { anchors, holdTalk, sims, idleDismissedAt, nextSpeech, peekSpeech, queueLength, view, type Projected } from '../sim/registry';
 
 const TOOL_ICONS: Record<string, string> = {
@@ -485,7 +486,7 @@ const BubbleItem = memo(function BubbleItem({ personKey }: { personKey: string }
             </div>
             <div className={`bubble-body${cur.kind === 'tool' ? ' mono' : ''}`}>
               <span className="bubble-icon">{iconFor(cur)}</span>
-              <span>{cur.text}</span>
+              <span>{bubbleText(cur)}</span>
             </div>
           </div>
         ) : (

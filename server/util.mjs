@@ -15,6 +15,14 @@ export const clip = (s, n = 240) => {
 
 export const base = (p) => (p ? String(p).split(/[\\/]/).filter(Boolean).pop() : '');
 
+/** A shell command for a bubble: only its first line, and "..." when there is more (a script, a heredoc, a long line). */
+export function shellLine(command, n = 90) {
+  const lines = String(command ?? '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const first = (lines[0] ?? '').replace(/\s+/g, ' ');
+  const cut = first.length > n;
+  return `$ ${cut ? first.slice(0, n - 1).trimEnd() : first}${cut || lines.length > 1 ? ' ...' : ''}`;
+}
+
 export function toolSummary(name, input = {}) {
   const i = input || {};
   switch (name) {
@@ -28,7 +36,7 @@ export function toolSummary(name, input = {}) {
       return `Writing ${base(i.file_path) || 'a file'}`;
     case 'Bash':
     case 'PowerShell':
-      return i.description ? clip(i.description, 90) : `$ ${clip(i.command, 90)}`;
+      return i.description ? clip(i.description, 90) : shellLine(i.command);
     case 'Grep':
       return `Searching “${clip(i.pattern, 50)}”`;
     case 'Glob':
