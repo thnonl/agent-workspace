@@ -9,6 +9,7 @@ import { getLayout } from './world/layout';
 import { isMuted, setMuted as setAudioMuted, sfx } from './audio';
 import { loadFlag, loadPref, QUALITIES, savePref, type Quality } from './prefs';
 import { getSetting, setSetting } from './settings';
+import { takeRestoredPeople } from './roomPeople';
 import { CONTEXT_WINDOWS, type ContextWindowPref } from './context';
 import { resolveWeather, WEATHER_MODES, type Weather, type WeatherMode } from './weather';
 import { resolveSeason, SEASON_MODES, type Season, type SeasonMode } from './season';
@@ -245,12 +246,21 @@ export function orderedRooms(s: Pick<State, 'listOrder'>): string[] {
 
 /** A question first, then the finished rooms with an unread summary, then the working rooms, then the idle ones; ties keep the order of arrival. */
 function sortedList(s: State, ids: string[]): string[] {
-  const busy = new Set<string>();
-  for (const t of Object.values(s.tasks)) busy.add(t.sessionId);
-  const rank = new Map(ids.map((id) => [id, s.asks[id] ? 0 : s.unseen[id] ? 1 : s.rooms[id]?.mainActive || busy.has(id) ? 2 : 3] as const));
+  const rank = roomRanks(s, ids);
   const at = new Map(s.roomOrder.map((id, i) => [id, i] as const));
   return [...ids].sort((a, b) => rank.get(a)! - rank.get(b)! || at.get(a)! - at.get(b)!);
 }
+
+/** How much a room needs the user: 0 a question, 1 an unread summary, 2 working, 3 idle. */
+const IDLE_RANK = 3;
+function roomRanks(s: State, ids: string[]): Map<string, number> {
+  const busy = new Set<string>();
+  for (const t of Object.values(s.tasks)) busy.add(t.sessionId);
+  return new Map(ids.map((id) => [id, s.asks[id] ? 0 : s.unseen[id] ? 1 : s.rooms[id]?.mainActive || busy.has(id) ? 2 : IDLE_RANK] as const));
+}
+
+/** The first sync after the page was loaded has run: the page opens on the room that needs the user, but never moves again by itself. */
+let focusedOnLoad = false;
 
 /** `listOrder` follows `visibleOrder`: rooms that closed leave it, new rooms join at the end. */
 function reconcileList(list: string[], vis: string[]): string[] {
@@ -456,7 +466,12 @@ function ensureDirector(get: Get, set: SetFn, roomId: string): PersonRec {
     if (!cur.present || cur.leaveAt) patchPeople(get, set, { [key]: { present: true, leaveAt: 0 } });
     return get().people[key];
   }
-  return createPerson(get, set, roomId, 'director', -1, key);
+  const director = createPerson(get, set, roomId, 'director', -1, key);
+  // after a page reload the people who were in the room come back with the director (the head count is kept by the server)
+  if (!get().rooms[roomId]?.demo) {
+    for (let n = takeRestoredPeople(roomId) - 1; n > 0; n--) if (!hireStaff(get, set, roomId)) break;
+  }
+  return director;
 }
 
 function staffCap(get: Get, roomId: string): number {
@@ -1004,6 +1019,17 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
       if (!get().rooms[id]?.demo && !syncAsks.has(id)) get().applyEvent({ type: 'agent_ask_end', sessionId: id });
     }
     syncAsks.clear();
+    // page load or refresh: sort the list and step into the first room with a question, an unread summary or work going on
+    if (!focusedOnLoad) {
+      focusedOnLoad = true;
+      const st = get();
+      const live = st.listOrder.filter((id) => !st.rooms[id]?.demo);
+      const sorted = sortedList(st, live);
+      const ranks = roomRanks(st, live);
+      const best = sorted.find((id) => ranks.get(id)! < IDLE_RANK);
+      set({ listOrder: [...sorted, ...st.listOrder.filter((id) => st.rooms[id]?.demo)] });
+      if (best) enterRoom(get, set, best);
+    }
     set({ syncing: null });
   }),
 

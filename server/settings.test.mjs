@@ -69,3 +69,31 @@ test('API: 503 when SQLite is unavailable (the page then keeps using localStorag
   assert.equal((await put(base, { a: '1' })).status, 503);
   await close();
 });
+
+test('room people: head counts are stored, replaced, deleted, validated and aged out', async () => {
+  const s = createSettingsStore({ file: ':memory:' });
+  assert.deepEqual(s.roomPeople(), {});
+  assert.equal(s.applyRoomPeople({ 'room-1': 4, 'room-2': 1, 'bad id!': 2, 'room-3': 0, 'room-4': 1.5, 'room-5': '3' }), 2);
+  assert.equal(s.applyRoomPeople({ 'room-1': 6, 'room-2': null }), 2);
+  assert.deepEqual(s.roomPeople(), { 'room-1': 6 });
+  assert.deepEqual(s.roomPeople(-1), {}, 'rows older than the limit are not returned');
+  assert.deepEqual(s.roomPeople(), {}, '…and have been dropped');
+  s.close();
+});
+
+test('API: /api/room-people reads and writes head counts with the same guard as the settings', async () => {
+  const s = createSettingsStore({ file: ':memory:' });
+  const { base, close } = await serve(s);
+  const get = async () => (await fetch(`${base}/api/room-people`)).json();
+  assert.deepEqual(await get(), {});
+  let r = await fetch(`${base}/api/room-people`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ a: 3, b: 2 }) });
+  assert.deepEqual(await r.json(), { saved: 2 });
+  await fetch(`${base}/api/room-people`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ b: null }) });
+  assert.deepEqual(await get(), { a: 3 });
+  r = await fetch(`${base}/api/room-people`, { method: 'PUT', headers: { 'Content-Type': 'text/plain' }, body: '{"a":9}' });
+  assert.equal(r.status, 403);
+  assert.deepEqual(await get(), { a: 3 });
+  assert.deepEqual(await (await fetch(`${base}/api/settings`)).json(), {}, 'settings are a separate table');
+  await close();
+  s.close();
+});

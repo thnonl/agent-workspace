@@ -90,11 +90,14 @@ export function createApi(monitor, { idleStopMs = 30_000, settings } = {}) {
       res.end(JSON.stringify({ ok: true, claudeDir: monitor.claudeDir, sources: monitor.sources, sessions: monitor.sessionCount() }));
       return;
     }
-    if (url.pathname === '/api/settings') {
+    // key/value routes backed by SQLite: the user's settings and the head count of every room
+    const table = url.pathname === '/api/settings' ? 'all' : url.pathname === '/api/room-people' ? 'roomPeople' : null;
+    if (table) {
+      const write = table === 'all' ? 'apply' : 'applyRoomPeople';
       if (req.method === 'GET') {
         const s = settingsStore();
         if (!s.available) return json(res, 503, { error: 'sqlite unavailable' });
-        return json(res, 200, s.all());
+        return json(res, 200, s[table]());
       }
       if (req.method === 'PUT') {
         if (!sameOriginJson(req)) return json(res, 403, { error: 'forbidden' });
@@ -104,7 +107,7 @@ export function createApi(monitor, { idleStopMs = 30_000, settings } = {}) {
           .then((text) => {
             const body = JSON.parse(text);
             if (!body || typeof body !== 'object' || Array.isArray(body)) throw Object.assign(new Error('object expected'), { status: 400 });
-            json(res, 200, { saved: s.apply(body) });
+            json(res, 200, { saved: s[write](body) });
           })
           .catch((err) => json(res, err.status || (err instanceof SyntaxError ? 400 : 500), { error: err.message }));
         return;

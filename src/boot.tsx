@@ -5,6 +5,9 @@ import { useStore } from './store';
 import * as registry from './sim/registry';
 import { getLayout } from './world/layout';
 import { useProgress } from './progress';
+import { trackRoomPeople } from './roomPeople';
+
+trackRoomPeople(useStore);
 
 const CatLab = lazy(() => import('./scene/CatLab').then((m) => ({ default: m.CatLab })));
 const PlantLab = lazy(() => import('./scene/PlantLab').then((m) => ({ default: m.PlantLab })));
