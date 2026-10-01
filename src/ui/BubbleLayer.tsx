@@ -5,6 +5,7 @@ import { themeFor } from '../world/palettes';
 import { sfx } from '../audio';
 import type { Speech } from '../types';
 import { afterRender } from '../sim/frame';
+import { floatingWindow } from '../pipHost';
 import { anchors, holdTalk, sims, idleDismissedAt, nextSpeech, peekSpeech, queueLength, view, type Projected } from '../sim/registry';
 
 const TOOL_ICONS: Record<string, string> = {
@@ -102,7 +103,7 @@ type Radii = [number, number, number, number];
 
 /** border radii (top-left, top-right, bottom-right, bottom-left) of a bubble, read from its style */
 function readRadii(el: HTMLElement): Radii {
-  const cs = getComputedStyle(el);
+  const cs = (el.ownerDocument.defaultView ?? window).getComputedStyle(el);
   const v = (s: string) => parseFloat(s) || 0;
   return [v(cs.borderTopLeftRadius), v(cs.borderTopRightRadius), v(cs.borderBottomRightRadius), v(cs.borderBottomLeftRadius)];
 }
@@ -160,7 +161,16 @@ function layoutLoop() {
   const follow = 1 - Math.exp(-FOLLOW * dtS);
   const list: Placed[] = [];
   const hidden: string[] = [];
+  const floating = !!floatingWindow();
   for (const [key, it] of items) {
+    // (the size observers belong to the page, which does not hear about the floating window: measure the bubble directly there)
+    if (floating) {
+      const box = it.root.firstElementChild as HTMLElement | null;
+      if (box) {
+        it.size.w = box.offsetWidth || it.size.w;
+        it.size.h = box.offsetHeight || it.size.h;
+      }
+    }
     const a = anchors.get(key);
     let show = !!a?.live;
     let tx = 0;
@@ -238,7 +248,8 @@ function layoutLoop() {
     // (on a narrow screen a bubble slides back into view)
     const left = clamp(p.bx - p.w / 2, EDGE, Math.max(EDGE, view.width - p.w - EDGE));
     const bottom = p.by - (it.thought ? GAP_THOUGHT : GAP);
-    const top = bottom - p.h;
+    // (a bubble over a head near the top edge stays inside the picture)
+    const top = Math.max(4, bottom - p.h);
     setStyle(it.root, 'transform', `translate3d(${left.toFixed(1)}px, ${top.toFixed(1)}px, 0)`);
     setStyle(it.root, 'zIndex', String(9000 - i + (it.top ? 5000 : 0)));
     const shape = it.shape;

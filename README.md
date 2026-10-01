@@ -126,6 +126,7 @@ Publishing: `npm publish` (the `prepack` script builds `dist/` first; only `dist
 | `P` | save a photo of the office (PNG) |
 | `C` | screensaver mode: the buttons fade out and the camera tours the rooms; a click or `Esc` leaves it |
 | `L` | level, stats and achievements |
+| `I` | floating window (picture-in-picture): the whole office moves into a small always-on-top window – like the screensaver (no buttons) but the camera holds still, it stays in the room that was on screen and has no photo button. Close the window, press `I` or use *Bring it back* to return. Needs Chrome or Edge 116+ on https or localhost |
 | `?` | help |
 
 Click the coffee machine, the water cooler, the fish tank, the printer or the vending machine and they react; the little radio on the director's desk starts the music. **Settings** (gear button) has the graphics quality (low / medium / high), the weather, the decorations (Halloween, Christmas, Tết; `auto` follows the date) and the sound switches. `?weather=rain` and `?season=tet` force a value for one page load.

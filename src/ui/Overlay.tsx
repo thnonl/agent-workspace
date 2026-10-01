@@ -9,6 +9,7 @@ import { FALLBACK_NAMES, parseNames } from '../names';
 import { audioRunning, sfx, subscribeAudioState } from '../audio';
 import { retryConnection } from '../live/connection';
 import { takePhoto } from '../photo';
+import { pipSupported, togglePip } from '../pip';
 import { contextShare } from '../context';
 import { LevelChip } from './ProgressDialog';
 import { Dialog } from './Dialog';
@@ -166,6 +167,9 @@ export function TopBar() {
         <button className={`btn btn-icon btn-extra btn-music${musicOn ? ' btn-on' : ''}`} onClick={() => setMusicOn(!musicOn)} aria-pressed={musicOn} aria-label={musicOn ? 'Lo-fi music on' : 'Lo-fi music off'} title={musicOn ? 'Lo-fi music is on – click to stop (K)' : 'Play lo-fi music (K)'}><Icon name="music" size={18} /></button>
         <button className="btn btn-icon btn-extra" onClick={() => takePhoto()} aria-label="Take a photo" title="Save a photo of the office (P)"><Icon name="camera" size={18} /></button>
         <button className="btn btn-icon btn-extra" onClick={() => setCinema(true)} aria-label="Screensaver mode" title="Screensaver: hide the buttons and tour the rooms (C)"><Icon name="maximize" size={18} /></button>
+        {pipSupported() ? (
+          <button className="btn btn-icon btn-extra" onClick={togglePip} aria-label="Floating window" title="Show the office in a small floating window that stays on top (I)"><Icon name="pip" size={18} /></button>
+        ) : null}
         <button className="btn btn-icon" onClick={resetView} aria-label="Reset camera" title="Reset camera (R)"><Icon name="crosshair" size={18} /></button>
         <button className="btn btn-icon" onClick={() => setShowSettings(true)} aria-label="Settings" title="Settings: graphics, weather, decorations, sound"><Icon name="settings" size={18} /></button>
         <button className="btn btn-icon" onClick={() => setHelp(true)} aria-label="Help" title="Help (?)"><Icon name="help" size={18} /></button>
@@ -761,7 +765,7 @@ export function Help() {
         <li>Drag = rotate · Wheel = zoom · <kbd>R</kbd> = reset camera</li>
         <li>Click a character to follow it and see its log · <kbd>Esc</kbd> to close</li>
         <li><kbd>N</kbd> previews day / dusk / night · <kbd>W</kbd> changes the weather · <kbd>M</kbd> mutes sound · <kbd>K</kbd> lo-fi music · <kbd>?</kbd> opens this help</li>
-        <li><kbd>P</kbd> saves a photo · <kbd>C</kbd> screensaver mode (<kbd>Esc</kbd> or a click leaves it) · <kbd>L</kbd> levels and achievements</li>
+        <li><kbd>P</kbd> saves a photo · <kbd>C</kbd> screensaver mode (<kbd>Esc</kbd> or a click leaves it) · <kbd>L</kbd> levels and achievements · <kbd>I</kbd> floating window (picture-in-picture)</li>
       </ul>
       <h3>The office</h3>
       <ul className="help-list">

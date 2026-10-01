@@ -4,6 +4,7 @@ import { WEATHER_LABEL, WEATHER_MODES, type WeatherMode } from '../weather';
 import { SEASON_LABEL, SEASON_MODES, type SeasonMode } from '../season';
 import { sfx } from '../audio';
 import { takePhoto } from '../photo';
+import { pipSupported, togglePip } from '../pip';
 import { CONTEXT_WINDOWS, type ContextWindowPref } from '../context';
 import { useProgress } from '../progress';
 import { Dialog } from './Dialog';
@@ -95,6 +96,7 @@ export function SettingsDialog() {
       </div>
 
       <h3>Show it off</h3>
+      {pipSupported() ? null : <p className="muted">The floating window needs Chrome or Edge 116 or newer, on https or localhost.</p>}
       <div className="set-row">
         <button type="button" className="btn" onClick={() => { close(); window.setTimeout(takePhoto, 250); }}>
           <Icon name="camera" size={16} /> Take a photo (P)
@@ -102,6 +104,11 @@ export function SettingsDialog() {
         <button type="button" className="btn" onClick={() => setCinema(true)}>
           <Icon name="maximize" size={16} /> Screensaver mode (C)
         </button>
+        {pipSupported() ? (
+          <button type="button" className="btn" onClick={() => { close(); togglePip(); }}>
+            <Icon name="pip" size={16} /> Floating window (I)
+          </button>
+        ) : null}
         <button type="button" className="btn" onClick={() => { close(); resetView(); }}>
           <Icon name="crosshair" size={16} /> Reset camera (R)
         </button>

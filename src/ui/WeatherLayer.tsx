@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useStore } from '../store';
 import { sfx } from '../audio';
 import { env } from '../env';
+import { host, pageActive } from '../pipHost';
 
 interface Drop {
   x: number;
@@ -21,6 +22,7 @@ const reduceMotion = () => typeof window !== 'undefined' && !!window.matchMedia?
 export function WeatherLayer() {
   const weather = useStore((s) => s.weather);
   const quality = useStore((s) => s.quality);
+  const pip = useStore((s) => s.pip);
   const canvas = useRef<HTMLCanvasElement>(null);
   const flash = useRef<HTMLDivElement>(null);
 
@@ -34,14 +36,16 @@ export function WeatherLayer() {
     if (fl) fl.style.opacity = '0';
     if (!kind || quality === 'low' || reduceMotion()) return;
 
+    // (in the floating window the canvas is in another window: that one's size, frames and timers count)
+    const win = host();
     let w = 0;
     let h = 0;
     const resize = () => {
-      w = cv.width = Math.ceil(window.innerWidth);
-      h = cv.height = Math.ceil(window.innerHeight);
+      w = cv.width = Math.ceil(win.innerWidth);
+      h = cv.height = Math.ceil(win.innerHeight);
     };
     resize();
-    window.addEventListener('resize', resize);
+    win.addEventListener('resize', resize);
     const n = Math.round((kind === 'rain' ? 240 : 130) * (quality === 'high' ? 1.7 : 1) * (weather === 'storm' ? 1.5 : 1));
     const drops: Drop[] = Array.from({ length: n }, () => ({
       x: Math.random() * w,
@@ -54,8 +58,8 @@ export function WeatherLayer() {
     let raf = 0;
     let last = performance.now();
     const loop = (t: number) => {
-      raf = requestAnimationFrame(loop);
-      if (document.hidden || t - last < 30) return;
+      raf = win.requestAnimationFrame(loop);
+      if (!pageActive() || t - last < 30) return;
       const dt = Math.min(0.1, (t - last) / 1000);
       last = t;
       ctx.clearRect(0, 0, w, h);
@@ -91,7 +95,7 @@ export function WeatherLayer() {
         }
       }
     };
-    raf = requestAnimationFrame(loop);
+    raf = win.requestAnimationFrame(loop);
 
     // lightning: a quick double flash, thunder a moment later
     let timer = 0;
@@ -104,11 +108,11 @@ export function WeatherLayer() {
     if (weather === 'storm') timer = window.setTimeout(strike, 3000 + Math.random() * 5000);
 
     return () => {
-      cancelAnimationFrame(raf);
+      win.cancelAnimationFrame(raf);
       window.clearTimeout(timer);
-      window.removeEventListener('resize', resize);
+      win.removeEventListener('resize', resize);
     };
-  }, [weather, quality]);
+  }, [weather, quality, pip]);
 
   return (
     <>

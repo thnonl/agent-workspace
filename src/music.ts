@@ -1,4 +1,5 @@
 import { audioGraph, subscribeAudioState } from './audio';
+import { pageActive } from './pipHost';
 
 /**
  * Lo-fi music and ambience, made up on the fly with the Web Audio API (no files): a slow beat, a bass, electric-piano chords
@@ -250,7 +251,7 @@ function stopMusic() {
 function sync() {
   const e = build();
   if (!e) return;
-  const audible = !document.hidden && e.ctx.state === 'running';
+  const audible = pageActive() && e.ctx.state === 'running';
   const t = e.ctx.currentTime;
   e.musicGain.gain.setTargetAtTime(want.music && audible ? MUSIC_LEVEL : 0, t, 0.6);
   e.rainGain.gain.setTargetAtTime(audible ? want.rain * 0.07 : 0, t, 0.8);
@@ -259,7 +260,7 @@ function sync() {
   else if (timer) {
     // let the fade finish before the notes stop being scheduled
     const stopAt = window.setTimeout(() => {
-      if (!(want.music && !document.hidden)) stopMusic();
+      if (!(want.music && pageActive())) stopMusic();
     }, 1500);
     void stopAt;
   }

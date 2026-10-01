@@ -3,6 +3,7 @@
  * that is on screen. The browser only allows sound after the first click / key press.
  */
 import { playMeow } from './meow';
+import { pageActive } from './pipHost';
 
 /**
  * Real cat recordings: public/sfx/meow/index.json lists the clips (made by scripts/process-meow.mjs). They are fetched and decoded
@@ -203,7 +204,7 @@ function noise(c: AudioContext, at: number, dur: number, gain: number, filter: B
 
 /** Plays an effect. With a room id it is only heard while that room is the one on screen. */
 export function sfx(name: Sfx, roomId?: string, pitch = 1) {
-  if (muted || typeof document === 'undefined' || document.hidden) return;
+  if (muted || typeof document === 'undefined' || !pageActive()) return;
   if (roomId && roomId !== activeRoom) return;
   const c = ctx;
   if (!c || c.state !== 'running' || !master) return;

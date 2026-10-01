@@ -9,6 +9,7 @@ import { afterRender, BACKGROUND_STEP, frame } from '../sim/frame';
 import { env, envForHour, stepEnv } from '../env';
 import { OVERCAST } from '../weather';
 import { photoHooks } from '../photo';
+import { floatingWindow } from '../pipHost';
 import { lightParams } from './lighting';
 import { updateGlow } from './glow';
 import { RoomView, roomOrigin } from './RoomView';
@@ -47,7 +48,7 @@ const reducedMotion = () => !!reduceMotionQuery?.matches;
  * screen the HUD leaves free, for the default viewing angles. Solved by bisection on the distance; the room is
  * re-centred in the free area by shifting the target along the camera's right / up axes.
  */
-function frameRoom(layout: ReturnType<typeof getLayout>, fovDeg: number, aspect: number, width: number, out: THREE.Vector3): number {
+function frameRoom(layout: ReturnType<typeof getLayout>, fovDeg: number, aspect: number, width: number, out: THREE.Vector3, floating = false): number {
   const sp = Math.sin(POLAR), cp = Math.cos(POLAR), sa = Math.sin(AZIMUTH), ca = Math.cos(AZIMUTH);
   const n = [sa * sp, cp, ca * sp];
   const r = [ca, 0, -sa];
@@ -59,12 +60,13 @@ function frameRoom(layout: ReturnType<typeof getLayout>, fovDeg: number, aspect:
   pts.push([-hw + 0.4, wh - 1, -hd - 0.2], [hw + 0.4, wh - 1, -hd - 0.2], [-hw + 0.4, wh - 1, hd - 0.2]);
   const rel = pts.map((q) => ({ x: q[0] * r[0] + q[1] * r[1] + q[2] * r[2], y: q[0] * u[0] + q[1] * u[1] + q[2] * u[2], d: q[0] * n[0] + q[1] * n[1] + q[2] * n[2] }));
   const Ty = Math.tan((fovDeg * Math.PI) / 360), Tx = Ty * aspect;
-  const m = 0.05;
+  // (the floating window has no buttons to keep clear of: the room fills it, a little closer than "everything just fits")
+  const m = floating ? 0.01 : 0.05;
   // the HUD cards only cover the top corners: reserve half of their width on wide screens
   const wide = width >= 1100;
   const lo = -1 + (wide ? Math.min(360, width * 0.3) : 0) / width + m;
   const hi = 1 - (wide ? 310 : 0) / width - m;
-  const ylo = -0.86, yhi = 0.84;
+  const ylo = floating ? -0.97 : -0.86, yhi = floating ? 0.86 : 0.84;
   const cx = (lo + hi) / 2, cy = (ylo + yhi) / 2;
   let sx = 0, sy = 0;
   const test = (dist: number) => {
@@ -85,8 +87,13 @@ function frameRoom(layout: ReturnType<typeof getLayout>, fovDeg: number, aspect:
     if (test(mid)) b = mid;
     else a = mid;
   }
+  if (floating) b *= 0.85;
   test(b);
   // moving the target by -shift along right/up shifts the picture by +shift
+  if (!Number.isFinite(sx + sy + b)) {
+    out.set(0, 0, 0);
+    return 30;
+  }
   out.set(-(r[0] * sx + u[0] * sy), -(r[1] * sx + u[1] * sy), -(r[2] * sx + u[2] * sy));
   return b;
 }
@@ -251,7 +258,9 @@ function FrameSync() {
  */
 function IdleGovernor() {
   const invalidate = useThree((s) => s.invalidate);
+  const pip = useStore((s) => s.pip);
   useEffect(() => {
+    if (pip) return; // (PipDriver draws the frames of the floating window)
     let raf = 0;
     let last = 0;
     let input = performance.now();
@@ -277,7 +286,57 @@ function IdleGovernor() {
       for (const e of events) window.removeEventListener(e, touch);
       document.removeEventListener('visibilitychange', touch);
     };
-  }, [invalidate]);
+  }, [invalidate, pip]);
+  return null;
+}
+
+/**
+ * Picture-in-picture: the page the office came from may be hidden behind other windows, and a hidden page gets no animation frames.
+ * So the frames are asked for by the floating window instead: the canvas stops rendering by itself and is advanced from that window's
+ * own frame loop, at the same pace the governor above would choose for a screen nobody touches.
+ */
+function PipDriver() {
+  const pip = useStore((s) => s.pip);
+  const advance = useThree((s) => s.advance);
+  const setFrameloop = useThree((s) => s.setFrameloop);
+  const invalidate = useThree((s) => s.invalidate);
+  const clock = useThree((s) => s.clock);
+  const setSize = useThree((s) => s.setSize);
+  const get = useThree((s) => s.get);
+  useEffect(() => {
+    const w = floatingWindow();
+    if (!pip || !w) return;
+    setFrameloop('never');
+    // (the canvas measures itself with an observer of the page it was made in, which does not notice the other window: tell it)
+    const fit = () => {
+      if (w.innerWidth > 8 && w.innerHeight > 8) setSize(w.innerWidth, w.innerHeight);
+    };
+    fit();
+    w.addEventListener('resize', fit);
+    let raf = 0;
+    let last = 0;
+    // (with the frame loop off the clock is set from the time we pass in – in seconds, continuing where the clock stood)
+    let seconds = clock.elapsedTime;
+    const loop = (t: number) => {
+      raf = w.requestAnimationFrame(loop);
+      // (the page's own observer reports an empty canvas for a moment after the move, and may do so after this window's first size was set)
+      const cur = get().size;
+      if (w.innerWidth > 8 && w.innerHeight > 8 && (cur.width !== w.innerWidth || cur.height !== w.innerHeight)) fit();
+      const every = frame.cameraBusy ? 0 : 1000 / (frame.busy ? BUSY_FPS : CALM_FPS) - 4;
+      if (t - last >= every) {
+        seconds += Math.min(0.25, (t - last) / 1000);
+        last = t;
+        advance(seconds);
+      }
+    };
+    raf = w.requestAnimationFrame(loop);
+    return () => {
+      w.cancelAnimationFrame(raf);
+      w.removeEventListener('resize', fit);
+      setFrameloop('demand');
+      invalidate();
+    };
+  }, [pip, advance, setFrameloop, invalidate, clock, setSize, get]);
   return null;
 }
 
@@ -290,7 +349,9 @@ function CameraRig() {
   const lastTick = useRef(resetTick);
   const sph = useRef(new THREE.Spherical());
   const focused = useStore((s) => !!s.selectedKey);
+  // (the screensaver drifts the camera; the floating window holds still)
   const cinema = useStore((s) => s.cinema);
+  const pip = useStore((s) => s.pip);
   const tour = useRef(1);
   /** vertical view shift (px) that keeps the followed character clear of a bottom sheet (the agent panel on a phone) */
   const lift = useRef({ now: 0, want: 0, n: 0 });
@@ -298,8 +359,10 @@ function CameraRig() {
   useEffect(() => {
     const a = activeCenter();
     if (!a) return;
+    // (a canvas that was just moved to another window briefly reports no size at all: framing a room into nothing would give a camera of NaNs)
+    if (size.width < 8 || size.height < 8) return;
     const aspect = size.width / Math.max(1, size.height);
-    if (framedRoom) fit.current.dist = frameRoom(framedRoom, (camera as THREE.PerspectiveCamera).fov, aspect, size.width, viewShift);
+    if (framedRoom) fit.current.dist = frameRoom(framedRoom, (camera as THREE.PerspectiveCamera).fov, aspect, size.width, viewShift, pip);
     else {
       viewShift.set(0, 0, 0);
       fit.current.dist = a.fit;
@@ -311,7 +374,7 @@ function CameraRig() {
     }
     fit.current.active = true;
     frame.cameraBusy = true;
-  }, [activeRoomId, resetTick, focused, size.width, size.height]);
+  }, [activeRoomId, resetTick, focused, size.width, size.height, pip]);
 
   useFrame((_, dt) => {
     const c = controls.current;
@@ -319,6 +382,8 @@ function CameraRig() {
       frame.cameraBusy = false;
       return;
     }
+    // a camera that has ever become NaN stays NaN: start it again from the framing
+    if (!Number.isFinite(camera.position.x + c.target.x)) fit.current.snap = true;
     if (fit.current.snap) {
       fit.current.snap = false;
       c.target.copy(center);
@@ -692,6 +757,7 @@ export function Scene() {
     >
       <FrameSync />
       <IdleGovernor />
+      <PipDriver />
       <ViewSync />
       <PhotoSync />
       <EnvSync />

@@ -87,6 +87,8 @@ interface State {
   contextWindow: ContextWindowPref;
   /** screensaver: HUD hidden, the camera tours the rooms */
   cinema: boolean;
+  /** picture-in-picture: the office is in a small floating window (see pip.ts) */
+  pip: boolean;
   showSettings: boolean;
   syncing: { sessions: Set<string>; agents: Set<string> } | null;
 
@@ -135,6 +137,7 @@ interface State {
   setMusicOn: (on: boolean) => void;
   setContextWindow: (w: ContextWindowPref) => void;
   setCinema: (on: boolean) => void;
+  setPip: (on: boolean) => void;
   setShowSettings: (on: boolean) => void;
 }
 
@@ -923,6 +926,7 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
   musicOn: loadFlag('music', false),
   contextWindow: loadPref('contextWindow', CONTEXT_WINDOWS, 'auto'),
   cinema: false,
+  pip: false,
   showSettings: false,
   syncing: null,
 
@@ -1168,6 +1172,8 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
     set({ musicOn });
   },
   setCinema: (cinema) => set(cinema ? { cinema, showSettings: false, summaryOpen: null, listTab: null } : { cinema }),
+  // (the floating window is the screensaver without the tour: dialogs and the screensaver itself are closed)
+  setPip: (pip) => set(pip ? { pip, cinema: false, showSettings: false, listTab: null, selectedKey: null } : { pip }),
   setShowSettings: (showSettings) => set({ showSettings }),
 });
 

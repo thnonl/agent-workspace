@@ -14,6 +14,8 @@ import { ProgressDialog } from './ui/ProgressDialog';
 import { useProgress } from './progress';
 import { Toasts } from './ui/Toasts';
 import { takePhoto } from './photo';
+import { exitPip, togglePip } from './pip';
+import { host } from './pipHost';
 import { sims } from './sim/registry';
 import { WEATHERS } from './weather';
 import { OVERCAST } from './weather';
@@ -183,10 +185,13 @@ function useAtmosphere() {
 
 /** Office housekeeping: hands out waiting tasks, closes finished bursts, sends everybody home when the work is over. */
 function useOfficeClock() {
+  // (in picture-in-picture mode the floating window's clock runs the office: the page behind it may be hidden and its timers slow)
+  const pip = useStore((s) => s.pip);
   useEffect(() => {
-    const t = setInterval(() => useStore.getState().tick(), 250);
-    return () => clearInterval(t);
-  }, []);
+    const w = host();
+    const t = w.setInterval(() => useStore.getState().tick(), 250);
+    return () => w.clearInterval(t);
+  }, [pip]);
 }
 
 // the 3D scene (three.js, drei, the whole office) loads after the page shell has painted
@@ -200,6 +205,11 @@ function useHotkeys() {
       // browser and system shortcuts (Ctrl+N, Cmd+M, Ctrl+1…) are not ours
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const s = useStore.getState();
+      // floating window open: this page only waits; I or Esc bring the office back, nothing else is for the page now
+      if (s.pip) {
+        if (e.key === 'i' || e.key === 'I' || e.key === 'Escape') exitPip();
+        return;
+      }
       const el = e.target as HTMLElement | null;
       const typing = el?.tagName === 'INPUT' || el?.tagName === 'TEXTAREA' || el?.tagName === 'SELECT' || !!el?.isContentEditable;
       if (typing) {
@@ -233,6 +243,7 @@ function useHotkeys() {
       else if (e.key === 'k' || e.key === 'K') s.setMusicOn(!s.musicOn);
       else if (e.key === 'p' || e.key === 'P') takePhoto();
       else if (e.key === 'c' || e.key === 'C') s.setCinema(!s.cinema);
+      else if (e.key === 'i' || e.key === 'I') togglePip();
       else if (e.key === 'l' || e.key === 'L') useProgress.getState().setOpen(!useProgress.getState().open);
       else if (e.key === 'w' || e.key === 'W') s.setWeatherMode(WEATHERS[(WEATHERS.indexOf(s.weather) + 1) % WEATHERS.length]);
       else if (e.key === '?') s.setHelp(!s.showHelp);
@@ -260,10 +271,11 @@ export default function App() {
   const weather = useStore((s) => s.weather);
   const showList = useStore((s) => s.showSwitcher && s.visibleOrder.length > 0);
   const cinema = useStore((s) => s.cinema);
+  const pip = useStore((s) => s.pip);
   const stars = useMemo(() => Array.from({ length: 70 }, (_, i) => ({ x: (i * 37.7) % 100, y: (i * 53.3) % 62, s: 1 + ((i * 7) % 3), d: (i * 0.37) % 4 })), []);
   return (
     <div
-      className={`app wx-${weather}${e.night > 0.55 ? ' is-night' : ''}${showList ? ' has-list' : ''}${cinema ? ' cinema' : ''}`}
+      className={`app wx-${weather}${e.night > 0.55 ? ' is-night' : ''}${showList ? ' has-list' : ''}${cinema || pip ? ' cinema' : ''}${pip ? ' pip' : ''}`}
       style={{ ['--sky1' as string]: sky1, ['--sky2' as string]: sky2, ['--night' as string]: e.night.toFixed(3), ['--warm' as string]: e.warm.toFixed(3), ['--wx' as string]: OVERCAST[weather] }}
     >
       <div className="sky">

@@ -12,6 +12,7 @@ export const photoHooks = { render: null as (() => HTMLCanvasElement) | null };
  * The WebGL canvas is transparent and the sky is CSS, so the sky is painted first on a 2D canvas.
  */
 export function takePhoto() {
+  if (useStore.getState().pip) return; // (the floating window has no photo)
   const gl = photoHooks.render?.();
   if (!gl) return;
   const w = gl.width;
