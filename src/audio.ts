@@ -63,7 +63,7 @@ function playMeowClip(c: AudioContext, out: AudioNode, t: number, pitch: number,
 }
 export type Sfx =
   | 'door' | 'pop' | 'talk' | 'ding' | 'chime' | 'key' | 'paper' | 'water' | 'sip' | 'page' | 'sizzle' | 'bite' | 'meow' | 'blip' | 'pour' | 'clink'
-  | 'doorbell' | 'inhale' | 'exhale' | 'thud' | 'huff' | 'clank' | 'pickup' | 'swipe' | 'ring' | 'mail' | 'ask' | 'thunder'
+  | 'doorbell' | 'inhale' | 'exhale' | 'thud' | 'huff' | 'clank' | 'pickup' | 'swipe' | 'ring' | 'mail' | 'ask'
   | 'shutter' | 'fanfare' | 'confetti' | 'sparkle' | 'levelup' | 'achieve' | 'puff' | 'radio' | 'clap';
 
 const MUTE_KEY = 'claude-office:muted';
@@ -353,11 +353,6 @@ export function sfx(name: Sfx, roomId?: string, pitch = 1) {
       break;
     case 'clap':
       for (let i = 0; i < 9; i++) noise(c, t + i * 0.075 + Math.random() * 0.03, 0.05, 0.05, 'bandpass', 1500 + Math.random() * 1500, 900, 0.9);
-      break;
-    case 'thunder':
-      // far away: a low rumble that rolls out
-      noise(c, t, 2.6, 0.045, 'lowpass', 260, 70, 0.7);
-      tone(c, t + 0.05, 62, 1.8, 0.028, 'sine', 38, 0.15);
       break;
     case 'meow':
       loadMeowClips(c);

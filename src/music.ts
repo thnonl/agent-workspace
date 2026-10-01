@@ -3,11 +3,11 @@ import { pageActive } from './pipHost';
 
 /**
  * Lo-fi music and ambience, made up on the fly with the Web Audio API (no files): a slow beat, a bass, electric-piano chords
- * and a lazy pentatonic melody; rain on the roof and crickets by night. The mood follows the time of day and the weather.
+ * and a lazy pentatonic melody; crickets by night. The mood follows the time of day and the weather (the weather itself makes no sound).
  */
 export type Mood = 'day' | 'dusk' | 'night' | 'rain';
 
-const want = { music: false, mood: 'day' as Mood, rain: 0, crickets: 0 };
+const want = { music: false, mood: 'day' as Mood, crickets: 0 };
 
 interface Chord {
   bass: number;
@@ -43,7 +43,6 @@ interface Engine {
   noise: AudioBuffer;
   musicGain: GainNode;
   bus: GainNode;
-  rainGain: GainNode;
   cricketGain: GainNode;
 }
 let eng: Engine | null = null;
@@ -82,28 +81,6 @@ function build(): Engine | null {
   echo.connect(echoTone).connect(fb).connect(echo);
   echoTone.connect(musicGain);
 
-  // rain: a faint low bed and single drops now and then (see `drops`), through the effects bus (muted with the sound effects)
-  const rainGain = ctx.createGain();
-  rainGain.gain.value = 0;
-  rainGain.connect(g.sfx);
-  {
-    const src = ctx.createBufferSource();
-    src.buffer = noise;
-    src.loop = true;
-    const f = ctx.createBiquadFilter();
-    // a steady hiss, like many drops at once (a low-pass alone only rumbles)
-    f.type = 'bandpass';
-    f.frequency.value = 3200;
-    f.Q.value = 0.35;
-    const lo = ctx.createBiquadFilter();
-    lo.type = 'highpass';
-    lo.frequency.value = 700;
-    const lv = ctx.createGain();
-    lv.gain.value = 0.16;
-    src.connect(f).connect(lo).connect(lv).connect(rainGain);
-    src.start(0, Math.random() * 1.5);
-  }
-
   // crickets: a high tone chopped into chirps (fast LFO) that come in bursts (slow LFO)
   const cricketGain = ctx.createGain();
   cricketGain.gain.value = 0;
@@ -133,7 +110,7 @@ function build(): Engine | null {
   tone.connect(chirp).connect(burst).connect(cricketGain);
   for (const n of [tone, lfo1, lfo2, o1, o2]) n.start();
 
-  eng = { ctx, noise, musicGain, bus, rainGain, cricketGain };
+  eng = { ctx, noise, musicGain, bus, cricketGain };
   return eng;
 }
 
@@ -164,38 +141,6 @@ function hit(e: Engine, t: number, dur: number, gain: number, type: BiquadFilter
   s.connect(f).connect(g).connect(e.bus);
   s.start(t, Math.random() * 1.5);
   s.stop(t + dur + 0.02);
-}
-
-/** one drop of rain: a very short, soft, wide-band patter. Many of them close together blur into rain (a few sparse ones sound like key clicks). */
-function drop(e: Engine, t: number) {
-  const s = e.ctx.createBufferSource();
-  s.buffer = e.noise;
-  const f = e.ctx.createBiquadFilter();
-  f.type = 'bandpass';
-  f.frequency.value = 2500 + Math.random() * 4500;
-  f.Q.value = 0.6;
-  const g = e.ctx.createGain();
-  const peak = 0.04 + Math.random() * 0.1;
-  g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(peak, t + 0.008);
-  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.04 + Math.random() * 0.06);
-  s.connect(f).connect(g).connect(e.rainGain);
-  s.start(t, Math.random() * 1.5);
-  s.stop(t + 0.14);
-}
-
-let rainTimer = 0;
-let rainNext = 0;
-/** schedules the drops of the next half second: dense (roughly 12–25 a second) so they read as rain, denser when it pours */
-function scheduleDrops() {
-  const e = eng;
-  if (!e) return;
-  const now = e.ctx.currentTime;
-  if (rainNext < now) rainNext = now;
-  while (rainNext < now + 0.5) {
-    drop(e, rainNext);
-    rainNext += (0.03 + Math.random() * 0.1) / Math.max(0.5, want.rain);
-  }
 }
 
 function kick(e: Engine, t: number, gain = 0.5) {
@@ -290,13 +235,6 @@ function sync() {
   const audible = pageActive() && e.ctx.state === 'running';
   const t = e.ctx.currentTime;
   e.musicGain.gain.setTargetAtTime(want.music && audible ? MUSIC_LEVEL : 0, t, 0.6);
-  e.rainGain.gain.setTargetAtTime(audible ? want.rain * 0.05 : 0, t, 0.8);
-  if (audible && want.rain > 0.02) {
-    if (!rainTimer) rainTimer = window.setInterval(scheduleDrops, 200);
-  } else if (rainTimer) {
-    window.clearInterval(rainTimer);
-    rainTimer = 0;
-  }
   e.cricketGain.gain.setTargetAtTime(audible ? want.crickets * 0.006 : 0, t, 0.8);
   if (want.music && audible) startMusic(e);
   else if (timer) {
@@ -308,7 +246,7 @@ function sync() {
   }
 }
 
-/** Music on / off and its mood, rain and cricket level (0-1). */
+/** Music on / off and its mood, and the cricket level (0-1). */
 export function setAtmosphere(a: Partial<typeof want>) {
   Object.assign(want, a);
   sync();

@@ -1,6 +1,5 @@
 import { useEffect, useRef } from 'react';
 import { useStore } from '../store';
-import { sfx } from '../audio';
 import { env } from '../env';
 import { host, pageActive } from '../pipHost';
 
@@ -17,7 +16,7 @@ const reduceMotion = () => typeof window !== 'undefined' && !!window.matchMedia?
 /**
  * Rain and snow falling outside: a 2D canvas behind the 3D office (it shows through the windows and around the room).
  * Fog and clouds are plain CSS (see `.wx-*` in styles.css). Nothing is drawn in the "low" quality, in a hidden tab or
- * with reduced motion. A storm adds lightning flashes and thunder.
+ * with reduced motion. A storm adds lightning flashes (silent: the weather makes no sound).
  */
 export function WeatherLayer() {
   const weather = useStore((s) => s.weather);
@@ -97,12 +96,11 @@ export function WeatherLayer() {
     };
     raf = win.requestAnimationFrame(loop);
 
-    // lightning: a quick double flash, thunder a moment later
+    // lightning: a quick double flash
     let timer = 0;
     const strike = () => {
       if (!fl) return;
       [0.85, 0.15, 0.6, 0].forEach((o, i) => window.setTimeout(() => { fl.style.opacity = String(o); }, i * 90));
-      window.setTimeout(() => sfx('thunder'), 350 + Math.random() * 900);
       timer = window.setTimeout(strike, 7000 + Math.random() * 12000);
     };
     if (weather === 'storm') timer = window.setTimeout(strike, 3000 + Math.random() * 5000);

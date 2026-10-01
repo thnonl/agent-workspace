@@ -163,7 +163,7 @@ function useCinema() {
   }, [cinema]);
 }
 
-/** Lo-fi music (when switched on), rain on the roof and crickets at night follow the clock and the weather. */
+/** Lo-fi music (when switched on) and crickets at night follow the clock and the weather. */
 function useAtmosphere() {
   useEffect(() => {
     let last = '';
@@ -171,12 +171,11 @@ function useAtmosphere() {
       const e = envForHour(s.hour);
       const raining = s.weather === 'rain' || s.weather === 'storm';
       const mood = raining ? 'rain' : e.night > 0.6 ? 'night' : e.warm > 0.35 ? 'dusk' : 'day';
-      const rain = s.weather === 'storm' ? 1 : raining ? 0.75 : 0;
       const crickets = !raining && e.night > 0.6 && s.weather !== 'snow' ? 1 : 0;
-      const key = `${s.musicOn}|${mood}|${rain}|${crickets}`;
+      const key = `${s.musicOn}|${mood}|${crickets}`;
       if (key === last) return;
       last = key;
-      setAtmosphere({ music: s.musicOn, mood, rain, crickets });
+      setAtmosphere({ music: s.musicOn, mood, crickets });
     };
     apply(useStore.getState());
     return useStore.subscribe(apply);
