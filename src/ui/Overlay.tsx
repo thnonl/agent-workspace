@@ -433,13 +433,18 @@ export function RoomSwitcher() {
           const ctx = contextShare(r.context, ctxPref);
           return (
             <button key={id} className={`room-card${id === active ? ' active' : ''}`} style={{ ['--accent' as string]: theme.accent, ['--wall' as string]: theme.wall }} onClick={() => setActive(id)} aria-current={id === active ? 'true' : undefined} title={`${r.title} · ${PROVIDER_NAME[r.provider]}${i < 9 ? ` (${i + 1})` : ''}`}>
-              <span className="room-card-logo" title={PROVIDER_NAME[r.provider]}>
-                <ProviderLogo provider={r.provider} />
+              <span className="room-card-side">
+                <span className="room-card-logo" title={PROVIDER_NAME[r.provider]}>
+                  <ProviderLogo provider={r.provider} />
+                </span>
+                <small className="room-card-state" title={asks[id] ? `Waiting for your answer: ${asks[id].text}` : unseen[id] ? 'This session is done – click to read its summary' : undefined}>
+                  <i className={`room-card-dot${asks[id] ? ' is-ask' : unseen[id] ? ' is-unseen' : st.working ? ' is-working' : ''}`} aria-hidden="true" />
+                  {st.working ? 'working' : 'idle'}
+                </small>
               </span>
               <span className="room-card-text">
                 <b>{i + 1}. {r.project}</b>
                 {shortTitle(r) ? <small className="room-card-name">{shortTitle(r)}</small> : null}
-                <small>{st.working ? 'working' : 'idle'}{asks[id] ? ' · needs your input' : unseen[id] ? ' · summary ready' : ''}</small>
                 {ctx ? (
                   <span className={`room-card-ctx ctx-${ctx.level}`} title={ctx.title}>
                     <i aria-hidden="true"><b style={{ width: `${Math.min(100, ctx.pct)}%` }} /></i>
@@ -447,8 +452,6 @@ export function RoomSwitcher() {
                   </span>
                 ) : null}
               </span>
-              <span className={`room-card-status${st.working ? ' on' : ''}`} />
-              {asks[id] ? <i className="room-card-ask" title={`Waiting for your answer: ${asks[id].text}`} aria-hidden="true"><Icon name="help" size={12} /></i> : unseen[id] ? <i className="room-card-alert" title="This session is done – click to read its summary" aria-hidden="true" /> : null}
             </button>
           );
         })}
