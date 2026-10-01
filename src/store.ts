@@ -616,6 +616,35 @@ function enterRoom(get: Get, set: SetFn, id: string | null) {
   set({ activeRoomId: id, selectedKey: null, releaseAsk: null, summaries, summaryOpen });
 }
 
+/** How long the room in the floating window may stand empty-handed before the window moves on to a room that is working. */
+const PIP_IDLE_MS = 8000;
+let pipIdle = { id: '', since: 0 };
+
+/**
+ * The floating window has no buttons to change rooms with: once the room on show has had nothing to do for a while (its people
+ * have had time to go home), it follows the room that was active most recently. With no room working it stays where it is.
+ */
+function followActiveRoom(get: Get, set: SetFn, now: number) {
+  const st = get();
+  const cur = st.activeRoomId;
+  if (!st.pip || !cur) return;
+  const working = (id: string) => !!st.rooms[id]?.mainActive || tasksOf(st, id).length > 0;
+  if (working(cur)) {
+    pipIdle = { id: '', since: 0 };
+    return;
+  }
+  if (pipIdle.id !== cur) pipIdle = { id: cur, since: now };
+  if (now - pipIdle.since < PIP_IDLE_MS) return;
+  let best: string | null = null;
+  for (const id of st.visibleOrder) {
+    if (id === cur || !working(id)) continue;
+    if (!best || (lastActive.get(id) ?? 0) > (lastActive.get(best) ?? 0)) best = id;
+  }
+  if (!best) return;
+  pipIdle = { id: '', since: 0 };
+  set({ activeRoomId: best, selectedKey: null, summaryOpen: null });
+}
+
 /** One housekeeping step for a room. */
 function tickRoom(get: Get, set: SetFn, roomId: string, now: number) {
   const room = get().rooms[roomId];
@@ -981,6 +1010,7 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
       const now = Date.now();
       for (const id of [...get().roomOrder]) tickRoom(get, set, id, now);
       refreshVisible(get, set);
+      followActiveRoom(get, set, now);
     }),
 
   releaseTask: (personKey) => batch(() => {
