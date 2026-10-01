@@ -178,6 +178,10 @@
   .room-card { width: min(330px, 74vw); }
 }
 
+/* the name tag takes the place of a bubble (and the other way round) at once: fading it in from nothing left the spot over the head
+   empty for a third of a second every time a bubble went away, which looked like the name blinking */
+.nametag { animation: none; }
+
 /* the pending question of the agent: a warmer glow and a thicker rim */
 .bubble-ask .bubble-shape { filter: drop-shadow(0 9px 10px rgba(160, 100, 10, 0.32)); }
 .bubble-ask .bubble-shape .shape-ring { stroke-width: 6; }
