@@ -234,7 +234,8 @@ function isStale(s: State, id: string, now: number): boolean {
 }
 
 /**
- * The order of the room buttons: the order in which the sessions showed up, with the idle rooms behind the working ones
+ * The order of the room buttons: the order in which the sessions showed up, with the rooms that need the user (a question,
+ * an unread summary) in front and the idle rooms behind the working ones
  * (sorted again shortly after a room starts or stops working, see the subscription at the end of this file, and at once
  * when a summary is closed). (The number keys and the arrow keys follow the same order.)
  */
@@ -242,11 +243,11 @@ export function orderedRooms(s: Pick<State, 'listOrder'>): string[] {
   return [...s.listOrder];
 }
 
-/** A question first, then the working rooms, then the idle ones (a finished room with an unread summary leads the idle ones); ties keep the order of arrival. */
+/** A question first, then the finished rooms with an unread summary, then the working rooms, then the idle ones; ties keep the order of arrival. */
 function sortedList(s: State, ids: string[]): string[] {
   const busy = new Set<string>();
   for (const t of Object.values(s.tasks)) busy.add(t.sessionId);
-  const rank = new Map(ids.map((id) => [id, s.asks[id] ? 0 : s.rooms[id]?.mainActive || busy.has(id) ? 1 : s.unseen[id] ? 2 : 3] as const));
+  const rank = new Map(ids.map((id) => [id, s.asks[id] ? 0 : s.unseen[id] ? 1 : s.rooms[id]?.mainActive || busy.has(id) ? 2 : 3] as const));
   const at = new Map(s.roomOrder.map((id, i) => [id, i] as const));
   return [...ids].sort((a, b) => rank.get(a)! - rank.get(b)! || at.get(a)! - at.get(b)!);
 }
