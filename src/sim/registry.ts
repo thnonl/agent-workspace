@@ -60,6 +60,8 @@ export interface SimState {
   /** while sitting down / getting up: how far the desk chair is pulled out from the desk (0 = tucked in, 1 = fully out) and its swivel relative to the desk (radians); the chair follows exactly */
   chairOut?: number;
   chairSwivel?: number;
+  /** toilet visit: 1 = on the way to the door of the cubicle, 2 = inside with the door shut, 3 = inside and on the way out (door open); undefined = none */
+  wc?: 1 | 2 | 3;
 }
 
 export const sims = new Map<string, SimState>();

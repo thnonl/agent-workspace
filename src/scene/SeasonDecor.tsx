@@ -1,6 +1,6 @@
 import { useMemo, type ReactNode } from 'react';
 import * as THREE from 'three';
-import type { RoomLayout } from '../world/layout';
+import { inRestroomApron, type RoomLayout } from '../world/layout';
 import type { Season } from '../season';
 import { Rng } from '../util/rng';
 import { G, M, MB } from './kit';
@@ -25,6 +25,7 @@ function freeSpots(layout: RoomLayout): { x: number; z: number }[] {
   const out: { x: number; z: number }[] = [];
   for (const [x, z] of cand) {
     if (Math.hypot(x - door.inside.x, z - door.inside.z) < 1.9) continue;
+    if (layout.restroom && inRestroomApron(layout.restroom, x, z, 0.5)) continue;
     const free = [[0, 0], [0.45, 0], [-0.45, 0], [0, 0.45], [0, -0.45]].every(([dx, dz]) => !nav.isBlocked(x + dx, z + dz));
     if (!free) continue;
     if (out.some((o) => Math.hypot(o.x - x, o.z - z) < 2.5)) continue;

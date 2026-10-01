@@ -21,6 +21,8 @@ export const frame = {
   dynamic: false,
   /** the camera is travelling / zooming on its own */
   cameraBusy: false,
+  /** rooms that are still being built stage by stage (their frames are slow and say nothing about the speed of the machine) */
+  building: 0,
   /** the scene needs full frame rate (otherwise it idles at a low rate, see IdleGovernor) */
   busy: true,
   /** static geometry appeared or changed: the shadow map must be redrawn */

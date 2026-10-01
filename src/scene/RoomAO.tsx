@@ -2,6 +2,7 @@ import { useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import { FOOT, type PropKind, type RoomLayout } from '../world/layout';
 import { WALL_T } from './RoomParts';
+import { restroomPieces } from './restroom';
 import { FX, initFx } from './fx';
 
 /** props that are too low to cast a visible shadow */
@@ -33,6 +34,14 @@ function buildAO(layout: RoomLayout): THREE.BufferGeometry {
   rects.push({ x: -t / 2, z: -D / 2 - t / 2, w: W + t, d: t, rot: 0, m: 0.62 });
   rects.push({ x: -W / 2 - t / 2, z: 0, w: t, d: D, rot: 0, m: 0.62 });
   for (const d of layout.desks) rects.push({ x: d.x, z: d.z, w: d.w, d: 1.0, rot: d.rot, m: 0.34 });
+  for (const d of layout.desks) {
+    for (const wg of d.wings) {
+      const c = Math.cos(d.rot);
+      const s = Math.sin(d.rot);
+      rects.push({ x: d.x + wg.x * c + wg.z * s, z: d.z - wg.x * s + wg.z * c, w: wg.w, d: wg.d, rot: d.rot, m: 0.28 });
+    }
+  }
+  if (layout.restroom) for (const pc of restroomPieces(layout, layout.restroom)) rects.push({ x: pc.x, z: pc.z, w: Math.max(pc.w, 0.1), d: Math.max(pc.d, 0.1), rot: 0, m: 0.22 });
   rects.push({ x: layout.director.desk.x, z: layout.director.desk.z, w: 3.0, d: 1.2, rot: 0, m: 0.4 });
   for (const [pi, p] of layout.props.entries()) {
     if (NO_AO.has(p.kind) || layout.movable.includes(pi)) continue;

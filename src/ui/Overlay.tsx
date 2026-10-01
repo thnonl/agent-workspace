@@ -858,7 +858,7 @@ export function Help() {
         <li><Icon name="building" size={16} /><span>Every <b>session</b> of Claude Code, Codex or OpenCode gets its own <b>room</b>; the round logo on its button says which one.</span></li>
         <li><Icon name="crown" size={16} /><span>The <b>director</b> voices the main agent (prompt, thoughts, delegating) and walks out last, when everything is finished.</span></li>
         <li><Icon name="list-checks" size={16} /><span>Every <b>task</b> is done by one <b>staff member</b> – a sub-agent run, or one tool call. Staff walk in, unpack their laptop, type, and show what they are doing in speech bubbles; the staff take turns.</span></li>
-        <li><Icon name="coffee" size={16} /><span>Whoever has nothing to do takes a break – a stroll, the sofa, a book, a drink, noodles, the punching dummy, a cat… A new task never sends anybody back to their desk: they work on it where they are.</span></li>
+        <li><Icon name="coffee" size={16} /><span>Whoever has nothing to do takes a break – a stroll, the sofa, a book, a drink, noodles, the punching dummy, the round table, the toilet (and then the sink), a cat… A new task never sends anybody back to their desk: they work on it where they are.</span></li>
         <li><Icon name="cat" size={16} /><span>Every room has 1–2 cats that hop in through the windows, wander, nap and leave when they like.</span></li>
         <li><Icon name="moon" size={16} /><span>Light follows your system clock: the sky darkens in the evening and every room switches its lights on.</span></li>
       </ul>

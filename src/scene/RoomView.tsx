@@ -19,7 +19,6 @@ import { RoomAO } from './RoomAO';
 import { RoomLightFx } from './RoomLightFx';
 import { SeasonDecor } from './SeasonDecor';
 import { CelebrationFx } from './CelebrationFx';
-import { boardPlan, StatsBoard } from './StatsBoard';
 import { PropHits, Radio } from './Interactive';
 import { bonusCats, levelOf, useProgress } from '../progress';
 import type { Season } from '../season';
@@ -27,6 +26,7 @@ import { CatView } from './CatView';
 import { CatToys } from './CatToys';
 import { MovableProps } from './MovableProps';
 import { shade } from './kit';
+import { RestroomShell, RestroomWalls } from './restroom';
 
 export const ROOM_SPACING_X = 48;
 export const ROOM_SPACING_Z = 42;
@@ -48,7 +48,6 @@ const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle, season,
   const t = WALL_T;
   const floorTex = useMemo(() => floorTexture(theme.floorKind, theme.floor, theme.floor2, theme.floorKind === 'wood' || theme.floorKind === 'carpetTile' ? W / 4 : W / 3, theme.floorKind === 'wood' || theme.floorKind === 'carpetTile' ? D / 4 : D / 3), [theme, W, D]);
   const { back, left } = useMemo(() => layoutOpenings(layout), [layout]);
-  const skipDecor = boardPlan(layout)?.replaces ?? null;
   const doorLocalBack = layout.door.wall === 'back' ? layout.door.pos + t / 2 : null;
   const doorLocalLeft = layout.door.wall === 'left' ? -layout.door.pos : null;
 
@@ -99,13 +98,13 @@ const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle, season,
           </group>
         ))}
         {layout.door.wall === 'back' ? <DoorView door={layout.door} theme={theme} roomId={roomId} localX={layout.door.pos + t / 2} /> : null}
-        {layout.wallDecor.filter((d) => d.wall === 'back' && d !== skipDecor).map((d, i) => (
+        {layout.wallDecor.filter((d) => d.wall === 'back' && d).map((d, i) => (
           <WallDecorView key={i} d={d} theme={theme} roomId={roomId} localX={d.pos + t / 2} />
         ))}
         {layout.signPos?.wall === 'back' ? <Sign title={signTitle} localX={layout.signPos.pos + t / 2} y={layout.signPos.y} theme={theme} /> : null}
         </StaticBake>
       </group>
-  ), [layout, back, skipDecor, signTitle, roomId]);
+  ), [layout, back, signTitle, roomId]);
 
   const leftPart = useMemo(() => (
       <group position={[-W / 2, 0, 0]} rotation={[0, Math.PI / 2, 0]}>
@@ -118,12 +117,12 @@ const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle, season,
           </group>
         ))}
         {layout.door.wall === 'left' ? <DoorView door={layout.door} theme={theme} roomId={roomId} localX={-layout.door.pos} /> : null}
-        {layout.wallDecor.filter((d) => d.wall === 'left' && d !== skipDecor).map((d, i) => (
+        {layout.wallDecor.filter((d) => d.wall === 'left' && d).map((d, i) => (
           <WallDecorView key={i} d={d} theme={theme} roomId={roomId} localX={-d.pos} />
         ))}
         </StaticBake>
       </group>
-  ), [layout, left, skipDecor, roomId]);
+  ), [layout, left, roomId]);
 
   // desks and props arrive in several parts (stages); the merge into a few meshes happens when the last part is in
   const deskCount = Math.min(layout.desks.length, Math.ceil((layout.desks.length * (stage - STAGE.desks + 1)) / DESK_STEPS));
@@ -143,6 +142,7 @@ const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle, season,
       {stage >= STAGE.props ? (
         <StaticBake ready={stage >= STAGE.props + PROP_STEPS - 1}>
           {layout.props.map((p, i) => (i < propCount && !layout.movable.includes(i) ? <PropItem key={i} p={p} theme={theme} roomId={roomId} /> : null))}
+          {layout.restroom && stage >= STAGE.props + PROP_STEPS - 1 ? <RestroomShell rr={layout.restroom} /> : null}
         </StaticBake>
       ) : null}
       {/* festive decorations (Halloween, Christmas, Tết): baked again when the season changes */}
@@ -202,6 +202,12 @@ export const RoomView = memo(function RoomView({ roomId }: { roomId: string }) {
   const stage = useBuildStage();
   const built = useRef(false);
   built.current = stage >= BUILD_STAGES;
+  const done = built.current;
+  useEffect(() => {
+    if (done) return;
+    frame.building++;
+    return () => void frame.building--;
+  }, [done]);
 
   // A room the camera does not see is neither drawn nor walked by three (FrameSync has already decided which
   // rooms are on screen). It is brought up to date in the frame it comes back, before that frame is drawn.
@@ -238,6 +244,7 @@ export const RoomView = memo(function RoomView({ roomId }: { roomId: string }) {
       ) : null}
       {stage >= STAGE.director ? <Chair x={layout.director.seat.x} z={layout.director.seat.z} rot={0} turn={0} color={shade(theme.accent2, -0.05)} roomId={roomId} deskIndex={-1} big seed={99} /> : null}
 
+      {stage >= STAGE.chairs && layout.restroom ? <RestroomWalls roomId={roomId} layout={layout} rr={layout.restroom} /> : null}
       {stage >= STAGE.toys ? <CatToys roomId={roomId} layout={layout} /> : null}
       {stage >= STAGE.movables ? <MovableProps roomId={roomId} layout={layout} /> : null}
 
@@ -246,7 +253,6 @@ export const RoomView = memo(function RoomView({ roomId }: { roomId: string }) {
         stage >= STAGE.cats + Math.min(i, 3) ? <CatView key={i} catKey={`${roomId}::cat${i}`} roomId={roomId} layout={layout} seed={seed + i * 977} /> : null
       ))}
 
-      {stage >= STAGE.board ? <StatsBoard roomId={roomId} layout={layout} /> : null}
       {stage >= STAGE.board ? <PropHits roomId={roomId} layout={layout} /> : null}
       {stage >= STAGE.board ? <Radio roomId={roomId} layout={layout} /> : null}
       {stage >= STAGE.party ? <CelebrationFx roomId={roomId} layout={layout} /> : null}

@@ -65,7 +65,7 @@ function playMeowClip(c: AudioContext, out: AudioNode, t: number, pitch: number,
 export type Sfx =
   | 'door' | 'pop' | 'talk' | 'ding' | 'chime' | 'key' | 'paper' | 'water' | 'sip' | 'page' | 'sizzle' | 'bite' | 'meow' | 'blip' | 'pour' | 'clink'
   | 'doorbell' | 'inhale' | 'exhale' | 'thud' | 'huff' | 'clank' | 'pickup' | 'swipe' | 'ring' | 'mail' | 'ask'
-  | 'shutter' | 'fanfare' | 'confetti' | 'sparkle' | 'levelup' | 'achieve' | 'puff' | 'radio' | 'clap';
+  | 'shutter' | 'fanfare' | 'confetti' | 'sparkle' | 'levelup' | 'achieve' | 'puff' | 'radio' | 'clap' | 'flush';
 
 const MUTE_KEY = 'claude-office:muted';
 /** overall level – effects are synthesised soft, this brings them up to a clearly audible volume */
@@ -165,7 +165,7 @@ if (typeof window !== 'undefined') {
   window.addEventListener('keydown', unlockAudio);
 }
 
-const MIN_GAP: Partial<Record<Sfx, number>> = { shutter: 500, fanfare: 1500, confetti: 400, sparkle: 600, levelup: 2000, achieve: 1500, puff: 400, radio: 300, clap: 3000, key: 70, pop: 160, talk: 240, blip: 200, water: 500, sizzle: 1500, doorbell: 4000, inhale: 2500, exhale: 2500, thud: 130, huff: 900, clank: 250, pickup: 3000, swipe: 2500, ring: 3000, mail: 2500, ask: 3000 };
+const MIN_GAP: Partial<Record<Sfx, number>> = { shutter: 500, fanfare: 1500, confetti: 400, sparkle: 600, levelup: 2000, achieve: 1500, puff: 400, radio: 300, clap: 3000, key: 70, pop: 160, talk: 240, blip: 200, water: 500, sizzle: 1500, flush: 6000, doorbell: 4000, inhale: 2500, exhale: 2500, thud: 130, huff: 900, clank: 250, pickup: 3000, swipe: 2500, ring: 3000, mail: 2500, ask: 3000 };
 
 function tone(c: AudioContext, at: number, freq: number, dur: number, gain: number, type: OscillatorType = 'sine', to?: number, attack = 0.008) {
   const o = c.createOscillator();
@@ -238,7 +238,8 @@ export function sfx(name: Sfx, roomId?: string, pitch = 1) {
       [660, 830, 990, 1320].forEach((f, i) => tone(c, t + i * 0.13, f, 0.6, 0.06));
       break;
     case 'key':
-      noise(c, t, 0.025, 0.035, 'highpass', 2600 + r * 1500);
+      // a soft, low tap (band-passed, short decay) instead of a sharp click
+      noise(c, t, 0.04, 0.014, 'bandpass', 1500 + r * 500, 800, 0.7);
       break;
     case 'paper':
       noise(c, t, 0.32, 0.06, 'bandpass', 1500, 3200, 0.7);
@@ -266,6 +267,11 @@ export function sfx(name: Sfx, roomId?: string, pitch = 1) {
     case 'clink':
       tone(c, t, 2100, 0.12, 0.03);
       tone(c, t + 0.03, 3100, 0.1, 0.02);
+      break;
+    case 'flush':
+      // a toilet flush: a rushing, slowly falling noise and a gurgle
+      noise(c, t, 1.6, 0.05, 'bandpass', 1800, 600, 0.5);
+      tone(c, t + 1.0, 190, 0.5, 0.025, 'sine', 120);
       break;
     case 'thud':
       noise(c, t, 0.09, 0.1, 'lowpass', 700, 180);

@@ -11,6 +11,7 @@ import { RB, Ms, DeskItem } from './furniture';
 import { useBaked } from './bake';
 import { PunchDummy, Dumbbells } from './gymProps';
 import { FloorPlant, TallPlant, CactusProp } from './plants';
+import { Toilet } from './restroom';
 import { FileCabinet, Copier, MeetingSet, WhiteboardStand, Boxes, ServerRack, Fridge, Vending, Trolley, Recycle, Credenza } from './officeProps';
 
 // ------------------------------------------------------------------------ props
@@ -337,6 +338,7 @@ export function PropView({ p, theme, roomId }: { p: Prop; theme: RoomTheme; room
     case 'stove': body = <Stove p={p} theme={theme} />; break;
     case 'loungeSet': body = <LoungeSet p={p} theme={theme} />; break;
     case 'punchDummy': body = <PunchDummy p={p} theme={theme} roomId={roomId} />; break;
+    case 'toilet': body = <Toilet p={p} theme={theme} />; break;
     case 'dumbbells': body = <Dumbbells p={p} theme={theme} roomId={roomId} />; break;
     default: body = null;
   }

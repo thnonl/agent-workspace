@@ -196,20 +196,57 @@ export function Desk({ slot, theme }: { slot: DeskSlot; theme: RoomTheme }) {
   const w = slot.w;
   const ds = slot.drawerSide;
   const frosted = useMemo(() => shade(theme.accent2, 0.15), [theme]);
+  const oval = slot.shape === 'oval';
+  // (an oval top has rounded ends: the legs and the pedestal move in so their corners stay under it)
+  const inset = oval ? 0.1 : 0;
   return (
     <group position={[slot.x, 0, slot.z]} rotation={[0, slot.rot, 0]}>
-      <RB size={[w, 0.06, 1.0]} pos={[0, DESK_TOP - 0.03, 0]} color={theme.deskTop} r={0.028} rough={0.55} />
-      <RB size={[w + 0.04, 0.02, 1.04]} pos={[0, DESK_TOP - 0.07, 0]} color={c} r={0.01} />
+      {oval ? (
+        <>
+          <mesh geometry={G.slab(w, 0.06, 1.0, 0.3)} material={M(theme.deskTop, { rough: 0.55 })} position={[0, DESK_TOP - 0.03, 0]} castShadow receiveShadow />
+          <mesh geometry={G.slab(w + 0.04, 0.02, 1.04, 0.32)} material={M(c)} position={[0, DESK_TOP - 0.07, 0]} castShadow receiveShadow />
+        </>
+      ) : (
+        <>
+          <RB size={[w, 0.06, 1.0]} pos={[0, DESK_TOP - 0.03, 0]} color={theme.deskTop} r={0.028} rough={0.55} />
+          <RB size={[w + 0.04, 0.02, 1.04]} pos={[0, DESK_TOP - 0.07, 0]} color={c} r={0.01} />
+        </>
+      )}
       {/* leg panel on one side, drawer pedestal on the other (drawers face the seat) */}
-      <RB size={[0.06, 0.66, 0.9]} pos={[-ds * (w / 2 - 0.05), 0.33, 0]} color={c} r={0.02} />
-      <RB size={[0.52, 0.64, 0.9]} pos={[ds * (w / 2 - 0.31), 0.33, 0]} color={c} r={0.03} />
-      <RB size={[w - 0.66, 0.42, 0.03]} pos={[-ds * 0.27, 0.5, 0.42]} color={shade(c, -0.05)} r={0.012} />
+      <RB size={[0.06, 0.66, 0.9 - inset * 2]} pos={[-ds * (w / 2 - 0.05 - inset), 0.33, 0]} color={c} r={0.02} />
+      <RB size={[0.52 - inset, 0.64, 0.9 - inset * 2]} pos={[ds * (w / 2 - 0.31 - inset / 2), 0.33, 0]} color={c} r={0.03} />
+      <RB size={[w - 0.66 - inset * 2, 0.42, 0.03]} pos={[-ds * 0.27, 0.5, 0.42]} color={shade(c, -0.05)} r={0.012} />
       {[0.52, 0.28].map((y, i) => (
         <group key={i}>
-          <RB size={[0.44, 0.22, 0.02]} pos={[ds * (w / 2 - 0.31), y, -0.46]} color={shade(c, 0.1)} r={0.012} />
-          <Ms geo={G.sphere(0.022, 8, 6)} mat={M('#fff4d8', { metal: 0.3, rough: 0.35 })} pos={[ds * (w / 2 - 0.31), y + 0.02, -0.485]} cast={false} />
+          <RB size={[0.44 - inset, 0.22, 0.02]} pos={[ds * (w / 2 - 0.31 - inset / 2), y, -0.46 + inset]} color={shade(c, 0.1)} r={0.012} />
+          <Ms geo={G.sphere(0.022, 8, 6)} mat={M('#fff4d8', { metal: 0.3, rough: 0.35 })} pos={[ds * (w / 2 - 0.31 - inset / 2), y + 0.02, -0.485 + inset]} cast={false} />
         </group>
       ))}
+      {/* the return of an L desk / the side wings of a U desk: a top, a leg panel at the end and a side panel */}
+      {slot.wings.map((wg, i) => {
+        const out = Math.sign(wg.x);
+        return (
+          <group key={i}>
+            <RB size={[wg.w, 0.06, wg.d]} pos={[wg.x, DESK_TOP - 0.03, wg.z]} color={theme.deskTop} r={0.028} rough={0.55} />
+            <RB size={[wg.w + 0.04, 0.02, wg.d + 0.04]} pos={[wg.x, DESK_TOP - 0.07, wg.z]} color={c} r={0.01} />
+            <RB size={[wg.w - 0.06, 0.66, 0.05]} pos={[wg.x, 0.33, wg.z - wg.d / 2 + 0.06]} color={c} r={0.02} />
+            <RB size={[0.05, 0.66, wg.d - 0.12]} pos={[wg.x + out * (wg.w / 2 - 0.06), 0.33, wg.z + 0.03]} color={c} r={0.02} />
+          </group>
+        );
+      })}
+      {/* a pinboard shelf along the far edge */}
+      {slot.shape === 'hutch' ? (
+        <group position={[0, DESK_TOP, 0.47]}>
+          <RB size={[w - 0.2, 0.5, 0.04]} pos={[0, 0.25, 0]} color={c} r={0.015} />
+          <RB size={[w - 0.2, 0.03, 0.14]} pos={[0, 0.34, -0.05]} color={shade(c, -0.06)} r={0.01} />
+          <RB size={[w - 0.4, 0.2, 0.012]} pos={[0, 0.16, -0.03]} color="#d9b382" r={0.006} rough={0.9} cast={false} />
+          {[-0.5, -0.12, 0.3].map((x, i) => (
+            <RB key={i} size={[0.1, 0.1, 0.008]} pos={[x * (w / 1.9), 0.18 + (i % 2) * 0.03, -0.04]} rot={[0, 0, (i - 1) * 0.12]} color={[theme.accent3, '#ffffff', theme.accent2][i]} r={0.004} cast={false} />
+          ))}
+          <RB size={[0.14, 0.1, 0.07]} pos={[-w / 2 + 0.35, 0.4, -0.05]} color={theme.accent} r={0.015} />
+          <RB size={[0.1, 0.13, 0.07]} pos={[-w / 2 + 0.5, 0.415, -0.05]} color={theme.accent3} r={0.015} />
+        </group>
+      ) : null}
       {slot.partition ? <RB size={[0.04, 0.5, 0.96]} pos={[w / 2 + 0.01, DESK_TOP + 0.25, 0]} color={frosted} r={0.012} opacity={0.5} rough={0.2} cast={false} /> : null}
       {slot.items.map((it, i) => (
         <group key={i} position={[it.x, DESK_TOP, it.z]} rotation={[0, it.rot, 0]}>

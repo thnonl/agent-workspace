@@ -16,7 +16,7 @@ const TOOL_ICONS: Record<string, string> = {
 
 /** icons of the "what I am doing" bubbles (Speech.tool) */
 const IDLE_ICONS: Record<string, string> = {
-  parcel: '📦', tidy: '🧹', smoke: '🚬', sleep: '💤', box: '🥊', lift: '🏋️',
+  toilet: '🚽', parcel: '📦', tidy: '🧹', smoke: '🚬', sleep: '💤', box: '🥊', lift: '🏋️',
   read: '📖', drink: '🥤', coffee: '☕', fish: '🐟', wash: '🧼', water: '🪴', sofa: '🛋️', pet: '🐱', window: '🪟', walk: '🚶', watch: '👀', phone: '📱', wait: '⏳', home: '👋', wave: '👋', cook: '🍳', eat: '🍜', chat: '💬', talk: '💬',
 };
 

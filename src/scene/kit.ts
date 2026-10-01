@@ -30,7 +30,31 @@ function limbProfile(rTop: number, rBot: number, len: number, open = false): THR
   return pts;
 }
 
+/** Flat slab w x d (x, z) with rounded corners, h thick, centred on the origin (a rounded desk top). */
+function slabGeometry(w: number, h: number, d: number, r: number): THREE.BufferGeometry {
+  r = Math.min(r, w / 2 - 0.001, d / 2 - 0.001);
+  const hw = w / 2;
+  const hd = d / 2;
+  const s = new THREE.Shape();
+  s.moveTo(-hw + r, -hd);
+  s.lineTo(hw - r, -hd);
+  s.absarc(hw - r, -hd + r, r, -Math.PI / 2, 0, false);
+  s.lineTo(hw, hd - r);
+  s.absarc(hw - r, hd - r, r, 0, Math.PI / 2, false);
+  s.lineTo(-hw + r, hd);
+  s.absarc(-hw + r, hd - r, r, Math.PI / 2, Math.PI, false);
+  s.lineTo(-hw, -hd + r);
+  s.absarc(-hw + r, -hd + r, r, Math.PI, Math.PI * 1.5, false);
+  const g = new THREE.ExtrudeGeometry(s, { depth: h, bevelEnabled: false, curveSegments: 8 });
+  // (the shape lies in x / y, the extrusion runs along z: lay it down so the thickness is y)
+  g.rotateX(Math.PI / 2);
+  g.translate(0, h / 2, 0);
+  return g;
+}
+
 export const G = {
+  /** rounded-corner slab (a desk top with rounded ends) */
+  slab: (w: number, h: number, d: number, r: number) => cached(`z${w}|${h}|${d}|${r}`, () => slabGeometry(w, h, d, r)),
   /** one smooth tapered limb: a capsule whose two ends may have different radii (top end at y 0, bottom end at y -len) */
   limb: (rTop: number, rBot: number, len: number, seg = 16) => cached(`m${rTop}|${rBot}|${len}|${seg}`, () => new THREE.LatheGeometry(limbProfile(rTop, rBot, len), seg)),
   /** the same shape open at the bottom: a sleeve that is pulled over a limb */

@@ -1,10 +1,10 @@
 import type { PersonRec, SpeechKind, TaskRec } from '../types';
-import { rot2, type RoomLayout, type Station, type StationKind } from '../world/layout';
+import { rot2, type RoomLayout, type Spot, type Station, type StationKind } from '../world/layout';
 import type { V2 } from '../world/nav';
 import { sfx, type Sfx } from '../audio';
 import { env } from '../env';
 import { SLOW_MAX_DT } from './frame';
-import { CHAT_SCRIPTS, eatLine, goodbyeLine, greetingLine, reportLine, serveLine, thoughts } from './phrases';
+import { CHAT_SCRIPTS, TABLE_LINES, eatLine, goodbyeLine, greetingLine, reportLine, serveLine, thoughts } from './phrases';
 import { kickDummy, takeDumbbells } from './gym';
 import { notePet } from '../progress';
 import { debugFlags, movedIfAny, movedOf, notifyMoved, dismissIdle, enqueueSpeech, greet, parcelDone, roomRuntime, tickParcel, sims, simsInRoom, spotOwners, type CatSim, type Phase, type RoomRuntime, type SimState } from './registry';
@@ -71,7 +71,18 @@ export interface ActorCtx {
   nameOf: (simKey: string) => string;
 }
 
-type ActivityKind = 'wander' | 'sofa' | 'watch' | 'window' | 'pet' | 'stay' | 'chat' | 'parcel' | 'tidy' | 'sleep' | StationKind;
+type ActivityKind = 'wander' | 'sofa' | 'watch' | 'window' | 'pet' | 'stay' | 'chat' | 'parcel' | 'tidy' | 'sleep' | 'toilet' | 'table' | StationKind;
+
+/** activities that sit down on a spot (sofa, toilet, chair at the round table) */
+const SEATED = new Set<ActivityKind>(['sofa', 'toilet', 'table']);
+/** who talks at which round table: speaker, until when, and the earliest time of the next line (sim clock) */
+const tableTalk = new Map<string, { by: string; until: number; next: number }>();
+/** distance of the chair-side standing point from the seat (round table chairs are entered from the side) */
+const CHAIR_STAND = 0.72;
+/** the hips sit this far forward of the chair seat point */
+const CHAIR_FWD = 0.02;
+/** seconds the toilet visitor waits for a free sink before giving up */
+const SINK_WAIT_MAX = 18;
 
 const pickOne = <T,>(list: readonly T[]): T => list[Math.floor(Math.random() * list.length)];
 
@@ -142,6 +153,8 @@ function thoughtOf(a: Activity, name: string): [string, string] | null {
     case 'box': return [thoughts.box(), 'box'];
     case 'lift': return [thoughts.lift(), 'lift'];
     case 'chat': return [thoughts.chat(name), 'chat'];
+    case 'toilet': return [thoughts.toilet(a.toiletMode ?? 'none', !!a.hurry), 'toilet'];
+    case 'table': return a.meal === 'coffee' ? [thoughts.tableCoffee(), 'coffee'] : [thoughts.tableMeal(), 'eat'];
     default: return null;
   }
 }
@@ -203,6 +216,11 @@ interface Activity {
   /** tidy: index into the room's moved-props list of the plant / carton to carry, and where to */
   tidy?: number;
   tidyTo?: Place;
+  /** toilet: what is done in there, and whether it is an emergency (fast walk, short visit) */
+  toiletMode?: 'phone' | 'book' | 'none';
+  hurry?: boolean;
+  /** table: what is on the table in front of the seat */
+  meal?: 'coffee' | 'noodles';
 }
 
 /** height of the hip above the floor for an appearance scale of 1 (model hip * rig scale) */
@@ -1013,10 +1031,11 @@ export class Actor {
 
       case 'stroll': {
         if (!this.act?.outdoor && this.awayWork(dt, ctx, pose)) break;
-        this.walkPose(pose, 1);
+        const hurry = !!this.act?.hurry;
+        this.walkPose(pose, hurry ? 1.25 : 1);
         s.y = 0;
         if (this.shouldReturn(ctx)) this.goHome(ctx);
-        else if (this.walk(dt, ctx)) {
+        else if (this.walk(dt, ctx, hurry ? 1.55 : 1)) {
           this.actStage = 0;
           this.from = { x: s.x, z: s.z };
           this.setPhase('activity');
@@ -1155,6 +1174,7 @@ export class Actor {
       if (this.sleepT >= 0) this.wake();
       if (!msgOn && (s.phase === 'working' || s.phase === 'activity')) this.askPose(pose, (ctx.now - ctx.rt.askAt) % 4);
     }
+    this.updateWc(ctx);
     this.blink(dt);
     this.copyPose(pose);
   }
@@ -1416,6 +1436,11 @@ export class Actor {
     const chatters = ctx.idlers.filter((w) => w.key !== s.key && !w.chatBy && !w.asleep && w.onStage && w.phase === 'working' && !w.busy && w.desk >= 0);
     const untidy = layout.movable.length ? untidyProps(s.roomId, layout, ctx.now) : [];
     const parcelFree = ctx.rt.parcel === 'waiting' && (!ctx.rt.parcelBy || !sims.get(ctx.rt.parcelBy)?.onStage);
+    const rr = layout.restroom;
+    const toiletFree = !!rr && !spotOwners.has(`${s.roomId}#${rr.spot}`);
+    const chairsFree = layout.spots.map((sp, i) => ({ sp, i })).filter(({ sp, i }) => sp.kind === 'chair' && !spotOwners.has(`${s.roomId}#${i}`));
+    /** people already sitting at round table `ti` (a table with company is more inviting) */
+    const seated = (ti: number) => layout.tables[ti].seats.filter((i) => spotOwners.has(`${s.roomId}#${i}`)).length;
     const stationsOf = (k: StationKind) => layout.stations.map((st, i) => ({ st, i })).filter(({ st, i }) => st.kind === k && !spotOwners.has(`${s.roomId}@${i}`));
     const options: [ActivityKind, number][] = [
       ['wander', staff ? 1.5 : 3], ['sofa', seats.length ? (staff ? 4 : 3) : 0], ['watch', watchable.length ? (staff ? 1.5 : 4) : 0],
@@ -1425,6 +1450,7 @@ export class Actor {
       ['cook', stationsOf('cook').length ? 3.5 : 0],
       ['box', stationsOf('box').length ? 2.5 : 0], ['lift', stationsOf('lift').length ? 2.5 : 0],
       ['chat', chatters.length ? (staff ? 4 : 2.5) : 0],
+      ['toilet', toiletFree ? (staff ? 3 : 2) : 0], ['table', chairsFree.length ? (staff ? 3.5 : 2.5) * (1 + 0.9 * Math.max(...chairsFree.map(({ sp }) => seated(sp.table ?? 0)))) : 0],
       // a box on the porch: the first to roll it goes (nobody else is on the way); a nap is likelier at night
       ['parcel', parcelFree ? 25 : 0], ['tidy', untidy.length ? (staff ? 4 : 2.5) : 0], ['sleep', staff || !ctx.rt.visitors.some((v) => v !== null) ? 2 * (1 + env.night) : 0],
     ];
@@ -1459,6 +1485,24 @@ export class Actor {
         spotOwners.set(stationKey, s.key);
         const dur = kind === 'drink' ? 15 : kind === 'read' ? 26 + Math.random() * 10 : kind === 'fish' ? 22 + Math.random() * 10 : kind === 'wash' ? 14 : kind === 'cook' ? 34 + Math.random() * 6 : kind === 'box' ? 18 + Math.random() * 10 : kind === 'lift' ? 20 + Math.random() * 10 : 20 + Math.random() * 6;
         return { kind, target: st.stand, yaw: st.yaw, dur, station: st, stationKey, detail: kind === 'read' ? pickOne(BOOKS) : undefined };
+      }
+      case 'toilet': {
+        // a quick dash or a long sit; phone, book or nothing at all
+        const i = rr!.spot;
+        spotOwners.set(`${s.roomId}#${i}`, s.key);
+        const hurry = Math.random() < 0.3;
+        let mode: 'phone' | 'book' | 'none' = pick(['phone', 'phone', 'book', 'none', 'none'] as const);
+        if (hurry && mode === 'book') mode = 'none';
+        const dur = hurry ? 5 + Math.random() * 3 : mode === 'none' ? 14 + Math.random() * 12 : 26 + Math.random() * 24;
+        return { kind, target: layout.spots[i].approach, yaw: layout.spots[i].yaw, dur, spot: i, toiletMode: mode, hurry };
+      }
+      case 'table': {
+        // sit where somebody already sits when there is such a table
+        const weighted = chairsFree.flatMap((c) => Array.from({ length: 1 + 2 * seated(c.sp.table ?? 0) }, () => c));
+        const { sp, i } = pick(weighted);
+        spotOwners.set(`${s.roomId}#${i}`, s.key);
+        const meal = Math.random() < 0.62 ? 'coffee' : 'noodles';
+        return { kind, target: sp.approach, yaw: sp.yaw, dur: meal === 'coffee' ? 30 + Math.random() * 16 : 36 + Math.random() * 14, spot: i, meal };
       }
       case 'sofa': {
         const { sp, i } = pick(seats);
@@ -1566,7 +1610,7 @@ export class Actor {
       return;
     }
     // (getting up from / sitting down on the sofa is finished first)
-    if (a.kind !== 'parcel' && (a.kind !== 'sofa' || this.actStage === 1) && this.awayWork(dt, ctx, pose)) return;
+    if (a.kind !== 'parcel' && (!SEATED.has(a.kind) || this.actStage === 1) && this.awayWork(dt, ctx, pose)) return;
     const t = this.t;
     const back = this.shouldReturn(ctx);
     switch (a.kind) {
@@ -1581,20 +1625,31 @@ export class Actor {
         }
         break;
       }
-      case 'sofa': {
+      case 'sofa':
+      case 'toilet':
+      case 'table': {
         const spot = ctx.layout.spots[a.spot!];
+        const chair = spot.kind === 'chair';
+        // (a sofa is deep and low: the shins stick out forward; on a chair or a toilet they hang straight down)
+        const knee = a.kind === 'sofa' ? SOFA_KNEE : 1;
         // the thighs lie on the cushion (not in it) and the knees hang over the front edge
         const yOn = spot.y - this.hip + this.hip * THIGH_R;
         const k = this.hip / HIP;
-        const seatX = spot.x + Math.sin(spot.yaw) * SOFA_FWD * k;
-        const seatZ = spot.z + Math.cos(spot.yaw) * SOFA_FWD * k;
+        const fwdOff = chair ? CHAIR_FWD : SOFA_FWD;
+        const seatX = spot.x + Math.sin(spot.yaw) * fwdOff * k;
+        const seatZ = spot.z + Math.cos(spot.yaw) * fwdOff * k;
         // the sofa's front is +spot.yaw; the person sits facing the same way, with the back to the cushion
         const fx = Math.sin(spot.yaw);
         const fz = Math.cos(spot.yaw);
-        const stand = { x: seatX + fx * SOFA_STAND, z: seatZ + fz * SOFA_STAND };
+        // (a chair at the round table is entered from the side: the table is in front of it)
+        const side = { x: spot.approach.x - seatX, z: spot.approach.z - seatZ };
+        const sideLen = Math.hypot(side.x, side.z) || 1;
+        const stand = chair
+          ? { x: seatX + (side.x / sideLen) * CHAIR_STAND, z: seatZ + (side.z / sideLen) * CHAIR_STAND }
+          : { x: seatX + fx * SOFA_STAND, z: seatZ + fz * SOFA_STAND };
         /** the route between the spot where the walk ends (`end`) and the standing point in front of the seat: out to the standing distance, then along the front */
         const route = (end: V2): V2[] => {
-          const lat = (end.x - seatX) * fz - (end.z - seatZ) * fx;
+          const lat = chair ? 0 : (end.x - seatX) * fz - (end.z - seatZ) * fx;
           if (Math.abs(lat) < 0.05) return [end, stand];
           return [end, { x: stand.x + fz * lat, z: stand.z - fx * lat }, stand];
         };
@@ -1639,7 +1694,7 @@ export class Actor {
             s.y = lerp(0, yOn, v);
             s.sitT = v;
             this.setYaw(spot.yaw);
-            this.seatedPose(pose, v, SOFA_KNEE);
+            this.seatedPose(pose, v, knee);
             pose.lean = 0.22 * Math.sin(u * Math.PI);
             pose.armLx = pose.armRx = -0.3 * Math.sin(u * Math.PI);
             if (u >= 1) {
@@ -1651,8 +1706,10 @@ export class Actor {
         } else if (this.actStage === 1) {
           s.sitT = 1;
           this.faceYaw(spot.yaw, dt);
-          this.seatedPose(pose, 1, SOFA_KNEE);
-          if (a.sleep) {
+          this.seatedPose(pose, 1, knee);
+          if (a.kind === 'toilet') this.toiletSeat(pose, a, t);
+          else if (a.kind === 'table') this.tableSeat(pose, a, ctx, dt, t, spot);
+          else if (a.sleep) {
             this.sleepPose(pose, true);
             this.zzz(ctx, t);
           } else if (a.phone) {
@@ -1664,9 +1721,12 @@ export class Actor {
             this.actStage = 2;
             this.t = 0;
           }
-        } else {
+        } else if (this.actStage === 2) {
           // lean forward, push up, then step away along the front of the sofa
           this.held = 'none';
+          this.heldTilt = 0;
+          this.bookOpen = 0;
+          if (a.kind === 'toilet') this.cue('flush', 0.4);
           const riseEnd = SOFA_LEAN_S + SOFA_RISE_S;
           if (t < riseEnd) {
             const u = smooth((t - SOFA_LEAN_S) / SOFA_RISE_S);
@@ -1676,7 +1736,7 @@ export class Actor {
             s.y = lerp(yOn, 0, u);
             s.sitT = 1 - u;
             this.setYaw(spot.yaw);
-            this.seatedPose(pose, s.sitT, SOFA_KNEE);
+            this.seatedPose(pose, s.sitT, knee);
             pose.lean = 0.3 * (t < SOFA_LEAN_S ? smooth(t / SOFA_LEAN_S) : 1 - u * 0.8);
             pose.armLx = pose.armRx = -0.3 * Math.sin(Math.min(1, t / riseEnd) * Math.PI);
           } else {
@@ -1692,8 +1752,14 @@ export class Actor {
             if (p.yaw !== null) this.faceYaw(p.yaw, dt, 11);
             this.walkPhase += dt * WALK_SPEED * 0.8 * 4.6;
             this.walkPose(pose, 0.8);
-            if (u >= 1) this.goHome(ctx);
+            if (u >= 1) this.leaveSeat(ctx, a, back);
           }
+        } else {
+          // toilet: waiting at the cubicle for a free sink
+          this.idlePose(pose);
+          this.held = 'none';
+          if (back || t > SINK_WAIT_MAX) this.goHome(ctx);
+          else this.startWash(ctx);
         }
         break;
       }
@@ -1769,10 +1835,181 @@ export class Actor {
     this.prevT = t;
   }
 
-  /** on the sofa: head down over the phone, the thumb flicks the screen now and then, a smile at something funny */
-  private phonePose(p: Pose, t: number) {
+  /** on the toilet: scrolling the phone, reading a book, or just sitting (hands on the knees); an emergency taps a foot */
+  private toiletSeat(p: Pose, a: Activity, t: number) {
     const c = this.clock;
-    this.seatedPose(p, 1, SOFA_KNEE);
+    this.held = 'none';
+    this.heldTilt = 0;
+    this.bookOpen = 0;
+    const mode = a.toiletMode ?? 'none';
+    if (mode === 'phone') {
+      this.held = 'phone';
+      this.phonePose(p, t, 1);
+      for (let at = 3; at < a.dur - 2; at += PHONE_SWIPE_S) this.cue('swipe', at);
+    } else if (mode === 'book') {
+      this.held = 'book';
+      this.bookOpen = seg(t, 0.3, 0.9);
+      this.heldTilt = -0.95 * seg(t, 0.2, 0.9);
+      p.lean = 0.08;
+      p.armRx = -1.0;
+      p.armRz = -0.4;
+      p.foreRx = -1.55;
+      p.armLx = -0.95 + Math.max(0, Math.sin(c * 0.7)) ** 8 * -0.25;
+      p.armLz = -0.4;
+      p.foreLx = -1.55;
+      p.headX = 0.34;
+      p.headY = Math.sin(c * 0.5) * 0.1;
+      for (let at = 4; at < a.dur - 2; at += 5.5) this.cue('page', at);
+    } else {
+      // hands on the knees, looking at the door, the floor, the ceiling…
+      p.lean = a.hurry ? 0.2 : 0.12;
+      p.armRx = p.armLx = -0.55;
+      p.armRz = p.armLz = 0.15;
+      p.foreRx = p.foreLx = -0.7;
+      p.headX = 0.15 + Math.sin(c * 0.8) * 0.06;
+      p.headY = Math.sin(c * 0.45) * 0.35;
+      if (a.hurry) {
+        p.kneeRx += Math.max(0, Math.sin(c * 16)) * 0.14;
+        p.headX = 0.3;
+        p.mouth = 'o';
+      } else p.happy = 0.2 + 0.2 * Math.max(0, Math.sin(c * 0.3));
+    }
+  }
+
+  /** at the round table: sip a coffee or eat a bowl of noodles; with company, somebody says something every few seconds and the others listen */
+  private tableSeat(p: Pose, a: Activity, ctx: ActorCtx, dt: number, t: number, spot: Spot) {
+    const s = this.sim;
+    const c = this.clock;
+    const now = ctx.now;
+    const coffee = a.meal === 'coffee';
+    this.held = coffee ? 'cup' : 'bowl';
+    this.heldTilt = 0;
+    this.bookOpen = 0;
+    // the others at this table
+    const mates: SimState[] = [];
+    for (const i of ctx.layout.tables[spot.table ?? 0]?.seats ?? []) {
+      const key = spotOwners.get(`${s.roomId}#${i}`);
+      if (!key || key === s.key) continue;
+      const m = sims.get(key);
+      if (m && m.onStage && m.phase === 'activity' && m.sitT > 0.9) mates.push(m);
+    }
+    const tk = `${s.roomId}#t${spot.table ?? 0}`;
+    let talk = tableTalk.get(tk);
+    if (mates.length && t > 2.5 && (!talk || now > talk.until) && now > (talk?.next ?? 0) && Math.random() < dt * 0.3) {
+      talk = { by: s.key, until: now + 3.4, next: now + 4.5 + Math.random() * 4 };
+      tableTalk.set(tk, talk);
+      enqueueSpeech(s.key, { kind: 'idle', text: pickOne(TABLE_LINES), tool: 'talk' }, true);
+      sfx('talk', s.roomId);
+    }
+    const speaking = !!talk && talk.by === s.key && now < talk.until;
+    const speaker = talk && talk.by !== s.key && now < talk.until ? sims.get(talk.by) : undefined;
+    // sip / bite every few seconds: the cup or bowl comes up to the mouth and goes back down to the table
+    const period = coffee ? 8 : 6.5;
+    const cyc = t > 2 ? (t - 2) / period : -1;
+    const u = cyc >= 0 ? cyc % 1 : 0;
+    const raise = cyc >= 0 ? seg(u, 0, 0.16) * (1 - seg(u, 0.4, 0.58)) : 0;
+    if (cyc >= 0 && u > 0.28 && Math.floor(cyc) >= this.bites) {
+      this.bites = Math.floor(cyc) + 1;
+      sfx(coffee ? 'sip' : 'bite', s.roomId);
+    }
+    if (!coffee && cyc >= 0 && !this.ate && !mates.length) {
+      this.ate = true;
+      this.announce(ctx, [eatLine(), 'eat']);
+    }
+    p.lean = 0.06;
+    // right hand: the cup / bowl (on the table, up to the mouth); left hand: on the table, or talking
+    p.armRx = lerp(this.reach.arm + 0.12, -0.85, raise);
+    p.armRz = lerp(-0.12, -0.55, raise);
+    p.foreRx = lerp(this.reach.fore - 0.2, -2.05, raise);
+    p.armLx = this.reach.arm;
+    p.armLz = -0.12;
+    p.foreLx = this.reach.fore;
+    this.heldTilt = coffee ? -0.55 * raise : -0.35 * raise;
+    p.headX = 0.08 - 0.18 * raise;
+    p.headY = mates.length ? Math.sin(c * 0.35) * 0.4 : Math.sin(c * 0.4) * 0.3;
+    p.happy = 0.3 + 0.5 * raise;
+    if (speaking) {
+      p.armLx = -0.6 + Math.sin(c * 4.2) * 0.25;
+      p.armLz = -0.25;
+      p.foreLx = -1.0 + Math.sin(c * 4.2 + 1) * 0.3;
+      p.headX += Math.sin(c * 5) * 0.05;
+      p.happy = 0.8;
+      p.mouth = Math.sin(c * 13) > 0 ? 'o' : 'smile';
+    } else if (speaker) {
+      // listen: look at whoever talks, nod
+      const bearing = angleDiff(s.yaw, Math.atan2(speaker.x - s.x, speaker.z - s.z));
+      p.headY = Math.max(-1.1, Math.min(1.1, bearing));
+      p.headX += Math.sin(c * 3.1) * 0.04;
+      p.happy = Math.max(p.happy, 0.45);
+    }
+  }
+
+  /** the seat is free again; after the toilet one goes and washes their hands, anything else goes home */
+  private leaveSeat(ctx: ActorCtx, a: Activity, back: boolean) {
+    if (a.kind === 'toilet' && !back) {
+      if (this.startWash(ctx)) return;
+      if (ctx.layout.stations.some((st) => st.kind === 'wash')) {
+        // all sinks busy: wait here, politely
+        this.actStage = 3;
+        this.t = 0;
+        return;
+      }
+    }
+    this.goHome(ctx);
+  }
+
+  /** walk to the nearest free sink (the one next to the cubicle first) and wash up; false when every sink is taken */
+  private startWash(ctx: ActorCtx): boolean {
+    const L = ctx.layout;
+    const s = this.sim;
+    const rr = L.restroom;
+    let pick = -1;
+    let bestD = Infinity;
+    L.stations.forEach((st, i) => {
+      if (st.kind !== 'wash' || spotOwners.has(`${s.roomId}@${i}`)) return;
+      const d = Math.hypot(st.stand.x - s.x, st.stand.z - s.z) - (rr && rr.wash === i ? 3 : 0);
+      if (d < bestD) {
+        bestD = d;
+        pick = i;
+      }
+    });
+    if (pick < 0) return false;
+    const st = L.stations[pick];
+    const key = `${s.roomId}@${pick}`;
+    this.releaseSpot();
+    spotOwners.set(key, s.key);
+    this.act = { kind: 'wash', target: st.stand, yaw: st.yaw, dur: 11, station: st, stationKey: key };
+    this.announce(ctx, [thoughts.washHands(), 'wash']);
+    this.startPath(L.nav.findPath({ x: s.x, z: s.z }, st.stand) ?? [st.stand]);
+    s.y = 0;
+    s.sitT = 0;
+    this.setPhase('stroll');
+    return true;
+  }
+
+  /** tells the cubicle door what is going on: 1 = somebody comes / goes through the doorway, 2 = somebody is inside (door shut), 3 = somebody on the way out */
+  private updateWc(ctx: ActorCtx) {
+    const s = this.sim;
+    const a = this.act;
+    const rr = ctx.layout.restroom;
+    let v: 1 | 2 | 3 | undefined;
+    if (a?.kind === 'toilet' && rr && s.onStage) {
+      if (s.phase === 'stroll') {
+        const ap = ctx.layout.spots[a.spot!].approach;
+        if (Math.hypot(s.x - ap.x, s.z - ap.z) < 3) v = 1;
+      } else if (s.phase === 'activity') {
+        if (this.actStage === 0) v = s.z > rr.frontZ - 0.35 ? 1 : 2;
+        else if (this.actStage === 1) v = 2;
+        else if (this.actStage === 2) v = s.z < rr.frontZ + 0.9 ? 3 : undefined;
+      }
+    }
+    s.wc = v;
+  }
+
+  /** on the sofa: head down over the phone, the thumb flicks the screen now and then, a smile at something funny */
+  private phonePose(p: Pose, t: number, knee = SOFA_KNEE) {
+    const c = this.clock;
+    this.seatedPose(p, 1, knee);
     p.lean = 0.1;
     p.headX = 0.42 + Math.sin(c * 0.7) * 0.03;
     p.headY = Math.sin(c * 0.4) * 0.05;

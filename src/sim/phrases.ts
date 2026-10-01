@@ -147,7 +147,35 @@ const PHONE = [
   'Let me catch up on my feed 📱',
 ];
 
+const WC_HURRY = [
+  'Nature calls – and it is shouting!', 'Gotta run, back in a minute!', 'Emergency! Out of my way!', 'Too much coffee… hurrying!',
+  'Excuse me, urgent business!', 'Quick, quick, quick!', 'I should not have had that third cup',
+];
+const WC_PLAIN = ['Nature calls', 'A quick trip to the restroom', 'Back in a few minutes', 'Restroom break', 'Excuse me for a moment'];
+const WC_PHONE = [
+  'Restroom break – and a little scroll 📱', 'The best signal in the office is in there 📱', 'Taking my phone for a long sit 📱',
+  'Time for a restroom break… and my feed 📱', 'Five minutes of peace and a phone 📱',
+];
+const WC_BOOK = [
+  'Restroom break with a good book', 'The restroom is my library', 'A chapter or two in there, I think', 'Bringing something to read',
+  'Reading time, in the quietest room',
+];
+const WC_NONE = ['Just going to sit and think', 'The quietest spot in the office', 'A moment of peace, please', 'Back soon – no phone, no worries', 'A quiet break in the restroom'];
+const WASH_HANDS = ['Washing my hands, of course', 'Always wash your hands!', 'Soap time – twenty seconds', 'A clean pair of hands', 'Over to the sink to wash up', 'Hygiene first!'];
+const TABLE_COFFEE = [
+  'Coffee at the round table – nice', 'Time to sit down with a hot coffee', 'A cup of coffee and a proper seat', 'Let me drink this one sitting down',
+  'Coffee break at the table', 'A calm coffee at the round table', 'Anybody joining me for coffee?',
+];
+const TABLE_MEAL = [
+  'Lunch at the round table', 'Time for a proper meal – at a table', 'Let me eat sitting down for once', 'Noodles at the round table!',
+  'Snack time, table for one (or more)', 'Food always tastes better at a table', 'I brought a bowl to the round table',
+];
+
 export const thoughts = {
+  toilet: (mode: 'phone' | 'book' | 'none', hurry: boolean) => pick(hurry ? WC_HURRY : mode === 'phone' ? WC_PHONE : mode === 'book' ? WC_BOOK : Math.random() < 0.5 ? WC_NONE : WC_PLAIN),
+  washHands: () => pick(WASH_HANDS),
+  tableCoffee: () => pick(TABLE_COFFEE),
+  tableMeal: () => pick(TABLE_MEAL),
   phone: () => pick(PHONE),
   wander: () => pick(WANDER),
   sofa: () => pick(SOFA),
@@ -278,6 +306,18 @@ export const CHAT_SCRIPTS: (readonly string[])[] = [
   ['Do you ever dream of a bigger window?', 'Every single day.', 'With a view of the sea.', 'And a hammock.'],
   ['Did you catch the sunset?', 'Only the last bit.', 'It turned everything orange.', 'The room looked amazing.'],
   ['What’s your favourite spot in the office?', 'By the bookshelf.', 'Mine is the sofa.', 'Obvious.'],
+];
+
+/** small talk at the round table: whoever feels like it says one, the others listen */
+export const TABLE_LINES: readonly string[] = [
+  'This coffee is exactly what I needed.', 'Is that your usual order?', 'Pass the sugar, please.', 'I could sit here all afternoon.', 'Did you try the noodles from the stove?',
+  'The round table is the best seat in the house.', 'What was the last thing you worked on?', 'Have you seen the cat today?', 'Is it just me, or is it quiet?',
+  'I should drink more water.', 'The weather looks lovely from here.', 'Did you sleep well?', 'Nice mug!', 'This is my favourite part of the day.',
+  'What are you having?', 'Careful, it is hot!', 'I could really go for a nap.', 'We should do this more often.', 'Tell me a joke.',
+  'Ha, that is a good one!', 'Do you ever get tired of bugs?', 'I like how everyone gets along here.', 'Any plans after work?',
+  'The lamps look cozy tonight.', 'Honestly, the director is a good boss.', 'One more cup and I am done. Maybe.', 'Is the printer working again?',
+  'What do you think the cat is dreaming of?', 'I think the plants are growing.', 'More coffee? I will get it.', 'This table wobbles a bit, no?',
+  'Mmm, that smells good.', 'You eat like a bird!', 'No, you have it all wrong!', 'Hahaha, stop it!', 'Wait, what happened next?',
 ];
 
 // ------------------------------------------------------------------ the silly pools
