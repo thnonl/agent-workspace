@@ -16,7 +16,7 @@ import { resolveSeason, SEASON_MODES, type Season, type SeasonMode } from './sea
 import { doneLines, pickAck } from './sim/phrases';
 import { celebrate } from './sim/celebrate';
 import { noteCue, notePeople, noteReport, noteRun, noteTask } from './progress';
-import { claimLate, commitDelivery, bufferTaskSpeech, clearTalk, debugFlags, dropRoomRuntime, dropRuntime, dropTaskSpeech, enqueueSpeech, hasQueuedTool, runtimeFor, sims, takeTaskSpeech, talkPending } from './sim/registry';
+import { bufferTaskSpeech, clearTalk, debugFlags, dropRoomRuntime, dropRuntime, dropTaskSpeech, enqueueSpeech, hasQueuedTool, runtimeFor, sims, takeTaskSpeech, talkPending } from './sim/registry';
 
 export type Connection = 'connecting' | 'live' | 'offline';
 export type TimeMode = 'auto' | 'day' | 'dusk' | 'night';
@@ -158,7 +158,7 @@ const directorKeyOf = (sessionId: string) => `${sessionId}::director`;
 /** the office stays this long after the last piece of work before everybody goes home */
 const GRACE_MS = 5000;
 /** gap between two people walking out */
-const LEAVE_STAGGER_MS = 1800;
+const LEAVE_STAGGER_MS = 15000;
 /** every tool call of the main agent is a task of its own; whoever gets it works on it for this long */
 const MAIN_TASK_MS = 4500;
 /** tool calls waiting for a free person: beyond this many the oldest are dropped (the office cannot keep up) */
@@ -722,18 +722,6 @@ function headlessRoom(get: Get, set: SetFn, roomId: string, now: number) {
           finished: { ...cur.finished, [roomId]: [entry, ...(cur.finished[roomId] ?? [])].slice(0, 300) },
         });
       }
-    }
-  }
-  // deliveries: a room that works gets its parcels all the same, nobody needs to see them being carried (see tickParcel in sim/registry.ts)
-  if (room.mainActive || tasksOf(get(), roomId).length > 0) {
-    const rt = runtimeFor(roomId);
-    const nowS = performance.now() / 1000;
-    if (rt.parcelAt === 0) rt.parcelAt = nowS + 8 + Math.random() * 10;
-    if (nowS >= rt.parcelAt && rt.parcel === 'none') {
-      rt.parcelAt = nowS + 18 + Math.random() * 22;
-      const layout = getLayout(room.seed, room.themeIndex);
-      const k = claimLate(roomId, layout);
-      if (k >= 0) commitDelivery(roomId, layout, k);
     }
   }
   for (const p of peopleOf(get(), roomId)) {

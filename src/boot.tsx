@@ -6,6 +6,7 @@ import * as registry from './sim/registry';
 import { getLayout } from './world/layout';
 import { useProgress } from './progress';
 import { trackRoomPeople } from './roomPeople';
+import { frame } from './sim/frame';
 
 trackRoomPeople(useStore);
 
@@ -13,7 +14,7 @@ const CatLab = lazy(() => import('./scene/CatLab').then((m) => ({ default: m.Cat
 const PlantLab = lazy(() => import('./scene/PlantLab').then((m) => ({ default: m.PlantLab })));
 const WardrobeLab = lazy(() => import('./scene/WardrobeLab').then((m) => ({ default: m.WardrobeLab })));
 
-if (import.meta.env.DEV) Object.assign(window, { __office: useStore, __registry: registry, __layout: getLayout, __progress: useProgress });
+if (import.meta.env.DEV) Object.assign(window, { __office: useStore, __registry: registry, __layout: getLayout, __progress: useProgress, __frame: frame });
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

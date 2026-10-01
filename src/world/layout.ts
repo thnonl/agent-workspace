@@ -18,7 +18,7 @@ export interface Prop {
   color2: string;
 }
 
-export type WallDecorKind = 'poster' | 'clock' | 'whiteboard' | 'frame' | 'pennant' | 'shelf' | 'tv' | 'cork' | 'kanban' | 'calendar' | 'motto' | 'sconce';
+export type WallDecorKind = 'poster' | 'clock' | 'whiteboard' | 'worldmap' | 'slogan' | 'pennant' | 'shelf' | 'tv' | 'cork' | 'kanban' | 'calendar' | 'motto' | 'sconce';
 export interface WallDecor {
   kind: WallDecorKind;
   wall: 'back' | 'left';
@@ -26,6 +26,8 @@ export interface WallDecor {
   y: number;
   w: number;
   h: number;
+  /** a round picture (w is its diameter) */
+  round?: boolean;
   color: string;
   color2: string;
   variant: number;
@@ -912,54 +914,66 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
     signPos = { wall: 'back', pos: dirX, y: windows.filter((w) => w.wall === 'back').length === 3 ? 2.62 : 2.4 };
     busy.back.push([dirX - 1.7, dirX + 1.7]);
   }
-  const DECOR: { kind: WallDecorKind; w: number; h: number; y: number; weight: number }[] = [
-    { kind: 'tv', w: 2.2, h: 1.25, y: 1.9, weight: 1.2 },
-    { kind: 'kanban', w: 2.4, h: 1.4, y: 1.8, weight: 1.6 },
-    { kind: 'cork', w: 1.5, h: 1.05, y: 1.75, weight: 1.6 },
-    { kind: 'calendar', w: 0.7, h: 0.95, y: 1.75, weight: 1 },
+  // everything big on a wall (screens, boards, pictures) is as tall as everything else and hangs at the same height, so the rows line up;
+  // only the width and the shape change (standing, lying, square, round). The clock, the shelf and the small banner are fixtures of their own.
+  const PIC_H = 1.2;
+  const PIC_Y = 1.85;
+  const DECOR: { kind: WallDecorKind; w: number; h: number; y: number; weight: number; round?: boolean }[] = [
+    { kind: 'tv', w: 2.1, h: PIC_H, y: PIC_Y, weight: 1.2 },
+    { kind: 'kanban', w: 2.2, h: PIC_H, y: PIC_Y, weight: 1.6 },
+    { kind: 'cork', w: 1.5, h: PIC_H, y: PIC_Y, weight: 1.6 },
+    { kind: 'calendar', w: 0.9, h: PIC_H, y: PIC_Y, weight: 1 },
     { kind: 'motto', w: 1.7, h: 0.6, y: 2.25, weight: 1.2 },
-    { kind: 'whiteboard', w: 2.4, h: 1.4, y: 1.85, weight: 1 },
-    { kind: 'poster', w: 1.0, h: 1.3, y: 1.8, weight: 1.6 },
-    { kind: 'frame', w: 1.2, h: 0.9, y: 1.85, weight: 1 },
+    { kind: 'whiteboard', w: 2.2, h: PIC_H, y: PIC_Y, weight: 1 },
+    { kind: 'poster', w: 0.92, h: PIC_H, y: PIC_Y, weight: 0.5 },
+    { kind: 'poster', w: 1.7, h: PIC_H, y: PIC_Y, weight: 0.35 },
+    { kind: 'poster', w: PIC_H, h: PIC_H, y: PIC_Y, weight: 0.4 },
+    { kind: 'poster', w: PIC_H, h: PIC_H, y: PIC_Y, weight: 0.35, round: true },
+    { kind: 'slogan', w: 0.86, h: PIC_H, y: PIC_Y, weight: 0.55 },
+    { kind: 'slogan', w: 1.9, h: PIC_H, y: PIC_Y, weight: 0.5 },
+    { kind: 'slogan', w: PIC_H, h: PIC_H, y: PIC_Y, weight: 0.35 },
+    { kind: 'slogan', w: PIC_H, h: PIC_H, y: PIC_Y, weight: 0.35, round: true },
+    { kind: 'worldmap', w: 2.4, h: PIC_H, y: PIC_Y, weight: 0.75 },
+    { kind: 'worldmap', w: PIC_H, h: PIC_H, y: PIC_Y, weight: 0.3, round: true },
     { kind: 'clock', w: 0.7, h: 0.7, y: 2.4, weight: 0.9 },
-    { kind: 'pennant', w: 0.8, h: 1.0, y: 1.8, weight: 0.7 },
+    { kind: 'pennant', w: 0.96, h: PIC_H, y: PIC_Y, weight: 0.7 },
     { kind: 'shelf', w: 1.5, h: 0.2, y: 1.95, weight: 0.8 },
   ];
   const usedKinds = new Map<WallDecorKind, number>();
+  // (pictures of one shape are not hung side by side in a row: a room gets a mix of standing, lying, square and round ones)
+  const shapeOf = (x: { kind: WallDecorKind; w: number; h: number; round?: boolean }) =>
+    x.kind !== 'poster' && x.kind !== 'slogan' && x.kind !== 'worldmap' ? '' : x.round ? 'round' : x.w === x.h ? 'square' : x.w > x.h ? 'wide' : 'tall';
+  const usedShapes = new Map<string, number>();
   for (let t = 0; t < 300 && wallDecor.length < 9; t++) {
-    const dcr = r.weighted(DECOR.map((x) => [x, x.weight / (1 + (usedKinds.get(x.kind) ?? 0) * 1.5)] as const));
+    const dcr = r.weighted(DECOR.map((x) => [x, x.weight / (1 + (usedKinds.get(x.kind) ?? 0) * 1.5) / (1 + (usedShapes.get(shapeOf(x)) ?? 0) * 1.2)] as const));
     const wall = r.chance(0.6) ? 'back' : 'left';
     const len = wall === 'back' ? W : D;
     const pos = r.range(-len / 2 + dcr.w / 2 + 0.5, len / 2 - dcr.w / 2 - 0.5);
     if (!isFree(wall, pos, dcr.w)) continue;
     busy[wall].push([pos - dcr.w / 2 - 0.1, pos + dcr.w / 2 + 0.1]);
     usedKinds.set(dcr.kind, (usedKinds.get(dcr.kind) ?? 0) + 1);
-    wallDecor.push({ kind: dcr.kind, wall, pos, y: dcr.y, w: dcr.w, h: dcr.h, color: r.pick(colorsAll), color2: r.pick(colorsAll), variant: r.int(0, 3) });
+    if (shapeOf(dcr)) usedShapes.set(shapeOf(dcr), (usedShapes.get(shapeOf(dcr)) ?? 0) + 1);
+    wallDecor.push({ kind: dcr.kind, wall, pos, y: dcr.y, w: dcr.w, h: dcr.h, round: dcr.round, color: r.pick(colorsAll), color2: r.pick(colorsAll), variant: r.int(0, 3) });
   }
 
-  // one clock is enough, and no two posters / pictures look the same
+  // one clock is enough, and no two posters / slogans / maps in a room are the same
   {
-    const seenLook = new Set<string>();
+    const VARIANTS: Partial<Record<WallDecorKind, number>> = { poster: 6, slogan: 14, worldmap: 2 };
+    const seen = new Map<WallDecorKind, Set<number>>();
     let clocks = 0;
     for (let i = wallDecor.length - 1; i >= 0; i--) {
       const dc = wallDecor[i];
       if (dc.kind === 'clock' && ++clocks > 1) wallDecor.splice(i, 1);
     }
-    for (let i = 0; i < wallDecor.length; i++) {
-      const dc = wallDecor[i];
-      if (dc.kind !== 'poster' && dc.kind !== 'frame') continue;
-      const look = (c: string, c2: string) => `${dc.kind}${dc.kind === 'poster' ? dc.variant % 2 : 0}${c}${c2}`;
-      let done = !seenLook.has(look(dc.color, dc.color2));
-      for (let a = 0; !done && a < colorsAll.length; a++) {
-        for (let b = 0; !done && b < colorsAll.length; b++) {
-          if (!seenLook.has(look(colorsAll[a], colorsAll[b]))) {
-            dc.color = colorsAll[a];
-            dc.color2 = colorsAll[b];
-            done = true;
-          }
-        }
-      }
-      seenLook.add(look(dc.color, dc.color2));
+    for (const dc of wallDecor) {
+      const n = VARIANTS[dc.kind];
+      if (!n) continue;
+      const used = seen.get(dc.kind) ?? new Set<number>();
+      seen.set(dc.kind, used);
+      let v = r.int(0, n - 1);
+      for (let k = 0; k < n && used.has(v); k++) v = (v + 1) % n;
+      used.add(v);
+      dc.variant = v;
     }
   }
 
@@ -1258,7 +1272,8 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
     const a = freeNear({ x: sx, z: -D / 2 + 1.9 });
     if (a) spots.push({ kind: 'sun', x: a.x, z: a.z, y: 0.03, yaw: r.range(0, Math.PI * 2), approach: a });
   }
-  const catCount = catWindows.length ? (r.chance(0.5) ? 2 : 1) : 0;
+  // (a second cat is rare: one room in ten)
+  const catCount = catWindows.length ? (r.chance(0.1) ? 2 : 1) : 0;
 
   // ------------- things to do when there is time: get a drink, read a book, watch the fish, wash, water the plants
   const stations: Station[] = [];

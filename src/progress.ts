@@ -6,7 +6,7 @@ import type { IconName } from './ui/Icon';
 
 /**
  * The office grows with the work it has seen: every finished task, report, run, commit and push earns experience, the
- * level unlocks more cats, and achievements (shown on the stats board and in the dialog) are handed out on the way.
+ * level unlocks goodies, and achievements (shown on the stats board and in the dialog) are handed out on the way.
  * Everything is kept in the settings (SQLite on the server) and only real sessions count – not the demo.
  */
 export interface Stats {
@@ -82,13 +82,8 @@ export function levelOf(xp: number): LevelInfo {
   return { level, title, into: xp - base, need: level >= MAX_LEVEL ? 1 : xpFor(level + 1) - base };
 }
 
-/** extra cats that visit every room (0, 1 or 2) */
-export const bonusCats = (level: number) => (level >= 10 ? 2 : level >= 5 ? 1 : 0);
-
 export const UNLOCKS: { level: number; text: string }[] = [
   { level: 3, text: 'Trophies appear on the stats board' },
-  { level: 5, text: 'An extra cat joins every office' },
-  { level: 10, text: 'A third cat joins every office' },
 ];
 
 interface Saved {

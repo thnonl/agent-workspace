@@ -83,7 +83,7 @@ export function CatToys({ roomId, layout }: { roomId: string; layout: RoomLayout
   const toys = layout.toys;
 
   useFrame((_, rawDt) => {
-    if (!frame.visibleRooms.has(roomId)) return;
+    if (!frame.animRooms.has(roomId)) return;
     const dt = Math.min(rawDt, 0.05);
     toys.forEach((t, i) => {
       if (t.kind !== 'yarn' && t.kind !== 'mouse') return;

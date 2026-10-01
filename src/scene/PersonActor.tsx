@@ -9,7 +9,8 @@ import type { RoomLayout } from '../world/layout';
 import { Actor, laptopDist, SEAT_LIFT, type ActorCtx, type Pose } from '../sim/actor';
 import { anchors, catsInRoom, enqueueSpeech, lastSpeech, queueLength, runtimeFor, sims, simsInRoom, view, type SimState } from '../sim/registry';
 import { CALM_STEP, frame, roomStep, stepDt } from '../sim/frame';
-import { buildCharacter, RIG_SCALE, type Rig } from './character';
+import { buildCharacter, buildHeadphones, RIG_SCALE, type Rig } from './character';
+import { burst } from '../sim/celebrate';
 import { buildLaptop } from './laptop';
 import { disposeOwned } from './bake';
 import { buildHeldItems, PHONE_GLOWS } from './heldItems';
@@ -21,6 +22,8 @@ import { blobGeometry, FX, initFx } from './fx';
 
 /** a person who has been in the office this long is not shown walking in when their room is built */
 const WARM_AFTER_MS = 6000;
+/** the things that can be on a laptop screen besides the code */
+const SCREEN_MODES = ['video', 'game', 'call', 'shop'] as const;
 
 const qHand = new THREE.Quaternion();
 const qRoot = new THREE.Quaternion();
@@ -57,6 +60,12 @@ function syncAnchor(key: string, outer: THREE.Group | null, wp: THREE.Vector3, s
   a.z = wp.z + sim.z;
   a.live = sim.onStage && sim.phase !== 'waiting';
 }
+/** nobody speaks in a room that is only loaded ahead */
+function hideAnchor(key: string) {
+  const a = anchors.get(key);
+  if (a) a.live = false;
+}
+const SETTLE_PASSES = 3;
 const k = (rate: number, dt: number) => 1 - Math.exp(-rate * dt);
 /** damping factors of applyPose: the same six rates for every person, so they are computed once per distinct dt */
 const dk = { dt: -1, r24: 0, r18: 0, r30: 0, r8: 0, r12: 0 };
@@ -120,10 +129,13 @@ interface Props {
   personKey: string;
   roomId: string;
   layout: RoomLayout;
+  /** the room is only loaded ahead (not the one on screen): the person sits at their desk and does not move at all until it is */
+  frozen?: boolean;
 }
 
-export function PersonActor({ personKey, roomId, layout }: Props) {
+export function PersonActor({ personKey, roomId, layout, frozen = false }: Props) {
   initFx();
+  const frozenAtStart = useRef(frozen);
   const seed = useStore((s) => s.people[personKey]?.seed ?? 0);
   const role = useStore((s) => s.people[personKey]?.role ?? 'staff');
   const desk = useStore((s) => s.people[personKey]?.desk ?? -1);
@@ -138,7 +150,7 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
     const a = new Actor(personKey, roomId, isDirector, layout, desk, app.scale);
     // somebody who walked in a while ago (the room was out of the scene meanwhile) is at their desk already; a new arrival walks in
     const p = useStore.getState().people[personKey];
-    a.warm = !!p && p.present && !p.leaveAt && Date.now() - p.joinedAt > WARM_AFTER_MS;
+    a.warm = !!p && p.present && !p.leaveAt && (frozenAtStart.current || Date.now() - p.joinedAt > WARM_AFTER_MS);
     return a;
   }, [personKey, roomId, isDirector, layout, desk, app.scale]);
   const scale = RIG_SCALE * app.scale;
@@ -154,6 +166,15 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
     return b;
   }, [rig, layout.theme]);
 
+  // headphones for the music at the desk (somebody who wears a pair all day only bobs along)
+  const phones = useMemo(() => {
+    if (app.accessory === 'headphones') return null;
+    const g = buildHeadphones(app.accessoryColor);
+    g.visible = false;
+    rig.head.add(g);
+    return g;
+  }, [rig, app]);
+  const noteAt = useRef(0);
   const ring = useRef<THREE.Mesh>(null);
   const blob = useRef<THREE.Mesh>(null);
   /** the person sat still at the last update: the next one may wait (CALM_STEP) */
@@ -163,6 +184,10 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
   const ctx = useRef<ActorCtx | null>(null);
   /** time collected since the last update (rooms that are not the active one only step every BACKGROUND_STEP / HIDDEN_STEP) */
   const pending = useRef(0);
+  /** passes made over the person since the room stopped being the active one (a few are needed to set the pose; then nothing moves) */
+  const settleN = useRef(0);
+  /** the person has been drawn in their pose since the room stopped being the active one */
+  const posed = useRef(false);
   const workersAt = useRef(-1);
   const keyT = useRef(0);
   const wp = useMemo(() => new THREE.Vector3(), []);
@@ -188,13 +213,28 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
 
   useFrame((_, rawDt) => {
     const visible = frame.visibleRooms.has(roomId);
-    pending.current += rawDt;
-    // somebody who sits still needs far fewer updates than somebody who walks or types (a followed person stays smooth)
-    const step0 = roomStep(roomId);
-    const step = calm.current && !selected ? Math.max(step0, CALM_STEP) : step0;
-    if (pending.current < step) return;
-    const dt = stepDt(pending.current, step);
-    pending.current = 0;
+    // a room that is not the one on screen stands still: the person is posed as they are, then nothing changes until the room is active
+    if (frozen) {
+      pending.current = 0;
+      if (settleN.current >= SETTLE_PASSES && (posed.current || !visible)) {
+        hideAnchor(personKey);
+        return;
+      }
+      settleN.current++;
+    } else {
+      settleN.current = 0;
+      posed.current = false;
+    }
+    let dt = 0;
+    if (!frozen) {
+      pending.current += rawDt;
+      // somebody who sits still needs far fewer updates than somebody who walks or types (a followed person stays smooth)
+      const step0 = roomStep(roomId);
+      const step = calm.current && !selected ? Math.max(step0, CALM_STEP) : step0;
+      if (pending.current < step) return;
+      dt = stepDt(pending.current, step);
+      pending.current = 0;
+    }
     const st = useStore.getState();
     const person = st.people[personKey];
     if (!person) return;
@@ -231,6 +271,7 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
       c.idlers = inRoom.filter((x) => x.key !== personKey && x.onStage && x.phase === 'working' && !x.busy && x.desk >= 0 && !x.chatBy);
     }
 
+    // (time stands still in a room that is not the active one, the pose is only settled)
     actor.update(dt, c);
     const sim = actor.sim;
     sim.calm = (sim.phase === 'working' || sim.phase === 'waiting') && !sim.walking && actor.typing < 0.2 && rt.cheerUntil < now;
@@ -259,11 +300,12 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
     if (!visible) {
       // off screen: the story goes on (tasks, hand-overs, bubbles) but nobody needs to be posed
       syncAnchor(personKey, outer.current, wp, actor.sim, scale);
+      if (frozen) hideAnchor(personKey);
       return;
     }
 
     // soft key clicks while somebody types (only the room on screen is heard)
-    if (actor.typing > 0.5) {
+    if (!frozen && actor.typing > 0.5) {
       keyT.current -= dt;
       if (keyT.current <= 0) {
         keyT.current = 0.14 + Math.random() * 0.26;
@@ -292,7 +334,7 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
       if (d < -Math.PI) d += Math.PI * 2;
       glance = Math.max(-0.7, Math.min(0.7, d * 0.55));
     }
-    applyPose(rig, actor.pose, dt, actor.eyeOpen(), clockRef.current, sim.walking, glance);
+    applyPose(rig, actor.pose, frozen ? 10 : dt, actor.eyeOpen(), clockRef.current, sim.walking, glance);
 
     // ---- props (room space)
     const deskSlot = isDirector ? null : layout.desks[Math.max(0, sim.desk)];
@@ -362,9 +404,29 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
       }
       laptop.root.rotation.set(0, ly, 0);
       laptop.lid.rotation.x = actor.lid * 1.85;
-      // screen lines "type" themselves
+      // screen lines "type" themselves – or a video plays
       const clock = clockRef.current;
+      const mode = actor.deskMode;
+      let onScreen = false;
+      for (const k of SCREEN_MODES) {
+        const here = mode === k;
+        laptop.screens[k].visible = here;
+        onScreen ||= here;
+      }
+      if (mode === 'video') {
+        const bar = 0.02 + ((clock * 0.04) % 1) * 0.3;
+        laptop.videoBar.scale.x = bar;
+        laptop.videoBar.position.x = -0.1 + bar / 2;
+      } else if (mode === 'game') {
+        laptop.gameBlocks.forEach((b, i) => {
+          b.position.x = Math.sin(clock * (1.6 + i * 0.7) + i * 2) * 0.12;
+          b.position.z = -0.14 + (((clock * (0.25 + 0.1 * i) + i * 0.37) % 1) - 0.5) * 0.16;
+        });
+      } else if (mode === 'call') {
+        laptop.callRings.forEach((r, i) => r.scale.setScalar(1 + (Math.sin(clock * (5 + i * 2)) * 0.5 + 0.5) * 0.12));
+      }
       laptop.lines.forEach((l, i) => {
+        l.visible = !onScreen;
         const len = actor.typing > 0.05 ? 0.06 + (0.5 + 0.5 * Math.sin(clock * (4 + i) + i * 2.3)) * 0.22 : 0.08;
         l.scale.x = len;
         l.position.x = -0.16 + len / 2;
@@ -379,6 +441,14 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
         s.scale.setScalar(Math.sin(ph * Math.PI) * 1.1);
         s.rotation.z = ph * 4 + i;
       });
+    }
+
+    // music at the desk: the headphones are on, and a note floats up now and then
+    if (phones) phones.visible = actor.deskMode === 'music' && sim.onStage;
+    if (!frozen && actor.deskMode === 'music' && sim.onStage && now - noteAt.current > 1.6) {
+      noteAt.current = now;
+      const hp = toRoom(sim, 0, 0.1);
+      burst(roomId, 'notes', [hp.x, 1.3, hp.z]);
     }
 
     // folder handed to the director
@@ -479,6 +549,9 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
 
     // anchor for the HTML speech bubble
     syncAnchor(personKey, outer.current, wp, sim, scale);
+    if (frozen) hideAnchor(personKey);
+
+    posed.current = frozen;
 
     // selection ring
     if (ring.current) {

@@ -132,6 +132,34 @@ const CHAT = [
   (n: string) => `A friendly word with ${n} won’t hurt`, (n: string) => `${n} could use some company`,
 ];
 
+const MUSIC = [
+  'Time for some tunes 🎧', 'Headphones on, world off', 'Just one playlist…', 'Lo-fi and chill', 'This song is a banger', 'A little music keeps the brain going',
+  'Let me drown out the silence', 'Queue the playlist',
+];
+const VIDEO = [
+  'Just one quick video…', 'Let me check YouTube for a minute', 'Everyone says this video is hilarious', 'Five minutes of cat videos',
+  'Tutorial time (totally work related)', 'Found a great video essay', 'Quick break: YouTube', 'One video, then back to it',
+];
+const BROWSE = [
+  'Let me type something up while I wait', 'Might as well tidy my notes', 'Time to catch up on emails', 'Scrolling through the docs for fun',
+  'Let me polish some old code', 'Writing a few notes for later', 'Reading the changelog… again', 'A little typing never hurt',
+];
+const GAME = [
+  'Just one round…', 'Boss level – wish me luck', 'A quick game while the build runs', 'High score incoming', 'I’m only testing the graphics',
+  'One more run, then work', 'Time to play (research)', 'Let me beat my own record',
+];
+const CALL = [
+  'Video call time 🎥', 'Quick call with the family', 'Catching up with an old friend', 'Hello? Can you hear me?', 'A call to say hi', 'Let me ring a friend',
+  'Face time with the folks', 'My camera is on, hair is fine',
+];
+const SHOP = [
+  'Just looking at the shops…', 'This chair would look great here', 'Browsing for a gift', 'Add to cart? Maybe', 'A little window shopping 🛒',
+  'Free delivery, you say?', 'Let me check the prices', 'My cart is already full',
+];
+const MAIL = [
+  'Time to clear the inbox', 'Let me answer a few emails', 'Forty unread emails…', 'A quick reply and done', 'Any mail from the client?', 'Inbox zero is the goal',
+  'Newsletters, newsletters everywhere', 'One more email to write',
+];
 const PARCEL = ['Delivery! 📦', 'Is that my package?', 'Somebody rang the bell!', 'A parcel for us!', 'Ooh, a delivery at the door', 'Let me grab that box'];
 const TIDY = [
   'This place needs tidying up', 'Let me put this where it belongs', 'Somebody left this in the way', 'A tidy office, a tidy mind',
@@ -193,6 +221,13 @@ export const thoughts = {
   lift: () => pick(LIFT),
   chat: (name: string) => pick(CHAT)(name),
   parcel: () => pick(PARCEL),
+  music: () => pick(MUSIC),
+  game: () => pick(GAME),
+  call: () => pick(CALL),
+  shop: () => pick(SHOP),
+  mail: () => pick(MAIL),
+  video: () => pick(VIDEO),
+  browse: () => pick(BROWSE),
   tidy: () => pick(TIDY),
   smoke: () => pick(SMOKE),
   sleep: () => pick(SLEEP),

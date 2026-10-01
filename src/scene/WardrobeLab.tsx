@@ -10,7 +10,7 @@ import { buildLaptop, LAPTOP_MODELS } from './laptop';
  *   /?wardrobe&seed=1&count=12&cols=6      a grid of people (seed, seed+1, …); `director=1` dresses them as directors
  *   /?wardrobe&top=blazer&hat=fedora       any Appearance field can be forced (top, bottom, hat, eyewear, neckwear, shoeStyle, …)
  *   /?wardrobe&back=1                      seen from behind
- *   /?wardrobe&laptops                     every laptop model, lid open
+ *   /?wardrobe&laptops                     every laptop model, lid open (&screen=game|video|call|shop: with that on the screen)
  * `window.__labCam(x, y, z)` moves the camera.
  */
 const q = () => new URLSearchParams(location.search);
@@ -61,6 +61,12 @@ function Laptop({ index, x }: { index: number; x: number }) {
       ln.scale.x = 0.08 + 0.05 * (i % 3);
       ln.position.x = -0.16 + ln.scale.x / 2;
     });
+    // /?wardrobe&laptops&screen=game|video|call|shop: what is on the screens (instead of the code lines)
+    const mode = q().get('screen') as keyof typeof l.screens | null;
+    if (mode && l.screens[mode]) {
+      l.screens[mode].visible = true;
+      l.lines.forEach((ln) => (ln.visible = false));
+    }
     return l;
   }, [index]);
   return (

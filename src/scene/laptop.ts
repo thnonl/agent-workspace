@@ -9,7 +9,15 @@ export interface LaptopRig {
   logo: THREE.Mesh;
   lines: THREE.Mesh[];
   sparks: THREE.Mesh[];
+  /** what is on the screen when the person does something on the computer other than work (one at a time; none shown: the code lines) */
+  screens: Record<ScreenMode, THREE.Group>;
+  /** the progress bar of the video, the moving blocks of the game, the rings round the faces of the video call */
+  videoBar: THREE.Mesh;
+  gameBlocks: THREE.Mesh[];
+  callRings: THREE.Mesh[];
 }
+
+export type ScreenMode = 'video' | 'game' | 'call' | 'shop';
 
 /** One laptop model: the shell, the deck around the keys, the keys, the screen, its size and a few extras. */
 interface Model {
@@ -119,6 +127,56 @@ export function buildLaptop(accent: string, accent2: string, seed = 0, modelInde
     lines.push(l);
     lid.add(l);
   }
+  // what can be on the screen besides the code lines (each in front of them; hidden unless somebody does that): a video, a game, a video
+  // call, an online shop
+  const FLAT: [number, number, number] = [Math.PI / 2, 0, 0];
+  const cz = -d / 2;
+  const sw = w - 0.05;
+  const screen = (bg: string): THREE.Group => {
+    const g = group();
+    g.visible = false;
+    g.add(mesh(G.plane(sw, 0.22), MB(bg), 0, -0.0117, cz, { r: FLAT, cast: false }));
+    lid.add(g);
+    return g;
+  };
+  const video = screen('#0f1016');
+  video.add(mesh(G.rbox(0.075, 0.002, 0.048, 0.012), MB('#ff2b2b'), 0, -0.012, cz + 0.01, { cast: false }));
+  video.add(mesh(G.cone(0.014, 0.003, 3), MB('#ffffff'), 0.003, -0.0126, cz + 0.01, { r: [0, Math.PI / 2, 0], cast: false }));
+  video.add(mesh(G.plane(sw - 0.03, 0.006), MB('#4a4d5c'), 0, -0.012, cz - 0.09, { r: FLAT, cast: false }));
+  const videoBar = mesh(G.plane(1, 0.006), MB('#ff2b2b'), -0.1, -0.0123, cz - 0.09, { r: FLAT, cast: false });
+  video.add(videoBar);
+
+  const game = screen('#14102a');
+  game.add(mesh(G.plane(sw, 0.05), MB('#2c2552'), 0, -0.012, cz + 0.085, { r: FLAT, cast: false }));
+  const gameBlocks: THREE.Mesh[] = [];
+  for (const [i, col] of [accent, '#ffd166', '#5ed3b0'].entries()) {
+    const bl = mesh(G.box(0.032, 0.002, 0.032), MB(col), -0.1 + i * 0.1, -0.0124, cz, { cast: false });
+    gameBlocks.push(bl);
+    game.add(bl);
+  }
+  game.add(mesh(G.plane(0.14, 0.008), MB('#ffffff', 0.8), -0.04, -0.012, cz - 0.1, { r: FLAT, cast: false }));
+
+  const call = screen('#171b2b');
+  const callRings: THREE.Mesh[] = [];
+  for (const [i, col] of ['#ffcba4', '#b79bff'].entries()) {
+    const x = (i ? 1 : -1) * 0.075;
+    call.add(mesh(G.circle(0.04, 20), MB(col), x, -0.012, cz, { r: FLAT, cast: false }));
+    const ring = mesh(G.torus(0.05, 0.004, Math.PI * 2, 6, 24), MB('#5ed39a'), x, -0.0124, cz, { r: FLAT, cast: false });
+    callRings.push(ring);
+    call.add(ring);
+  }
+  call.add(mesh(G.circle(0.014, 14), MB('#ff4d5e'), 0, -0.012, cz + 0.095, { r: FLAT, cast: false }));
+
+  const shop = screen('#f4f1ea');
+  shop.add(mesh(G.plane(sw, 0.026), MB('#ff9f1c'), 0, -0.012, cz - 0.1, { r: FLAT, cast: false }));
+  const tiles = [accent, accent2, '#6ec6ff', '#b79bff', '#5ed3b0', '#ff9ec4'];
+  tiles.forEach((col, i) => {
+    const tx = ((i % 3) - 1) * 0.1;
+    const tz = cz - 0.03 + Math.floor(i / 3) * 0.095;
+    shop.add(mesh(G.plane(0.08, 0.056), MB(col), tx, -0.012, tz, { r: FLAT, cast: false }));
+    shop.add(mesh(G.plane(0.04, 0.007), MB('#3a3d50'), tx, -0.0123, tz + 0.036, { r: FLAT, cast: false }));
+  });
+  const screens: Record<ScreenMode, THREE.Group> = { video, game, call, shop };
   root.add(lid);
 
   const sparks: THREE.Mesh[] = [];
@@ -128,7 +186,7 @@ export function buildLaptop(accent: string, accent2: string, seed = 0, modelInde
     sparks.push(s);
     root.add(s);
   }
-  bakeGroup(lid, new Set<THREE.Object3D>([logo, ...lines]));
+  bakeGroup(lid, new Set<THREE.Object3D>([logo, ...lines, ...Object.values(screens)]));
   bakeGroup(root, new Set<THREE.Object3D>([lid, ...sparks]));
-  return { root, lid, logo, lines, sparks };
+  return { root, lid, logo, lines, sparks, screens, videoBar, gameBlocks, callRings };
 }

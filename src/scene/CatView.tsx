@@ -143,6 +143,8 @@ export function CatView({ catKey, roomId, layout, seed }: Props) {
   const smoothed = useRef<CatPose>(neutralCatPose());
   /** time collected since the last update (a cat in a room that is not the active one only steps every BACKGROUND_STEP / HIDDEN_STEP) */
   const pending = useRef(0);
+  /** the cat has been posed once since its room stopped being the active one (a room that is not active stands still) */
+  const settled = useRef(false);
 
   // R3F does not dispose <primitive>: free the body/head geometry and bone texture this cat owns
   useEffect(() => () => disposeOwned(rig.root), [rig]);
@@ -160,17 +162,26 @@ export function CatView({ catKey, roomId, layout, seed }: Props) {
 
   useFrame((state, rawDt) => {
     const visible = frame.visibleRooms.has(roomId);
-    pending.current += rawDt;
-    const step0 = roomStep(roomId);
-    const step = calm.current ? Math.max(step0, CALM_STEP) : step0;
-    if (pending.current < step) return;
-    const dt = stepDt(pending.current, step);
-    pending.current = 0;
-    clock.current += dt;
+    // a room that is not the one on screen stands still: the cat is posed once as it is, and time does not pass for it
+    const frozen = roomId !== frame.activeId;
+    if (frozen) {
+      pending.current = 0;
+      if (settled.current || !visible) return;
+    } else settled.current = false;
+    let dt = 10;
     const now = performance.now() / 1000;
-    brain.update(dt, { layout, now, chars: simsInRoom(roomId), cats: catsInRoom(roomId) });
-    calm.current = brain.sim.still && brain.sim.phase !== 'groom' && brain.sim.petUntil < now;
-    if (!visible) return; // off screen: the cat lives on, but it is not posed
+    if (!frozen) {
+      pending.current += rawDt;
+      const step0 = roomStep(roomId);
+      const step = calm.current ? Math.max(step0, CALM_STEP) : step0;
+      if (pending.current < step) return;
+      dt = stepDt(pending.current, step);
+      pending.current = 0;
+      clock.current += dt;
+      brain.update(dt, { layout, now, chars: simsInRoom(roomId), cats: catsInRoom(roomId), hold: frame.holding });
+      calm.current = brain.sim.still && brain.sim.phase !== 'groom' && brain.sim.petUntil < now;
+      if (!visible) return; // off screen: the cat lives on, but it is not posed
+    } else settled.current = true;
     const s = brain.sim;
     rig.root.visible = s.onStage;
     rig.root.position.set(s.x, s.y, s.z);
@@ -186,7 +197,7 @@ export function CatView({ catKey, roomId, layout, seed }: Props) {
     smoothPose(smoothed.current, brain.pose, dt);
     applyCat(rig, smoothed.current, clock.current);
     // hearts drift up while somebody strokes the cat
-    const petted = s.petUntil > now && s.onStage;
+    const petted = !frozen && s.petUntil > now && s.onStage;
     hearts.current.forEach((h, i) => {
       if (!h) return;
       h.visible = petted;

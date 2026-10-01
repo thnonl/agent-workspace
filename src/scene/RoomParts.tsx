@@ -11,6 +11,7 @@ import { G, M, MB, shade } from './kit';
 import { Ms, RB } from './furniture';
 import { useBaked } from './bake';
 import { calendarTexture, textTexture } from './textures';
+import { posterTexture, sloganTexture, worldMapTexture } from './wallArt';
 import { Rng } from '../util/rng';
 
 export const WALL_T = 0.28;
@@ -319,34 +320,11 @@ export function WallDecorView({ d, localX, theme, roomId }: { d: WallDecor; loca
   const inner = (() => {
     switch (d.kind) {
       case 'poster':
-        return (
-          <group>
-            <RB size={[d.w, d.h, 0.04]} color={theme.trim} r={0.02} />
-            <RB size={[d.w - 0.12, d.h - 0.12, 0.02]} pos={[0, 0, 0.02]} color={shade(d.color, 0.28)} r={0.01} />
-            {d.variant % 2 === 0 ? (
-              <>
-                <Ms geo={G.circle(0.24, 24)} mat={MB(d.color)} pos={[0, 0.16, 0.035]} cast={false} />
-                <Ms geo={G.plane(0.6, 0.18)} mat={MB(d.color2)} pos={[0, -0.22, 0.035]} cast={false} />
-              </>
-            ) : (
-              <>
-                <Ms geo={G.plane(0.25, 0.7)} mat={MB(d.color)} pos={[-0.17, 0, 0.035]} cast={false} />
-                <Ms geo={G.circle(0.16, 20)} mat={MB(d.color2)} pos={[0.16, 0.2, 0.035]} cast={false} />
-                <Ms geo={G.plane(0.24, 0.24)} mat={MB('#ffffff')} pos={[0.16, -0.2, 0.035]} cast={false} />
-              </>
-            )}
-          </group>
-        );
-      case 'frame':
-        return (
-          <group>
-            <RB size={[d.w + 0.1, d.h, 0.06]} color={shade(theme.desk, -0.15)} r={0.02} />
-            <Ms geo={G.plane(d.w - 0.1, d.h - 0.1)} mat={MB('#bfe8ff')} pos={[0, 0, 0.032]} cast={false} />
-            <Ms geo={G.circle(0.11, 20)} mat={MB('#ffe27a')} pos={[0.2, 0.25, 0.034]} cast={false} />
-            <Ms geo={G.circle(0.5, 28)} mat={MB(d.color)} pos={[-0.1, -0.6, 0.034]} scale={[1, 0.7, 1]} cast={false} />
-            <Ms geo={G.circle(0.4, 28)} mat={MB(d.color2)} pos={[0.32, -0.6, 0.036]} scale={[1, 0.7, 1]} cast={false} />
-          </group>
-        );
+        return <WallPicture d={d} tex={posterTexture(d.variant, theme.accent, theme.accent3, d.w, d.h, d.round)} edge={theme.trim} />;
+      case 'slogan':
+        return <WallPicture d={d} tex={sloganTexture(d.variant, d.variant + Math.floor(d.pos), d.color, theme.accent3, d.w, d.h, d.round)} edge={shade(theme.desk, -0.15)} />;
+      case 'worldmap':
+        return <WallPicture d={d} tex={worldMapTexture(d.variant, theme.accent, theme.accent3, Math.floor(d.pos * 10) + d.variant, d.round)} edge={shade(theme.desk, -0.22)} />;
       case 'clock':
         return <Clock w={d.w} roomId={roomId} />;
       case 'whiteboard':
@@ -366,7 +344,7 @@ export function WallDecorView({ d, localX, theme, roomId }: { d: WallDecor; loca
         );
       case 'pennant':
         return (
-          <group rotation={[0, 0, 0.06]}>
+          <group rotation={[0, 0, 0.06]} scale={[d.h, d.h, 1]}>
             <mesh geometry={pennantGeometry()} material={new THREE.MeshStandardMaterial({ color: d.color, roughness: 0.9, side: THREE.DoubleSide })} position={[0, 0, 0.02]} castShadow />
             <Ms geo={G.circle(0.09, 5)} mat={MB('#ffffff')} pos={[0, 0.15, 0.03]} cast={false} />
             <Ms geo={G.cyl(0.012, 0.012, 0.9, 6)} mat={M('#8a6a4a')} pos={[0, 0.52, 0.02]} rot={[0, 0, Math.PI / 2]} />
@@ -401,6 +379,28 @@ export function WallDecorView({ d, localX, theme, roomId }: { d: WallDecor; loca
   })();
   return (
     <group position={[localX, d.y, 0.03]}>{inner}</group>
+  );
+}
+
+/** A flat picture in a thin frame (poster, slogan, world map): a texture on a plane, lit by nothing. */
+function WallPicture({ d, tex, edge }: { d: WallDecor; tex: THREE.Texture; edge: string }) {
+  if (d.round) {
+    return (
+      <group>
+        <Ms geo={G.cyl(d.w / 2 + 0.04, d.w / 2 + 0.04, 0.05, 40)} mat={M(edge, { rough: 0.6 })} rot={[Math.PI / 2, 0, 0]} />
+        <mesh geometry={G.circle(d.w / 2, 40)} position={[0, 0, 0.027]}>
+          <meshBasicMaterial map={tex} toneMapped={false} />
+        </mesh>
+      </group>
+    );
+  }
+  return (
+    <group>
+      <RB size={[d.w + 0.08, d.h + 0.08, 0.05]} color={edge} r={0.02} />
+      <mesh geometry={G.plane(d.w, d.h)} position={[0, 0, 0.027]}>
+        <meshBasicMaterial map={tex} toneMapped={false} />
+      </mesh>
+    </group>
   );
 }
 

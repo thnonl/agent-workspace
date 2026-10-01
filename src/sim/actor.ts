@@ -3,7 +3,7 @@ import { FOOT, rot2, type RoomLayout, type Spot, type Station, type StationKind 
 import type { V2 } from '../world/nav';
 import { sfx, type Sfx } from '../audio';
 import { env } from '../env';
-import { SLOW_MAX_DT } from './frame';
+import { frame, SLOW_MAX_DT } from './frame';
 import { CHAT_SCRIPTS, TABLE_LINES, eatLine, goodbyeLine, greetingLine, reportLine, serveLine, thoughts } from './phrases';
 import { kickDummy, takeDumbbells } from './gym';
 import { notePet } from '../progress';
@@ -71,7 +71,10 @@ export interface ActorCtx {
   nameOf: (simKey: string) => string;
 }
 
-type ActivityKind = 'wander' | 'sofa' | 'watch' | 'window' | 'pet' | 'stay' | 'chat' | 'parcel' | 'tidy' | 'sleep' | 'toilet' | 'table' | StationKind;
+/** what somebody does at the desk when there is no work: listen to music with headphones on, watch a video, type something of their own */
+export type DeskAct = 'music' | 'video' | 'browse' | 'game' | 'call' | 'shop' | 'mail';
+
+type ActivityKind = DeskAct | 'wander' | 'sofa' | 'watch' | 'window' | 'pet' | 'stay' | 'chat' | 'parcel' | 'tidy' | 'sleep' | 'toilet' | 'table' | StationKind;
 
 /** activities that sit down on a spot (sofa, toilet, chair at the round table) */
 const SEATED = new Set<ActivityKind>(['sofa', 'toilet', 'table']);
@@ -127,8 +130,10 @@ const CHAT_LINE_S = 3.6;
 /** how long the greeting at the door stays up before the task is shown */
 const GREET_MS = 5000;
 /** the door lets the next person in this long (seconds) after the previous one, so a room fills up one by one */
-const ENTRY_GAP_MIN = 3;
-const ENTRY_GAP_SPAN = 7;
+/** a stop on the way (while another room is loaded) lasts at least this long (s) */
+const PAUSE_MIN_S = 1.4;
+const ENTRY_GAP_MIN = 15;
+const ENTRY_GAP_SPAN = 8;
 
 /**
  * What a character thinks the moment it decides on a break – shown at once, while it is still at its
@@ -141,6 +146,13 @@ function thoughtOf(a: Activity, name: string): [string, string] | null {
     case 'watch': return [thoughts.watch(name), 'watch'];
     case 'window': return a.smoke ? [thoughts.smoke(), 'smoke'] : [thoughts.window(), 'window'];
     case 'parcel': return [thoughts.parcel(), 'parcel'];
+    case 'music': return [thoughts.music(), 'music'];
+    case 'video': return [thoughts.video(), 'video'];
+    case 'browse': return [thoughts.browse(), 'browse'];
+    case 'game': return [thoughts.game(), 'game'];
+    case 'call': return [thoughts.call(), 'call'];
+    case 'shop': return [thoughts.shop(), 'shop'];
+    case 'mail': return [thoughts.mail(), 'mail'];
     case 'tidy': return [thoughts.tidy(), 'tidy'];
     case 'sleep': return [thoughts.sleep(), 'sleep'];
     case 'pet': return [thoughts.pet(), 'pet'];
@@ -213,6 +225,8 @@ interface Activity {
   /** chat: the colleague at the desk and what is said */
   partnerKey?: string;
   script?: readonly string[];
+  /** music / video / browse: stays in the chair for `dur` seconds */
+  deskAct?: DeskAct;
   /** tidy: index into the room's moved-props list of the plant / carton to carry, and where to */
   tidy?: number;
   tidyTo?: Place;
@@ -416,6 +430,18 @@ export class Actor {
   private restoredDone = false;
   /** the delivery run: where the thing in the parcel goes (the parcel is opened there); null: the parcel is opened at the desk */
   private deliverTo: V2 | null = null;
+  /** at the desk without work: headphones on / a video / typing something of their own, for deskActDur seconds so far deskActT */
+  private deskAct: DeskAct | null = null;
+  private deskActT = 0;
+  private deskActDur = 0;
+  /** a stop on the way while another room is loaded (frame.holding): seconds so far (-1: not stopped) and what was in the hands */
+  private pauseT = -1;
+  private pauseHeld: HeldKind = 'none';
+  /** nothing to do and no break planned: what the laptop is used for meanwhile (changes now and then), and when it was last needed */
+  private idleAct: DeskAct = 'browse';
+  private idleActAt = -1;
+  private idleActUntil = 0;
+  private idleSeen = -99;
   /** the room was built (again) while this person was already in the office: they sit at their desk from the first frame, like after a page load */
   warm = false;
   /** key of the task the current work timers belong to */
@@ -442,6 +468,12 @@ export class Actor {
 
   get phase(): Phase {
     return this.sim.phase;
+  }
+
+  /** what the person does at the desk right now when there is no work (drawn by the character component) */
+  get deskMode(): DeskAct | null {
+    // (between the breaks somebody who has nothing to do is busy with the laptop all the same: see the resting pose of workPose)
+    return this.deskAct ?? (this.clock - this.idleSeen < 0.5 ? this.idleAct : null);
   }
 
   eyeOpen(): number {
@@ -599,6 +631,7 @@ export class Actor {
   /** Claims the next walking slot (and starts the gap for everybody else) when one is open; a walk held back for WALK_WAIT_MAX starts anyway. */
   private takeWalkSlot(ctx: ActorCtx, dt: number, priority = this.priorityWalk()): boolean {
     const s = this.sim;
+    if (frame.holding && s.roomId === frame.activeId) return false; // (another room is being loaded: no new walk starts, see the stop in update)
     let open = this.walkSlotOpen(ctx, s, priority);
     if (!open) {
       this.gatedFor += dt;
@@ -709,10 +742,36 @@ export class Actor {
     this.typing = 0;
     s.busy = false;
     // deliveries: one timer per room, compared with the clock (whoever is on stage advances it)
-    if (s.onStage && tickParcel(rt, ctx.now, s.roomId, layout)) sfx('doorbell', s.roomId);
+    // (a room that is not the active one stands still: dt is 0, see PersonActor)
+    if (dt > 0 && s.onStage && tickParcel(rt, ctx.now, s.roomId, layout)) sfx('doorbell', s.roomId);
     // a nap only lasts in the chair; a finished break leaves nothing of the smoke behind
     if (s.phase !== 'working') this.wake();
     if (s.phase !== 'activity') this.smoke = 0;
+
+    // another room is being loaded (frame.holding): whoever is on their feet stops of their own accord and has a look at the phone for a moment
+    if (this.pauseT >= 0 || (dt > 0 && frame.holding && s.walking && s.roomId === frame.activeId)) {
+      if (this.pauseT < 0) {
+        this.pauseT = 0;
+        this.pauseHeld = this.held;
+        s.walking = false;
+        this.gated = false;
+      }
+      this.pauseT += dt;
+      this.t -= dt; // (the walk's own clock waits too)
+      if (!frame.holding && this.pauseT >= PAUSE_MIN_S) {
+        this.pauseT = -1;
+        this.held = this.pauseHeld;
+        this.heldTilt = 0;
+        this.gatedFor = WALK_WAIT_MAX + 1; // (on their way again at once, without waiting for a free slot)
+      } else {
+        if (this.pauseHeld === 'none') {
+          this.held = 'phone';
+          this.standPhonePose(pose);
+        } else this.idlePose(pose);
+        this.copyPose(pose);
+        return;
+      }
+    }
 
     switch (s.phase) {
       case 'waiting': {
@@ -750,7 +809,7 @@ export class Actor {
           this.setPhase('working');
           break;
         }
-        if (ctx.now < rt.doorFreeAt) break;
+        if (dt <= 0 || ctx.now < rt.doorFreeAt) break;
         // (the way in is a priority walk: it waits for a free slot, and idle walks give way to it meanwhile)
         if (!this.takeWalkSlot(ctx, dt, true)) break;
         rt.doorFreeAt = ctx.now + ENTRY_GAP_MIN + Math.random() * ENTRY_GAP_SPAN;
@@ -939,6 +998,7 @@ export class Actor {
             this.drain = 0;
             this.restT = 0;
             this.deskPetT = -1;
+            this.deskAct = null;
           }
           s.busy = true;
           this.workTime += dt;
@@ -1195,13 +1255,26 @@ export class Actor {
     if (this.sim.chatBy) {
       // somebody came over for a chat: no break of their own now
       this.restT = 0;
+      this.deskAct = null;
       return;
     }
     if (!this.isResting(ctx)) {
-      if (this.deskPetT >= 0) dismissIdle(this.sim.key);
+      if (this.deskPetT >= 0 || this.deskAct) dismissIdle(this.sim.key);
       this.wake();
       this.restT = 0;
       this.deskPetT = -1;
+      this.deskAct = null;
+      return;
+    }
+    if (this.deskAct) {
+      this.deskActT += dt;
+      if (this.deskActT > this.deskActDur) {
+        dismissIdle(this.sim.key);
+        this.deskAct = null;
+        this.restT = 0;
+        this.nextIdleAt = 12 + Math.random() * 12;
+        this.act = null;
+      }
       return;
     }
     if (this.sleepT >= 0) {
@@ -1247,6 +1320,10 @@ export class Actor {
     this.announce(ctx, thoughtOf(a, a.detail ?? ''));
     if (a.atDesk) {
       this.deskPetT = 0;
+    } else if (a.deskAct) {
+      this.deskAct = a.deskAct;
+      this.deskActT = 0;
+      this.deskActDur = a.dur;
     } else if (a.kind === 'sleep') {
       this.sleepT = 0;
       this.zzzStep = -1;
@@ -1462,13 +1539,15 @@ export class Actor {
     const seated = (ti: number) => layout.tables[ti].seats.filter((i) => spotOwners.has(`${s.roomId}#${i}`)).length;
     const stationsOf = (k: StationKind) => layout.stations.map((st, i) => ({ st, i })).filter(({ st, i }) => st.kind === k && !st.off && !spotOwners.has(`${s.roomId}@${i}`));
     const options: [ActivityKind, number][] = [
-      ['wander', staff ? 1.5 : 3], ['sofa', seats.length ? (staff ? 4 : 3) : 0], ['watch', watchable.length ? (staff ? 1.5 : 4) : 0],
+      ['wander', staff ? 0.4 : 0.9], ['sofa', seats.length ? (staff ? 4 : 3) : 0], ['watch', watchable.length ? (staff ? 1.5 : 4) : 0],
       ['window', layout.catWindows.length ? (staff ? 1.5 : 2.5) : 0], ['pet', petCats.length ? (staff ? 4.5 : 5) : 0], ['stay', staff ? 5 : 0],
       ['drink', stationsOf('drink').length ? 4 : 0], ['read', stationsOf('read').length ? 3.5 : 0], ['fish', stationsOf('fish').length ? 3.5 : 0],
       ['wash', stationsOf('wash').length ? 2.5 : 0], ['water', stationsOf('water').length ? 3.5 : 0],
       ['cook', stationsOf('cook').length ? 3.5 : 0],
       ['box', stationsOf('box').length ? 2.5 : 0], ['lift', stationsOf('lift').length ? 2.5 : 0],
       ['chat', chatters.length ? (staff ? 4 : 2.5) : 0],
+      ['music', staff ? 3.2 : 1.6], ['video', staff ? 3.2 : 1.4], ['browse', staff ? 2.4 : 1.4], ['game', staff ? 3 : 0.8], ['call', staff ? 2 : 1],
+      ['shop', staff ? 2.4 : 1], ['mail', staff ? 2.4 : 1.6],
       ['toilet', toiletFree ? (staff ? 3 : 2) : 0], ['table', chairsFree.length ? (staff ? 3.5 : 2.5) * (1 + 0.9 * Math.max(...chairsFree.map(({ sp }) => seated(sp.table ?? 0)))) : 0],
       // a box on the porch: the first to roll it goes (nobody else is on the way); a nap is likelier at night
       ['parcel', parcelFree ? 150 : 0], ['tidy', untidy.length ? (openable ? (staff ? 9 : 6) : staff ? 4 : 2.5) : 0], ['sleep', staff || !ctx.rt.visitors.some((v) => v !== null) ? 2 * (1 + env.night) : 0],
@@ -1587,6 +1666,14 @@ export class Actor {
         }
         return null;
       }
+      case 'music':
+      case 'video':
+      case 'browse':
+      case 'game':
+      case 'call':
+      case 'shop':
+      case 'mail':
+        return { kind, target: from, yaw: 0, dur: 18 + Math.random() * 24, deskAct: kind };
       case 'parcel': {
         // a spot on the porch in front of the box, looking at it
         const { threshold, dir } = layout.door;
@@ -2060,6 +2147,25 @@ export class Actor {
     const bump = seg(m, 0, 0.4) * (1 - seg(m, 1.4, 2.0));
     p.happy = 0.15 + 0.85 * bump;
     p.bob = Math.sin(c * 1.15) * 0.004;
+  }
+
+  /** standing, head down over the phone, a thumb flicking the screen */
+  private standPhonePose(p: Pose) {
+    const c = this.clock;
+    p.lean = 0.06;
+    p.headX = 0.4 + Math.sin(c * 0.7) * 0.03;
+    p.headY = Math.sin(c * 0.4) * 0.04;
+    p.armRx = -1.05;
+    p.armRz = -0.32;
+    p.foreRx = -1.35;
+    p.armLx = -0.95;
+    p.armLz = -0.3;
+    p.foreLx = -1.3;
+    const flick = Math.max(0, Math.sin(c * 7.5)) * (Math.sin(c * 0.9) > 0.1 ? 1 : 0);
+    p.foreRx -= flick * 0.05;
+    p.armRx -= flick * 0.02;
+    p.happy = 0.2 + 0.4 * Math.max(0, Math.sin(c * 0.8));
+    p.bob = Math.sin(c * 1.3) * 0.004;
   }
 
   /** the handset of the desk phone at the right ear: small nods, the free hand gestures a little (over any other arm pose) */
@@ -2866,6 +2972,10 @@ export class Actor {
       this.typing = 0;
       return;
     }
+    if (this.deskAct && resting) {
+      this.deskPose(p, this.deskAct, this.deskActT, this.deskActDur);
+      return;
+    }
     const recv = this.isDirector ? ctx.now - ctx.rt.receivedAt : 99;
     if (recv < 1.8) {
       // just received a report: happy nod + thumbs up
@@ -2882,14 +2992,16 @@ export class Actor {
       return;
     }
     if (resting) {
-      // nothing to do right now: leans back and watches the room
-      p.lean = -0.1;
-      p.armLx = p.armRx = -0.15;
-      p.armLz = p.armRz = 0.35;
-      p.foreLx = p.foreRx = -0.4;
-      p.headX = -0.05;
-      p.headY = Math.sin(c * 0.6) * 0.35;
-      this.typing = this.isDirector ? 0.15 : 0;
+      // nothing to do right now: something else on the laptop – music, a video, a game, a call, shopping, mail, or just typing – and a different one after a while (no looking around)
+      if (this.idleActAt < 0 || this.clock >= this.idleActUntil) {
+        const all: DeskAct[] = ['music', 'video', 'browse', 'game', 'call', 'shop', 'mail'];
+        const pool = all.filter((k) => k !== this.idleAct);
+        this.idleAct = pool[Math.floor(Math.random() * pool.length)];
+        this.idleActAt = this.clock;
+        this.idleActUntil = this.clock + 14 + Math.random() * 18;
+      }
+      this.idleSeen = this.clock;
+      this.deskPose(p, this.idleAct, this.clock - this.idleActAt, this.idleActUntil - this.idleActAt);
       return;
     }
     if (ctx.lastKind === 'thinking' && age < 5) {
@@ -2910,14 +3022,122 @@ export class Actor {
       return;
     }
     if (age > 10) {
-      // nothing to say for a while: slow typing + look around
+      // nothing to say for a while: slow typing
       this.typePose(p, 7, 0.4);
       p.headX = 0.02;
-      p.headY = Math.sin(c * 0.5) * 0.35;
+      p.headY = 0;
       return;
     }
     this.typePose(p, ctx.lastKind === 'tool' ? 24 : 17, 1);
     if (ctx.lastKind === 'text') p.mouth = 'o';
+  }
+
+  /** at the desk with nothing to do: nodding to the music, watching a video (and laughing now and then), or typing something of their own */
+  private deskPose(p: Pose, act: DeskAct, t: number, dur: number) {
+    const c = this.clock;
+    if (act === 'music') {
+      // eyes half shut, head swaying to the beat, a hand drumming on the desk
+      p.lean = -0.05;
+      p.armLx = p.armRx = this.reach.arm;
+      p.armLz = p.armRz = -0.12;
+      p.foreLx = this.reach.fore;
+      p.foreRx = this.reach.fore + Math.max(0, Math.sin(c * 8.4)) * 0.1;
+      p.headX = 0.04 + Math.sin(c * 8.4) * 0.05;
+      p.headZ = Math.sin(c * 4.2) * 0.13;
+      p.headY = Math.sin(c * 2.1) * 0.06;
+      p.sleep = 0.5;
+      p.happy = 0.55;
+      this.typing = 0;
+    } else if (act === 'video') {
+      // leaning towards the screen, a hand on the trackpad; every so often a burst of laughter
+      const laugh = Math.max(0, Math.sin(c * 0.43 + 1.3) - 0.72) / 0.28;
+      p.lean = 0.12;
+      p.armLx = p.armRx = this.reach.arm;
+      p.armLz = p.armRz = -0.12;
+      p.foreLx = p.foreRx = this.reach.fore;
+      p.headX = 0.2 + Math.sin(c * 0.8) * 0.02;
+      p.headY = 0;
+      p.happy = 0.35 + 0.65 * laugh;
+      if (laugh > 0.3) {
+        p.mouth = 'o';
+        p.bob = Math.abs(Math.sin(c * 14)) * 0.03 * laugh;
+        p.headX = 0.12 - Math.sin(c * 14) * 0.06 * laugh;
+      }
+      this.typing = 0;
+    } else if (act === 'game') {
+      // leaning right in, keys hammered, a fist pump now and then, a groan when it goes wrong
+      this.typePose(p, 26, 1);
+      p.lean = 0.2;
+      p.headX = 0.18 + Math.sin(c * 9) * 0.02;
+      const win = Math.max(0, Math.sin(c * 0.31 + 0.7) - 0.8) / 0.2;
+      const lose = Math.max(0, Math.sin(c * 0.23 + 2) - 0.9) / 0.1;
+      if (win > 0.2) {
+        p.happy = 1;
+        p.mouth = 'o';
+        p.armRx = -2.6 + Math.sin(c * 12) * 0.25;
+        p.armRz = 0.35;
+        p.foreRx = -0.4;
+        this.typing = 0.3;
+      } else if (lose > 0.3) {
+        p.mouth = 'sad';
+        p.headX = 0.3;
+        p.happy = 0;
+      }
+    } else if (act === 'call') {
+      // a video call: a wave to say hello and goodbye, otherwise talking and nodding with the hands on the desk
+      const talk = Math.sin(c * 0.9) > 0;
+      p.lean = 0.02;
+      p.armLx = p.armRx = this.reach.arm;
+      p.armLz = p.armRz = -0.12;
+      p.foreLx = p.foreRx = this.reach.fore;
+      p.headX = 0.02 + Math.sin(c * 2.3) * 0.05;
+      p.headY = 0;
+      p.happy = 0.6;
+      p.mouth = talk && Math.sin(c * 11) > 0 ? 'o' : 'smile';
+      if (t < 2.2 || dur - t < 2.2) {
+        p.armRx = -2.4 + Math.sin(c * 9) * 0.35;
+        p.armRz = 0.3;
+        p.foreRx = -0.3;
+        p.happy = 1;
+      }
+      this.typing = 0;
+    } else if (act === 'shop') {
+      // a hand on the trackpad, scrolling; an "ooh" when something nice turns up
+      const nice = Math.max(0, Math.sin(c * 0.37 + 0.4) - 0.8) / 0.2;
+      p.lean = 0.1;
+      p.armLx = this.reach.arm;
+      p.armLz = -0.12;
+      p.foreLx = this.reach.fore;
+      p.armRx = this.reach.arm - 0.1;
+      p.armRz = -0.12;
+      p.foreRx = this.reach.fore + Math.sin(c * 2.2) * 0.06;
+      p.headX = 0.16 + Math.sin(c * 1.1) * 0.03;
+      p.headY = 0;
+      p.happy = 0.3 + 0.7 * nice;
+      if (nice > 0.3) {
+        p.mouth = 'o';
+        p.lookUp = 0.4;
+      }
+      this.typing = 0;
+    } else if (act === 'mail') {
+      // reading the inbox, then bashing out a reply, over and over
+      if (Math.sin(c * 0.35) > 0.2) {
+        this.typePose(p, 14, 0.9);
+        p.headX = 0.1;
+      } else {
+        p.lean = 0.08;
+        p.armLx = p.armRx = this.reach.arm;
+        p.armLz = p.armRz = -0.12;
+        p.foreLx = p.foreRx = this.reach.fore;
+        p.headX = 0.15 + Math.sin(c * 0.9) * 0.03;
+        p.headY = 0;
+        this.typing = 0;
+      }
+    } else {
+      // typing away at something that is not a task: steady
+      this.typePose(p, 12, 0.8);
+      p.headY = 0;
+    }
   }
 
   private blink(dt: number) {

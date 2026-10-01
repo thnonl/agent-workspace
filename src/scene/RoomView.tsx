@@ -20,7 +20,6 @@ import { RoomLightFx } from './RoomLightFx';
 import { SeasonDecor } from './SeasonDecor';
 import { CelebrationFx } from './CelebrationFx';
 import { PropHits, Radio } from './Interactive';
-import { bonusCats, levelOf, useProgress } from '../progress';
 import type { Season } from '../season';
 import { CatView } from './CatView';
 import { CatToys } from './CatToys';
@@ -163,6 +162,8 @@ const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle, season,
 // (the room comes first – walls, furniture, props – and the people follow one after the other, the cats last)
 const STAGE = { floor: 1, back: 2, left: 3, desks: 4, chairs: 6, director: 7, props: 8, toys: 12, movables: 13, board: 14, light: 15, people: 16, cats: 24, party: 28 } as const;
 const BUILD_STAGES = STAGE.party;
+/** the most cats a room has */
+const MAX_CATS = 2;
 const BUILD_GAP_MS = 6;
 /** pause before each person / cat is built: they walk into the finished room one by one */
 const CHARACTER_GAP_MS = 140;
@@ -177,13 +178,14 @@ function useBuildStage(people: number, cats: number, active: boolean) {
   const [stage, setStage] = useState(0);
   const waited = useRef(0);
   const count = useRef({ people, cats });
+  const activeRef = useRef(active);
+  activeRef.current = active;
   count.current = { people, cats };
-  // a room that is not the one on screen is built up to the room itself (the next ones are loaded ahead, see Preload in Scene.tsx);
-  // the people and cats come when it is looked at – and go again when it is left
-  const cap = active ? BUILD_STAGES : STAGE.people - 1;
+  // every room is built completely, the people and cats too (the next ones are loaded ahead, see Preload in Scene.tsx);
+  // a room that is not the one on screen stands still (see `active` below)
+  const cap = BUILD_STAGES;
   useEffect(() => {
     if (active) waited.current = 0;
-    else setStage((n) => Math.min(n, STAGE.people - 1));
   }, [active]);
   useEffect(() => {
     if (stage >= cap) return;
@@ -194,6 +196,11 @@ function useBuildStage(people: number, cats: number, active: boolean) {
       if (frame.cameraBusy && waited.current < CAMERA_WAIT_MS) {
         waited.current += 50;
         t = w.setTimeout(next, 50);
+        return;
+      }
+      // a room that is loaded ahead is built further while the walkers of the room on screen stand still (see updateLoadGate)
+      if (!activeRef.current && !frame.loadOk) {
+        t = w.setTimeout(next, 100);
         return;
       }
       setStage((n) => n + 1);
@@ -216,10 +223,13 @@ export const RoomView = memo(function RoomView({ roomId, active }: { roomId: str
   const reports = useStore((s) => s.rooms[roomId]?.reports ?? 0);
   const season = useStore((s) => s.season);
   const quality = useStore((s) => s.quality);
-  const extraCats = useProgress((s) => bonusCats(levelOf(s.xp).level));
   const signTitle = useStore((s) => {
     const r = s.rooms[roomId];
     return r ? r.project || r.title : '';
+  });
+  const directorKey = useStore((s) => {
+    for (const p of Object.values(s.people)) if (p.sessionId === roomId && p.role === 'director') return p.key;
+    return null;
   });
   const personKeys = useStore(
     useShallow((s) =>
@@ -230,28 +240,27 @@ export const RoomView = memo(function RoomView({ roomId, active }: { roomId: str
   );
   const layout = useMemo(() => getLayout(seed, themeIndex), [seed, themeIndex]);
   const { theme } = layout;
-  const { stage, cap } = useBuildStage(personKeys.length, layout.catCount ? layout.catCount + extraCats : 0, active);
+  // (a room has two cats at the most, and almost never more than one, see catCount in world/layout.ts)
+  const catTotal = Math.min(MAX_CATS, layout.catCount);
+  const { stage, cap } = useBuildStage(personKeys.length, catTotal, active);
   const built = useRef(false);
-  built.current = active && stage >= BUILD_STAGES;
+  built.current = stage >= BUILD_STAGES;
   const done = stage >= cap;
   useEffect(() => {
     if (done) return;
     frame.building++;
-    return () => void frame.building--;
-  }, [done]);
+    if (!active) frame.aheadBuilding++;
+    return () => {
+      frame.building--;
+      if (!active) frame.aheadBuilding--;
+    };
+  }, [done, active]);
 
   // A room the camera does not see is neither drawn nor walked by three (FrameSync has already decided which
   // rooms are on screen). It is brought up to date in the frame it comes back, before that frame is drawn.
   const group = useRef<THREE.Group>(null);
   // "ready": the static bake ran in the mount commit; two drawn frames later the room counts as loaded (staged loading waits for it)
   const framesSeen = useRef(0);
-  useEffect(() => {
-    // (left again: it will be ready once more when it is built up again)
-    if (!active) {
-      framesSeen.current = 0;
-      frame.readyRooms.delete(roomId);
-    }
-  }, [active, roomId]);
   useEffect(() => {
     frame.mountedRooms.add(roomId);
     return () => {
@@ -296,8 +305,8 @@ export const RoomView = memo(function RoomView({ roomId, active }: { roomId: str
       {stage >= STAGE.movables ? <LateProps roomId={roomId} layout={layout} /> : null}
 
       {/* the office cats */}
-      {Array.from({ length: layout.catCount ? layout.catCount + extraCats : 0 }, (_, i) => (
-        active && stage >= STAGE.cats + Math.min(i, 3) ? <CatView key={i} catKey={`${roomId}::cat${i}`} roomId={roomId} layout={layout} seed={seed + i * 977} /> : null
+      {Array.from({ length: catTotal }, (_, i) => (
+        stage >= STAGE.cats + Math.min(i, 3) ? <CatView key={i} catKey={`${roomId}::cat${i}`} roomId={roomId} layout={layout} seed={seed + i * 977} /> : null
       ))}
 
       {stage >= STAGE.board ? <PropHits roomId={roomId} layout={layout} /> : null}
@@ -306,9 +315,12 @@ export const RoomView = memo(function RoomView({ roomId, active }: { roomId: str
       {stage >= STAGE.light ? <RoomLightFx layout={layout} roomId={roomId} halos={quality !== 'low'} dust={quality !== 'low'} /> : null}
 
       {/* people */}
-      {personKeys.map((k, i) => (
-        active && stage >= STAGE.people + Math.min(i, 7) ? <PersonActor key={k} personKey={k} roomId={roomId} layout={layout} /> : null
-      ))}
+      {/* (everybody is there, also in a room that is only loaded ahead: standing still until the room is the one on screen) */}
+      {personKeys.map((k, i) => {
+        const boss = k === directorKey;
+        const here = boss ? stage >= STAGE.people - 1 : stage >= STAGE.people + Math.min(i, 7);
+        return here ? <PersonActor key={k} personKey={k} roomId={roomId} layout={layout} frozen={!active} /> : null;
+      })}
     </group>
   );
 });

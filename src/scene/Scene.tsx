@@ -5,7 +5,7 @@ import { OrbitControls } from '@react-three/drei';
 import { useStore } from '../store';
 import { getLayout } from '../world/layout';
 import { anchors, cats, sims, view } from '../sim/registry';
-import { afterRender, BACKGROUND_STEP, frame } from '../sim/frame';
+import { afterRender, frame, updateLoadGate } from '../sim/frame';
 import { env, envForHour, stepEnv } from '../env';
 import { OVERCAST } from '../weather';
 import { photoHooks } from '../photo';
@@ -157,7 +157,6 @@ const tmpFrustum = new THREE.Frustum();
 const tmpMat = new THREE.Matrix4();
 const tmpSphere = new THREE.Sphere();
 /** when a background room's decor last animated (performance.now ms) */
-const lastAnim = new Map<string, number>();
 
 /**
  * Runs before everything else in a frame: publishes the shared per-frame facts (`frame`) – the camera
@@ -181,7 +180,6 @@ function FrameSync() {
     frame.activeId = st.activeRoomId;
     frame.visibleRooms.clear();
     frame.animRooms.clear();
-    const nowMs = performance.now();
     for (const id of st.visibleOrder) {
       const room = st.rooms[id];
       if (!room) continue;
@@ -191,32 +189,29 @@ function FrameSync() {
       tmpSphere.radius = Math.hypot(l.width, l.depth) / 2 + 4;
       if (id === st.activeRoomId || tmpFrustum.intersectsSphere(tmpSphere)) {
         frame.visibleRooms.add(id);
-        // decor of a background room only animates on the frames of its own (slow) tick
+        // (a room that is not the active one stands still: its decor does not animate)
         if (id === st.activeRoomId) frame.animRooms.add(id);
-        else if (nowMs - (lastAnim.get(id) ?? 0) >= BACKGROUND_STEP * 1000) {
-          lastAnim.set(id, nowMs);
-          frame.animRooms.add(id);
-        }
       }
     }
 
     // only the active room's movement asks for the busy frame rate; a background room is drawn on the frames that happen anyway
     let dynamic = false;
+    let moving = false;
     for (const s of sims.values()) {
+      if (!s.onStage || s.roomId !== st.activeRoomId) continue;
+      if (s.walking) moving = true;
       // (somebody who sits still does not ask for the busy frame rate)
-      if (s.onStage && s.roomId === st.activeRoomId && !s.calm) {
+      if (!s.calm) dynamic = true;
+    }
+    for (const c of cats.values()) {
+      if (c.onStage && !c.still && c.roomId === st.activeRoomId) {
         dynamic = true;
+        moving = true;
         break;
       }
     }
-    if (!dynamic) {
-      for (const c of cats.values()) {
-        if (c.onStage && !c.still && c.roomId === st.activeRoomId) {
-          dynamic = true;
-          break;
-        }
-      }
-    }
+    frame.moving = moving;
+    updateLoadGate(performance.now());
     frame.dynamic = dynamic;
     frame.busy = dynamic || frame.cameraBusy || st.cinema;
 
@@ -726,7 +721,6 @@ function Evictor({ evict }: { evict: (ids: string[]) => void }) {
       if (gone.length) {
         for (const id of gone) {
           overSince.delete(id);
-          lastAnim.delete(id);
         }
         evict(gone);
       }
@@ -758,15 +752,17 @@ function Preload({ mount }: { mount: (id: string) => void }) {
   useFrame(() => {
     const r = s.current;
     const st = useStore.getState();
+    frame.preloadPending = false;
     if (st.pip || !st.activeRoomId || !frame.readyRooms.has(st.activeRoomId)) return;
     const now = performance.now();
+    const next = preloadTargets(st).find((id) => !frame.mountedRooms.has(id));
+    if (!next) return;
     if (frame.cameraBusy || r.down || frame.building > 0 || now - r.at < PRELOAD_GAP) return;
-    for (const id of preloadTargets(st)) {
-      if (frame.mountedRooms.has(id)) continue;
-      r.at = now;
-      mount(id);
-      return;
-    }
+    // (the walkers of the room on screen stop for a moment while a room is loaded, see updateLoadGate)
+    frame.preloadPending = true;
+    if (!frame.loadOk) return;
+    r.at = now;
+    mount(next);
   });
   return null;
 }

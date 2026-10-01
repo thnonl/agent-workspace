@@ -204,15 +204,19 @@ export function lateAvailable(roomId: string, layout: import('../world/layout').
   return layout.late.some((_, k) => !layout.lateDone[k] && !c.claims.has(k));
 }
 
-/** Takes the next thing that is to be delivered (it is on its way from now on): its place in `layout.late`, or -1 when everything is sent already. */
+/**
+ * Takes a thing that is to be delivered, picked at random from what is left (it is on its way from now on): its place in
+ * `layout.late`, or -1 when everything is sent already. Every thing has its own place in the layout (a sofa by the wall, a lamp in a
+ * corner, a plant by the window…, checked to leave every walkway open whichever of the others are there), so the order does not matter.
+ */
 export function claimLate(roomId: string, layout: import('../world/layout').RoomLayout): number {
   const c = deliveryEntry(roomId, layout);
-  for (let k = 0; k < layout.late.length; k++) {
-    if (layout.lateDone[k] || c.claims.has(k)) continue;
-    c.claims.add(k);
-    return k;
-  }
-  return -1;
+  const open: number[] = [];
+  for (let k = 0; k < layout.late.length; k++) if (!layout.lateDone[k] && !c.claims.has(k)) open.push(k);
+  if (!open.length) return -1;
+  const k = open[Math.floor(Math.random() * open.length)];
+  c.claims.add(k);
+  return k;
 }
 
 /** The delivery was called off: the thing is next in line again. */

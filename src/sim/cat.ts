@@ -75,6 +75,8 @@ export interface CatCtx {
   chars: readonly SimState[];
   /** all cats of the room */
   cats: readonly CatSim[];
+  /** another room is being loaded: a cat on the move sits down for a moment */
+  hold?: boolean;
 }
 
 type Phase =
@@ -153,23 +155,9 @@ export class CatBrain {
     this.clock = this.rng.range(0, 10);
     this.curlDir = this.rng.chance(0.5) ? 1 : -1;
     this.sim = { key, roomId, x: 0, y: 0, z: 0, yaw: 0, phase: 'away', onStage: false, still: false, petUntil: 0, spot: -1 };
-    // half of the cats are already napping when you open the room
-    const nap = layout.spots.map((_, i) => i).filter((i) => layout.spots[i].kind !== 'toilet' && !layout.spots[i].off && !spotOwners.has(`${roomId}#${i}`));
-    if (nap.length && this.rng.chance(0.55)) {
-      const i = this.rng.pick(nap);
-      this.claim(i);
-      const s = layout.spots[i];
-      this.sim.x = s.x;
-      this.sim.y = s.y;
-      this.sim.z = s.z;
-      this.sim.yaw = s.yaw + this.rng.range(-0.6, 0.6);
-      this.sim.onStage = true;
-      this.setPhase('sleep');
-      this.timer = this.rng.range(15, 60);
-      this.stay = this.rng.range(80, 220);
-    } else {
-      this.timer = this.rng.range(4, 25);
-    }
+    // there is no cat in the room when it is opened: after a while one jumps in through an open window (each cat in its own time)
+    void layout;
+    this.timer = this.rng.range(25, 120);
   }
 
   private setPhase(p: Phase) {
@@ -386,6 +374,13 @@ export class CatBrain {
     const s = this.sim;
     const p = resetCatPose(this.scratch);
     const petted = s.petUntil > ctx.now;
+    if (ctx.hold && dt > 0 && s.onStage && (this.phase === 'wander' || this.phase === 'toSpot' || this.phase === 'toToy' || this.phase === 'toPost')) {
+      // sits down on the spot, as if it had thought of something
+      this.v = 0;
+      this.facing = s.yaw;
+      this.timer = this.rng.range(2.2, 3.2);
+      this.setPhase('sit');
+    }
     if (s.onStage && this.phase !== 'away') this.awake += dt;
     let moving = false;
 

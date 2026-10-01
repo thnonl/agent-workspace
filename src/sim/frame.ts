@@ -21,6 +21,21 @@ export const frame = {
   readyRooms: new Set<string>(),
   /** somebody (a person or an awake cat) moves in a visible room */
   dynamic: false,
+  /** somebody walks in the active room (a person on their feet, a cat on the move) */
+  moving: false,
+  /** rooms other than the active one are being built (loaded ahead) */
+  aheadBuilding: 0,
+  /** the next room to load ahead is waiting to be put into the scene (set by Preload) */
+  preloadPending: false,
+  /**
+   * Loading ahead makes frames long, which shows as a stutter in whoever walks. So while something is loaded ahead the walkers in the active
+   * room stop for HOLD_MS ("holding": the loading goes on meanwhile), then walk on for WALK_MS while the loading waits, and so on.
+   * Loading is also fine whenever nobody walks. `loadOk` says whether it may go on this frame.
+   */
+  holding: false,
+  holdUntil: 0,
+  walkUntil: 0,
+  loadOk: true,
   /** the camera is travelling / zooming on its own */
   cameraBusy: false,
   /** rooms that are still being built stage by stage (their frames are slow and say nothing about the speed of the machine) */
@@ -30,6 +45,22 @@ export const frame = {
   /** static geometry appeared or changed: the shadow map must be redrawn */
   shadowDirty: true,
 };
+
+/** how long the walkers of the active room stand still while another room is loaded, and how long they walk before the next stop (ms) */
+export const HOLD_MS = 2000;
+export const WALK_MS = 4000;
+
+/** Updates `holding` and `loadOk` (once per frame, after `moving` is known). */
+export function updateLoadGate(now: number) {
+  const wants = frame.aheadBuilding > 0 || frame.preloadPending;
+  if (!wants) frame.holdUntil = 0;
+  else if (frame.moving && now >= frame.holdUntil && now >= frame.walkUntil) {
+    frame.holdUntil = now + HOLD_MS;
+    frame.walkUntil = now + HOLD_MS + WALK_MS;
+  }
+  frame.holding = now < frame.holdUntil;
+  frame.loadOk = frame.holding || !frame.moving;
+}
 
 /** Rooms that are visible but not the active one (the neighbours at the screen edge) advance at most this often (seconds). */
 export const BACKGROUND_STEP = 0.4;

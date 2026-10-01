@@ -4,7 +4,7 @@ import { useStore } from '../store';
 import { themeFor } from '../world/palettes';
 import { sfx } from '../audio';
 import type { Speech } from '../types';
-import { afterRender } from '../sim/frame';
+import { afterRender, frame } from '../sim/frame';
 import { floatingWindow } from '../pipHost';
 import { bubbleText } from './richText';
 import { anchors, holdTalk, sims, idleDismissedAt, nextSpeech, peekSpeech, queueLength, view, type Projected } from '../sim/registry';
@@ -14,20 +14,15 @@ const TOOL_ICONS: Record<string, string> = {
   WebFetch: '🌐', WebSearch: '🌐', TodoWrite: '✅', TaskCreate: '✅', TaskUpdate: '✅', Agent: '📨', Task: '📨',
 };
 
-/** icons of the "what I am doing" bubbles (Speech.tool) */
-const IDLE_ICONS: Record<string, string> = {
-  toilet: '🚽', parcel: '📦', tidy: '🧹', smoke: '🚬', sleep: '💤', box: '🥊', lift: '🏋️',
-  read: '📖', drink: '🥤', coffee: '☕', fish: '🐟', wash: '🧼', water: '🪴', sofa: '🛋️', pet: '🐱', window: '🪟', walk: '🚶', watch: '👀', phone: '📱', wait: '⏳', home: '👋', wave: '👋', cook: '🍳', eat: '🍜', chat: '💬', talk: '💬',
-};
-
 /** a bubble stays until something new is said; after this long it shrinks to save space */
 const SETTLE_MS = 9000;
 
+/** The icon in front of a bubble. Thoughts and spoken lines have none (the bubble itself says so); jobs, results and errors keep theirs. */
 function iconFor(s: Speech): string {
   switch (s.kind) {
-    case 'idle': return IDLE_ICONS[s.tool ?? ''] ?? '💭';
-    case 'thinking': return '💭';
-    case 'text': return '💬';
+    case 'idle':
+    case 'thinking':
+    case 'text': return '';
     case 'task': return s.tool === 'call' ? '☎️' : s.tool === 'email' ? '✉️' : '📥';
     case 'done': return s.tool === 'failed' ? '😵' : '🎉';
     case 'error': return '⚠️';
@@ -173,7 +168,9 @@ function layoutLoop() {
       }
     }
     const a = anchors.get(key);
-    let show = !!a?.live;
+    // (no bubbles in a room that is not the active one: nobody speaks there)
+    const live = !!a?.live && sims.get(key)?.roomId === frame.activeId;
+    let show = live;
     let tx = 0;
     let ty = 0;
     let bx = 0;
@@ -211,7 +208,7 @@ function layoutLoop() {
       bx = (projSm.x * 0.5 + 0.5) * view.width;
       by = (-projSm.y * 0.5 + 0.5) * view.height;
     }
-    it.tick(show, now, !!a?.live);
+    it.tick(show, now, live);
     if (!show) {
       hidden.push(key);
       it.sm = undefined;
@@ -448,6 +445,7 @@ const BubbleItem = memo(function BubbleItem({ personKey }: { personKey: string }
   // what a character plans to do on a break is a thought, drawn like thinking
   const look = asking ? 'ask' : cur ? (cur.kind === 'idle' && !SPOKEN.has(cur.tool ?? '') ? 'thinking' : cur.kind === 'idle' ? 'text' : cur.kind) : '';
   const isFail = failed && look === 'done';
+  const icon = cur ? iconFor(cur) : '';
   const via = cur?.tool === 'call' || cur?.tool === 'email' ? cur.tool : null;
   // the outline of the bubble (box and tail in one path): set by the layout loop, every frame
   const outline = (
@@ -485,7 +483,7 @@ const BubbleItem = memo(function BubbleItem({ personKey }: { personKey: string }
               <span className="bubble-name">{via ? (via === 'call' ? '☎️ You (phone)' : '✉️ Email from You') : <>{role === 'director' ? <Crown /> : null}<span className="nm">{name}</span>{task && cur.kind !== 'idle' && titledId.current === cur.id ? <em className="nm"> · {task}</em> : null}</>}</span>
             </div>
             <div className={`bubble-body${cur.kind === 'tool' ? ' mono' : ''}`}>
-              <span className="bubble-icon">{iconFor(cur)}</span>
+              {icon ? <span className="bubble-icon">{icon}</span> : null}
               <span>{bubbleText(cur)}</span>
             </div>
           </div>

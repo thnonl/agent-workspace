@@ -65,6 +65,19 @@ function frontZ(x: number, y: number): number {
   return 0.86 * Math.sqrt(Math.max(0, r * r - x * x));
 }
 
+/** A pair of headphones to hang on a head (head space of the rig); the colour is the one of the cups. */
+export function buildHeadphones(color: string): THREE.Group {
+  const dark = M('#3a3345', { rough: 0.4 });
+  const cups = M(color, { rough: 0.5 });
+  const g = group();
+  g.add(mesh(G.torus(0.47, 0.03, Math.PI, 8, 24), dark, 0, 0.0, 0, { s: [1, 0.98, 1], cast: false }));
+  for (const side of [-1, 1]) {
+    g.add(mesh(G.cyl(0.12, 0.12, 0.09, 18), cups, side * 0.46, -0.02, 0, { r: [0, 0, Math.PI / 2], cast: false }));
+    g.add(mesh(G.cyl(0.085, 0.085, 0.1, 16), dark, side * 0.48, -0.02, 0, { r: [0, 0, Math.PI / 2], cast: false }));
+  }
+  return g;
+}
+
 export function buildCharacter(a: Appearance): Rig {
   const skin = M(a.skin, { rough: 0.55 });
   const skinDark = M(shade(a.skin, -0.08), { rough: 0.6 });
