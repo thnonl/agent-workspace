@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo } from 'react';
 import { BubbleLayer } from './ui/BubbleLayer';
-import { AgentPanel, Announcer, EmptyState, Help, NamesDialog, RoomHeader, ReleaseConfirm, RoomSwitcher, SummaryPaper, TopBar } from './ui/Overlay';
+import { AgentPanel, Announcer, EmptyState, Help, NamesDialog, PipContext, RoomHeader, ReleaseConfirm, RoomSwitcher, SummaryPaper, TopBar } from './ui/Overlay';
 import { localHour, orderedRooms, useStore } from './store';
 import { celestial, envForHour, skyColors } from './env';
 import { connectLive } from './live/connection';
@@ -314,6 +314,7 @@ export default function App() {
       <SettingsDialog />
       <ProgressDialog />
       <Toasts />
+      {pip ? <PipContext /> : null}
       {cinema ? <div className="cinema-hint" role="note">Screensaver · click or press Esc to leave</div> : null}
       <Announcer />
     </div>

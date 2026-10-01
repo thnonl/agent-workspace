@@ -325,6 +325,21 @@ function TaskList({ roomId }: { roomId: string }) {
   );
 }
 
+/** the floating window has no header: the context use of the room on show sits in its corner */
+export function PipContext() {
+  const room = useStore((s) => (s.activeRoomId ? s.rooms[s.activeRoomId] : null));
+  const ctxPref = useStore((s) => s.contextWindow);
+  const ctx = contextShare(room?.context, ctxPref);
+  if (!ctx) return null;
+  return (
+    <div className={`pip-ctx ctx-${ctx.level}`} title={ctx.title} role="status">
+      <Icon name="layers" size={12} />
+      <i aria-hidden="true"><b style={{ width: `${Math.min(100, ctx.pct)}%` }} /></i>
+      <em>{ctx.text}</em>
+    </div>
+  );
+}
+
 /** a small window (phone, split screen, 200% zoom): the header starts folded so the room stays in view */
 const SMALL_QUERY = '(max-width: 600px), (max-height: 560px)';
 const smallScreen = () => typeof window !== 'undefined' && !!window.matchMedia?.(SMALL_QUERY).matches;

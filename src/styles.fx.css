@@ -189,5 +189,12 @@
 /* --- picture-in-picture: the office lives in a small floating window --------------------------------------------------- */
 /* (the .cinema class is on as well: no buttons, no pointer; dialogs would only crowd the little window) */
 .app.pip .modal, .app.pip .paper-backdrop, .app.pip .confirm-backdrop, .app.pip .cinema-hint { display: none; }
+.pip-ctx { position: absolute; left: 8px; bottom: 8px; z-index: 60; display: flex; align-items: center; gap: 6px; max-width: calc(100% - 16px); padding: 4px 10px 4px 8px; border-radius: 999px; background: rgba(30, 24, 60, 0.62); color: #fff; font-size: 11px; font-weight: 800; font-variant-numeric: tabular-nums; pointer-events: none; --ctx: #3ddc97; }
+.pip-ctx.ctx-warn { --ctx: #ffb020; }
+.pip-ctx.ctx-hot { --ctx: #ff5d73; }
+.pip-ctx .ico { flex: none; color: var(--ctx); }
+.pip-ctx i { flex: none; width: 44px; height: 5px; border-radius: 5px; background: rgba(255, 255, 255, 0.25); overflow: hidden; }
+.pip-ctx i b { display: block; height: 100%; border-radius: 5px; background: var(--ctx); transition: width 0.6s ease; }
+.pip-ctx em { font-style: normal; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pip-placeholder { height: 100%; display: grid; place-content: center; justify-items: center; gap: 14px; text-align: center; padding: 24px; background: linear-gradient(160deg, var(--sky1, #ffe9f0), var(--sky2, #ffd0b5)); color: var(--ink); font-weight: 800; }
 .pip-placeholder p { margin: 0; font-size: 16px; }
