@@ -6,6 +6,7 @@ import { frame } from '../sim/frame';
 import { stepToy, toyState } from '../sim/toys';
 import { G, M } from './kit';
 import { Ms, RB } from './furniture';
+import { StaticBake } from './StaticBake';
 import { blobGeometry, FX, initFx } from './fx';
 
 type V3 = [number, number, number];
@@ -120,14 +121,18 @@ export function CatToys({ roomId, layout }: { roomId: string; layout: RoomLayout
         if (t.kind === 'box') {
           return (
             <group key={i} position={[t.x, 0, t.z]}>
-              <CardboardBox />
+              <StaticBake>
+                <CardboardBox />
+              </StaticBake>
             </group>
           );
         }
         if (t.kind === 'post') {
           return (
             <group key={i} position={[t.x, 0, t.z]} rotation={[0, t.rot, 0]}>
-              <ScratchingPost accent={accent} />
+              <StaticBake>
+                <ScratchingPost accent={accent} />
+              </StaticBake>
             </group>
           );
         }
@@ -136,7 +141,7 @@ export function CatToys({ roomId, layout }: { roomId: string; layout: RoomLayout
           <group key={i}>
             <mesh ref={(el) => { blobs.current[i] = el; }} geometry={geo} material={FX.blob} position={[t.x, 0.032, t.z]} renderOrder={1} raycast={() => null} />
             <group ref={(el) => { refs.current[i] = el; }} position={pos} rotation={[0, t.rot, 0]}>
-              {t.kind === 'yarn' ? <Yarn color={YARN_COLORS[(layout.seed >>> 0) % YARN_COLORS.length]} /> : <Mouse />}
+              <StaticBake>{t.kind === 'yarn' ? <Yarn color={YARN_COLORS[(layout.seed >>> 0) % YARN_COLORS.length]} /> : <Mouse />}</StaticBake>
             </group>
           </group>
         );

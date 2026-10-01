@@ -1,6 +1,7 @@
 import { useLayoutEffect, type RefObject } from 'react';
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { paintGeometry, twinOf } from './twin';
 
 /**
  * Merge every mesh below `root` (in root's local space) into one mesh per material.
@@ -24,8 +25,12 @@ export function bakeGroup(root: THREE.Object3D, skip: ReadonlySet<THREE.Object3D
       tmp.multiplyMatrices(inv, m.matrixWorld);
       geo.applyMatrix4(tmp);
       if (tmp.determinant() < 0) flipWinding(geo);
-      let b = buckets.get(m.material.uuid);
-      if (!b) buckets.set(m.material.uuid, (b = { mat: m.material, cast: false, recv: false, geos: [] }));
+      // (parts that differ only in colour share a mesh, see twin.ts)
+      const twin = twinOf(m.material);
+      if (twin) paintGeometry(geo, m.material);
+      const key = twin ? twin.key : m.material.uuid;
+      let b = buckets.get(key);
+      if (!b) buckets.set(key, (b = { mat: twin ? twin.mat : m.material, cast: false, recv: false, geos: [] }));
       b.cast ||= m.castShadow;
       b.recv ||= m.receiveShadow;
       b.geos.push(geo);

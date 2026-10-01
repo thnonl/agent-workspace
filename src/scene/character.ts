@@ -4,6 +4,7 @@ import { G, M, MB, group, mesh, shade } from './kit';
 import { buildHair } from './hair';
 import { buildBag, buildStraps, type BagCarry } from './bags';
 import { bakeGroup } from './bake';
+import { skinRig } from './skinRig';
 
 /**
  * Builds a cute chibi character out of primitives. The returned rig exposes the joints
@@ -640,10 +641,11 @@ export function buildCharacter(a: Appearance): Rig {
   folder.add(mesh(G.box(0.2, 0.014, 0.02), M('#9aa3b8'), 0, 0.04, 0.0, { cast: false }));
   folder.visible = false;
 
-  // Merge the static parts of every joint: ~90 primitives become ~35 meshes per character.
+  // The static parts of every joint go into three skinned meshes that follow the joints (see skinRig); what they cannot take is merged per joint: ~90 primitives become a handful of draw calls per character.
   const joints: THREE.Object3D[] = [pelvis, torso, head, armL, armR, foreL, foreR, thighL, thighR, kneeL, kneeR, eyes, eyeL, eyeR, ...(tail ? [tail] : []), ...ears];
   const skip = new Set<THREE.Object3D>([...joints, browL, browR, mouthSmile, mouthO, handHold, handHoldL, bagStraps]);
   root.updateMatrixWorld(true);
+  skinRig(root, joints, skip);
   for (const j of joints) bakeGroup(j, skip);
   bakeGroup(bag);
   bakeGroup(bagStraps);

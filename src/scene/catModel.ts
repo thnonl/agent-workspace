@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { Rng } from '../util/rng';
 import { G, M, MB, group, mesh } from './kit';
+import { bakeGroup } from './bake';
 import { addTube, buffersToGeometry, buildHeadGeometry, newBuffers } from './catMesh';
 
 export type CoatPattern = 'solid' | 'tabby' | 'tuxedo' | 'calico' | 'siamese' | 'bicolor' | 'cow' | 'spotted' | 'tortie';
@@ -324,6 +325,11 @@ export function buildCat(look: CatLook): CatRig {
     neck.add(mesh(G.torus(0.064 * girth, 0.0085, Math.PI * 2, 6, 24), M(look.collar, { rough: 0.5 }), 0, 0, 0.004, { s: [1, 1.06, 1], cast: false }));
     neck.add(mesh(G.sphere(0.0125, 10, 8), M('#ffd166', { metal: 0.6, rough: 0.3 }), 0, -0.066 * girth, 0.012, { cast: false }));
   }
+
+  // the many small static pieces of the head (nose, whiskers, ear shapes, the parts of an eye) are merged: the face is a handful of draw calls, not thirty
+  root.updateMatrixWorld(true);
+  bakeGroup(face, new Set<THREE.Object3D>([headMesh, ...ears, ...eyes, ...closedEyes]));
+  for (const j of [...ears, ...eyes]) bakeGroup(j);
 
   root.scale.setScalar(look.scale);
   return { root, hips, spine1, spine2, neck, head, tail, legs, ears, eyes, closedEyes, hipsRestY: hips.position.y };
