@@ -46,11 +46,11 @@ export function WeatherLayer() {
     };
     resize();
     win.addEventListener('resize', resize);
-    const n = Math.round((kind === 'rain' ? 240 : 130) * (quality === 'high' ? 1.7 : 1) * (weather === 'storm' ? 1.5 : 1));
+    const n = Math.round((kind === 'rain' ? 48 : 130) * (quality === 'high' ? 1.4 : 1) * (weather === 'storm' ? 1.4 : 1));
     const drops: Drop[] = Array.from({ length: n }, () => ({
       x: Math.random() * w,
       y: Math.random() * h,
-      v: kind === 'rain' ? 780 + Math.random() * 520 : 38 + Math.random() * 60,
+      v: kind === 'rain' ? 520 + Math.random() * 360 : 38 + Math.random() * 60,
       s: kind === 'rain' ? 9 + Math.random() * 14 : 1.1 + Math.random() * 2.2,
       ph: Math.random() * 6.28,
     }));
@@ -65,9 +65,9 @@ export function WeatherLayer() {
       ctx.clearRect(0, 0, w, h);
       if (kind === 'rain') {
         // dark streaks against the bright day sky, pale ones at night
-        const a = weather === 'storm' ? 0.62 : 0.5;
+        const a = weather === 'storm' ? 0.42 : 0.3;
         ctx.strokeStyle = env.night > 0.5 ? `rgba(205, 220, 255, ${a})` : `rgba(92, 108, 160, ${a})`;
-        ctx.lineWidth = 1.5;
+        ctx.lineWidth = 1.2;
         ctx.beginPath();
         for (const d of drops) {
           d.y += d.v * dt;

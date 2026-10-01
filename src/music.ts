@@ -82,20 +82,20 @@ function build(): Engine | null {
   echo.connect(echoTone).connect(fb).connect(echo);
   echoTone.connect(musicGain);
 
-  // rain: hiss and a lower patter, through the effects bus (muted with the sound effects)
+  // rain: a faint low bed and single drops now and then (see `drops`), through the effects bus (muted with the sound effects)
   const rainGain = ctx.createGain();
   rainGain.gain.value = 0;
   rainGain.connect(g.sfx);
-  for (const [type, freq, q, level] of [['bandpass', 1300, 0.35, 0.3], ['lowpass', 500, 0.7, 0.7]] as const) {
+  {
     const src = ctx.createBufferSource();
     src.buffer = noise;
     src.loop = true;
     const f = ctx.createBiquadFilter();
-    f.type = type;
-    f.frequency.value = freq;
-    f.Q.value = q;
+    f.type = 'lowpass';
+    f.frequency.value = 420;
+    f.Q.value = 0.7;
     const lv = ctx.createGain();
-    lv.gain.value = level;
+    lv.gain.value = 0.1;
     src.connect(f).connect(lv).connect(rainGain);
     src.start(0, Math.random() * 1.5);
   }
@@ -160,6 +160,38 @@ function hit(e: Engine, t: number, dur: number, gain: number, type: BiquadFilter
   s.connect(f).connect(g).connect(e.bus);
   s.start(t, Math.random() * 1.5);
   s.stop(t + dur + 0.02);
+}
+
+/** one drop of rain: a tiny soft tick, a little different every time */
+function drop(e: Engine, t: number) {
+  const s = e.ctx.createBufferSource();
+  s.buffer = e.noise;
+  const f = e.ctx.createBiquadFilter();
+  f.type = 'bandpass';
+  f.frequency.value = 1500 + Math.random() * 2600;
+  f.Q.value = 1.6;
+  const g = e.ctx.createGain();
+  const peak = 0.12 + Math.random() * 0.2;
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(peak, t + 0.004);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.03 + Math.random() * 0.05);
+  s.connect(f).connect(g).connect(e.rainGain);
+  s.start(t, Math.random() * 1.5);
+  s.stop(t + 0.1);
+}
+
+let rainTimer = 0;
+let rainNext = 0;
+/** schedules the drops of the next half second: sparse – a heavier rain only a little denser */
+function scheduleDrops() {
+  const e = eng;
+  if (!e) return;
+  const now = e.ctx.currentTime;
+  if (rainNext < now) rainNext = now;
+  while (rainNext < now + 0.5) {
+    drop(e, rainNext);
+    rainNext += (0.5 + Math.random() * 1.5) / Math.max(0.5, want.rain);
+  }
 }
 
 function kick(e: Engine, t: number, gain = 0.5) {
@@ -254,7 +286,13 @@ function sync() {
   const audible = pageActive() && e.ctx.state === 'running';
   const t = e.ctx.currentTime;
   e.musicGain.gain.setTargetAtTime(want.music && audible ? MUSIC_LEVEL : 0, t, 0.6);
-  e.rainGain.gain.setTargetAtTime(audible ? want.rain * 0.011 : 0, t, 0.8);
+  e.rainGain.gain.setTargetAtTime(audible ? want.rain * 0.5 : 0, t, 0.8);
+  if (audible && want.rain > 0.02) {
+    if (!rainTimer) rainTimer = window.setInterval(scheduleDrops, 200);
+  } else if (rainTimer) {
+    window.clearInterval(rainTimer);
+    rainTimer = 0;
+  }
   e.cricketGain.gain.setTargetAtTime(audible ? want.crickets * 0.006 : 0, t, 0.8);
   if (want.music && audible) startMusic(e);
   else if (timer) {
