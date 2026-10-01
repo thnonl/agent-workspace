@@ -2,6 +2,8 @@
  * Tiny sound effects, all synthesised with the Web Audio API (no files, no music). They only play for the room
  * that is on screen. The browser only allows sound after the first click / key press.
  */
+import { playMeow } from './meow';
+
 export type Sfx =
   | 'door' | 'pop' | 'talk' | 'ding' | 'chime' | 'key' | 'paper' | 'water' | 'sip' | 'page' | 'sizzle' | 'bite' | 'meow' | 'blip' | 'pour' | 'clink'
   | 'doorbell' | 'inhale' | 'exhale' | 'thud' | 'huff' | 'clank' | 'pickup' | 'swipe' | 'ring' | 'mail' | 'ask' | 'thunder'
@@ -301,8 +303,7 @@ export function sfx(name: Sfx, roomId?: string, pitch = 1) {
       tone(c, t + 0.05, 62, 1.8, 0.1, 'sine', 38, 0.15);
       break;
     case 'meow':
-      tone(c, t, 620 * pitch, 0.32 * (1.15 - pitch * 0.15) + r * 0.08, 0.045, 'sawtooth', 460 * pitch, 0.05);
-      tone(c, t + 0.02, 940 * pitch, 0.28, 0.02, 'sine', 700 * pitch, 0.05);
+      playMeow(c, master, t, pitch, r, 0.2);
       break;
   }
 }
