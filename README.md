@@ -2,7 +2,28 @@
 
 A cute, isometric 3D office that shows your **Claude Code**, **Codex** and **OpenCode** sessions at work, in real time.
 
-![Agent Workspace: a new request arrives, the director sits down and the staff come in to work on it](https://raw.githubusercontent.com/thnonl/agent-workspace/main/docs/demo.gif)
+![Agent Workspace tour: rooms for every session, coffee breaks, cats, a commit party, day and night, weather and seasons](https://raw.githubusercontent.com/thnonl/agent-workspace/main/docs/demo.gif)
+
+## Highlights
+
+<table>
+  <tr>
+    <td width="50%"><img alt="A request arrives, the director briefs the team and the staff get to work" src="https://raw.githubusercontent.com/thnonl/agent-workspace/main/docs/gifs/work.gif"><br><b>Real work, played out</b><br>The director takes the request, staff members pick up the tasks and type away.</td>
+    <td width="50%"><img alt="Three sessions, three rooms, the camera flies between them" src="https://raw.githubusercontent.com/thnonl/agent-workspace/main/docs/gifs/rooms.gif"><br><b>One room per session</b><br>Claude Code, Codex and OpenCode side by side. Switch with <kbd>1</kbd>–<kbd>9</kbd> or the arrow keys.</td>
+  </tr>
+  <tr>
+    <td><img alt="Staff cooking noodles, getting a drink, reading, watching the fish" src="https://raw.githubusercontent.com/thnonl/agent-workspace/main/docs/gifs/breaks.gif"><br><b>Coffee breaks</b><br>Nothing to do? Cook noodles, grab a drink, read a book or watch the fish.</td>
+    <td><img alt="A cat hops in through the window, plays with a toy and scratches a post" src="https://raw.githubusercontent.com/thnonl/agent-workspace/main/docs/gifs/cats.gif"><br><b>Office cats</b><br>They hop in through the windows, play with toys and nap on the sofa.</td>
+  </tr>
+  <tr>
+    <td><img alt="git commit and git push make the director's desk burst into confetti" src="https://raw.githubusercontent.com/thnonl/agent-workspace/main/docs/gifs/celebrate.gif"><br><b>Commit &amp; push = party</b><br>Sparkles for a commit, confetti for a push, a shower when the whole run is done.</td>
+    <td><img alt="The agent asks a question and the director shows an amber bubble" src="https://raw.githubusercontent.com/thnonl/agent-workspace/main/docs/gifs/ask.gif"><br><b>It tells you when it needs you</b><br>A pulsing ❓ bubble stays until you answer in your agent.</td>
+  </tr>
+  <tr>
+    <td><img alt="Sky and lights change from morning to night" src="https://raw.githubusercontent.com/thnonl/agent-workspace/main/docs/gifs/daynight.gif"><br><b>Day and night</b><br>The light follows your system clock; the lamps switch on at dusk.</td>
+    <td><img alt="Rain, thunderstorm, snow, fog, Christmas, Tết and Halloween" src="https://raw.githubusercontent.com/thnonl/agent-workspace/main/docs/gifs/weather.gif"><br><b>Weather and seasons</b><br>Rain, storms, snow, fog – plus Christmas, Tết and Halloween decorations.</td>
+  </tr>
+</table>
 
 ## Quick start
 
