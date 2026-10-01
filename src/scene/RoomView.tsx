@@ -257,20 +257,13 @@ export const RoomView = memo(function RoomView({ roomId, active }: { roomId: str
     return () => {
       frame.mountedRooms.delete(roomId);
       frame.readyRooms.delete(roomId);
-      frame.litRooms.delete(roomId);
     };
   }, [roomId]);
-  // a room that is only loaded ahead has nobody to wait for: its lamps may be on once it is built
-  useEffect(() => {
-    if (!active && stage >= cap) frame.litRooms.add(roomId);
-  }, [active, stage, cap, roomId]);
   useFrame(() => {
     const g = group.current;
     if (!g) return;
     if (built.current && framesSeen.current < 2 && ++framesSeen.current === 2) {
       frame.readyRooms.add(roomId);
-      // everybody is there: the lamps come on
-      frame.litRooms.add(roomId);
     }
     const on = frame.visibleRooms.has(roomId);
     if (g.visible === on) return;

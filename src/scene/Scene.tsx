@@ -635,8 +635,7 @@ function RoomLights() {
         l.intensity = 0; // fade in again at the new room
         l.position.set(r.x - 0.3, 7.6, r.z + 0.4);
       }
-      // (a room that is built for the first time stays dark until its people are there, see litRooms)
-      const target = r && frame.litRooms.has(r.id) ? env.lamps * 22 : 0;
+      const target = r ? env.lamps * 22 : 0;
       l.intensity += (target - l.intensity) * k;
       l.visible = l.intensity > 0.5;
     }

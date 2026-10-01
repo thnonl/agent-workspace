@@ -17,8 +17,6 @@ export const frame = {
   animRooms: new Set<string>(),
   /** rooms that are in the 3D scene (being built or built, with or without their people); every other room only exists in the store */
   mountedRooms: new Set<string>(),
-  /** rooms whose lamps may be on: a room that is built for the first time stays dark until its people are there */
-  litRooms: new Set<string>(),
   /** rooms that finished loading (static bake done and two frames drawn), see RoomView / the staging in Scene */
   readyRooms: new Set<string>(),
   /** somebody (a person or an awake cat) moves in a visible room */
