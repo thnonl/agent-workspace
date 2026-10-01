@@ -13,7 +13,7 @@ import { textTexture } from './textures';
 import { StaticBake } from './StaticBake';
 import { GLOW, glowMat } from './glow';
 import { useBaked } from './bake';
-import { DESK_Y, SEAT_LIFT } from '../sim/actor';
+import { CHAIR_PULL, DESK_Y, SEAT_LIFT } from '../sim/actor';
 
 export const DESK_TOP = DESK_Y;
 
@@ -221,14 +221,16 @@ export function Desk({ slot, theme }: { slot: DeskSlot; theme: RoomTheme }) {
 }
 
 // ------------------------------------------------------------------------ chair
-export function Chair({ x, z, rot, turn, color, roomId, deskIndex, big = false, approachSide = -1, seed = 0 }: {
-  x: number; z: number; rot: number; turn: number; color: string; roomId: string; deskIndex: number; big?: boolean; approachSide?: number; seed?: number;
+export function Chair({ x, z, rot, turn, color, roomId, deskIndex, big = false, seed = 0 }: {
+  x: number; z: number; rot: number; turn: number; color: string; roomId: string; deskIndex: number; big?: boolean; seed?: number;
 }) {
   const pullG = useRef<THREE.Group>(null);
   const sw = useRef<THREE.Group>(null);
+  const SEAT_BACK = big ? 0.2 : 0.14;
+  const SEAT_SINK = 0.05;
   const seatH = (big ? 0.46 : 0.36) + SEAT_LIFT;
   const dark = M('#4b4f63', { rough: 0.5 });
-  const lat = useMemo(() => rot2(1, 0, rot), [rot]);
+  const fwd = useMemo(() => rot2(0, 1, rot), [rot]);
   const state = useRef({ pull: 0, turn });
   useFrame((clock, dt) => {
     if (!pullG.current || !sw.current || !frame.animRooms.has(roomId)) return;
@@ -239,21 +241,30 @@ export function Chair({ x, z, rot, turn, color, roomId, deskIndex, big = false, 
     } else {
       for (const s of simsInRoom(roomId)) if (s.desk === deskIndex && s.key !== roomRuntime.get(roomId)?.directorKey) occ = s;
     }
-    // somebody who is away from the chair (offstage, on a break, at the boss) leaves it at a casual angle
-    if (occ && (!occ.onStage || occ.phase === 'stroll' || occ.phase === 'activity' || occ.phase === 'toBoss' || occ.phase === 'handover')) occ = undefined;
     let pull = 0;
     let turnTarget = turn; // an empty chair is left at a casual angle
+    const st = state.current;
     if (occ) {
       const p = occ.phase;
-      turnTarget = 0;
-      if (p === 'sitting' || p === 'standing' || (p === 'entering' && Math.hypot(occ.x - (x + lat.x * approachSide * 0.98), occ.z - (z + lat.z * approachSide * 0.98)) < 1.9)) pull = approachSide * 0.55 * (1 - occ.sitT);
+      const away = !occ.onStage || p === 'stroll' || p === 'activity' || p === 'toBoss' || p === 'handover' || p === 'leaving' || p === 'returning' || p === 'entering' || p === 'waiting';
+      if (away) {
+        // somebody who got up leaves the chair exactly as it was when they stood: pulled out and swivelled
+        pull = occ.chairOut ?? 0;
+        turnTarget = occ.chairSwivel ?? turn;
+      } else turnTarget = 0;
       if (p === 'working' || p === 'unpacking') turnTarget = Math.sin(clock.clock.elapsedTime * 0.9 + seed) * 0.09;
-      if (p === 'standing') turnTarget = (1 - occ.sitT) * 0.5 * -approachSide;
+      if (p === 'sitting' || p === 'standing') {
+        // the sitter pulls the chair out, swivels it and pushes it back in: it follows their scene exactly
+        st.pull = occ.chairOut ?? 0;
+        st.turn = occ.chairSwivel ?? turn;
+        pullG.current.position.set(-fwd.x * CHAIR_PULL * st.pull, 0, -fwd.z * CHAIR_PULL * st.pull);
+        sw.current.rotation.y = rot + st.turn;
+        return;
+      }
     }
-    const st = state.current;
     st.pull = damp(st.pull, pull, 10, dt);
     st.turn = damp(st.turn, turnTarget, 8, dt);
-    pullG.current.position.set(lat.x * st.pull, 0, lat.z * st.pull);
+    pullG.current.position.set(-fwd.x * CHAIR_PULL * st.pull, 0, -fwd.z * CHAIR_PULL * st.pull);
     sw.current.rotation.y = rot + st.turn;
   });
   const w = big ? 0.72 : 0.54;
@@ -262,21 +273,24 @@ export function Chair({ x, z, rot, turn, color, roomId, deskIndex, big = false, 
       <group ref={pullG}>
         <group ref={sw} rotation={[0, rot + turn, 0]}>
           <StaticBake>
-          <RB size={[w, big ? 0.13 : 0.09, big ? 0.66 : 0.52]} pos={[0, seatH, 0]} color={color} r={0.04} rough={0.6} />
-          <RB size={[w - 0.04, big ? 0.95 : 0.5, 0.1]} pos={[0, (big ? 0.95 : 0.66) + SEAT_LIFT, big ? -0.3 : -0.25]} rot={[-0.1, 0, 0]} color={color} r={0.05} rough={0.6} />
-          {big ? (
-            <>
-              <RB size={[0.4, 0.22, 0.1]} pos={[0, 1.5 + SEAT_LIFT, -0.35]} rot={[-0.1, 0, 0]} color={shade(color, -0.04)} r={0.05} />
-              {[-1, 1].map((s) => (
-                <RB key={s} size={[0.07, 0.07, 0.5]} pos={[s * (w / 2 + 0.03), 0.68 + SEAT_LIFT, -0.03]} color={shade(color, -0.08)} r={0.03} />
-              ))}
-              {[-1, 1].map((s) => (
-                <RB key={s} size={[0.06, 0.24, 0.06]} pos={[s * (w / 2 + 0.03), 0.55 + SEAT_LIFT, 0.15]} color="#4b4f63" r={0.02} />
-              ))}
-              <Ms geo={G.sphere(0.028, 8, 6)} mat={M('#ffd166', { metal: 0.5, rough: 0.3 })} pos={[-0.22, 1.3 + SEAT_LIFT, -0.25]} cast={false} />
-              <Ms geo={G.sphere(0.028, 8, 6)} mat={M('#ffd166', { metal: 0.5, rough: 0.3 })} pos={[0.22, 1.3 + SEAT_LIFT, -0.25]} cast={false} />
-            </>
-          ) : null}
+          {/* cushion, back and arms sit behind the column: the sitter's hips are at the column and the shins hang in front of the front edge instead of through it */}
+          <group position={[0, -SEAT_SINK, -SEAT_BACK]}>
+            <RB size={[w, big ? 0.13 : 0.09, big ? 0.66 : 0.52]} pos={[0, seatH, 0]} color={color} r={0.04} rough={0.6} />
+            <RB size={[w - 0.04, big ? 0.95 : 0.5, 0.1]} pos={[0, (big ? 0.95 : 0.66) + SEAT_LIFT, big ? -0.3 : -0.25]} rot={[-0.1, 0, 0]} color={color} r={0.05} rough={0.6} />
+            {big ? (
+              <>
+                <RB size={[0.4, 0.22, 0.1]} pos={[0, 1.5 + SEAT_LIFT, -0.35]} rot={[-0.1, 0, 0]} color={shade(color, -0.04)} r={0.05} />
+                {[-1, 1].map((s) => (
+                  <RB key={s} size={[0.07, 0.07, 0.5]} pos={[s * (w / 2 + 0.03), 0.68 + SEAT_LIFT, -0.03]} color={shade(color, -0.08)} r={0.03} />
+                ))}
+                {[-1, 1].map((s) => (
+                  <RB key={s} size={[0.06, 0.24, 0.06]} pos={[s * (w / 2 + 0.03), 0.55 + SEAT_LIFT, 0.15]} color="#4b4f63" r={0.02} />
+                ))}
+                <Ms geo={G.sphere(0.028, 8, 6)} mat={M('#ffd166', { metal: 0.5, rough: 0.3 })} pos={[-0.22, 1.3 + SEAT_LIFT, -0.25]} cast={false} />
+                <Ms geo={G.sphere(0.028, 8, 6)} mat={M('#ffd166', { metal: 0.5, rough: 0.3 })} pos={[0.22, 1.3 + SEAT_LIFT, -0.25]} cast={false} />
+              </>
+            ) : null}
+          </group>
           <Ms geo={G.cyl(0.04, 0.04, seatH - 0.1, 10)} mat={dark} pos={[0, (seatH - 0.1) / 2 + 0.06, 0]} />
           {[0, 1, 2, 3, 4].map((i) => {
             const a = (i / 5) * Math.PI * 2;

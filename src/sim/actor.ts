@@ -211,11 +211,40 @@ const HIP = 0.47 * 0.85;
 const THIGH_R = 0.098 / 0.47;
 /** on a sofa the person sits this far forward of the seat point (the cushion is deeper than the legs are long) */
 const SOFA_FWD = 0.14;
-/** sitting down on a sofa: first turn round (and line up with the seat) in front of it, then back in and lower onto the cushion */
-const SOFA_TURN_S = 0.55;
-const SOFA_SIT_S = 0.9;
 /** knee bend on a sofa relative to a chair: the lower legs point forward and down over the front edge */
 const SOFA_KNEE = 0.4;
+/** where the person stands in front of the sofa seat while turning round (distance from the seat; clear of the sofa and of a coffee table) */
+const SOFA_STAND = 0.6;
+/** seconds: turning on the spot in front of the sofa, lowering onto the cushion */
+const SOFA_TURN_S2 = 0.65;
+const SOFA_SIT_S2 = 1.05;
+// (sofa scenes: walk to the spot opposite the seat, turn round, lean and lower onto the cushion; getting up is the same backwards)
+/** seconds: leaning forward before getting up, rising, and stepping away from the sofa */
+const SOFA_LEAN_S = 0.3;
+const SOFA_RISE_S = 0.85;
+
+/** the desk chair slides this far straight back out of the desk when somebody sits down or gets up */
+export const CHAIR_PULL = 0.5;
+/**
+ * Sitting down at a desk. A tucked chair: walk next to it, pull it out (SIT_STEP, SIT_PULL), then swivel the chair, turn round and sit in one go (SIT_SWING).
+ * A chair left pulled out by the last person who got up: walk straight to it (SIT_NEAR), then turn round and sit in one go (SIT_SWING_OUT).
+ * Last: chair and sitter slide back to the desk (SIT_IN_S seconds).
+ */
+const SIT_STEP = 0.4;
+const SIT_PULL = SIT_STEP + 0.55;
+const SIT_NEAR = 0.45;
+const SIT_SWING = 0.95;
+const SIT_SWING_OUT = 0.8;
+const SIT_IN_S = 0.6;
+/** getting up: slide out with the chair while it swivels and rise already while it moves; the chair is left as it is and the walk goes on from the standing turn */
+const UP_OUT = 0.55;
+const UP_RISE = 0.3;
+const UP_END = 1.1;
+/** size and clearance of a pulled-out chair in the walking grid */
+const CHAIR_BLOCK = 0.56;
+const CHAIR_BLOCK_PAD = 0.1;
+/** arm raise (shoulder angle) while holding the chair back */
+const CHAIR_ARM = -1.15;
 
 /** top of the staff desks (the director's desk is 2 cm higher) */
 export const DESK_Y = 0.74;
@@ -259,6 +288,26 @@ const angleDiff = (a: number, b: number) => {
   return d;
 };
 
+const polyLen = (pts: V2[]) => {
+  let len = 0;
+  for (let i = 1; i < pts.length; i++) len += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z);
+  return len;
+};
+/** the point at distance `d` along a polyline and the heading of the segment there (null when that segment is too short to tell) */
+const polyAt = (pts: V2[], d: number): { x: number; z: number; yaw: number | null } => {
+  for (let i = 1; i < pts.length; i++) {
+    const dx = pts[i].x - pts[i - 1].x;
+    const dz = pts[i].z - pts[i - 1].z;
+    const len = Math.hypot(dx, dz);
+    if (d <= len || i === pts.length - 1) {
+      const u = len > 1e-6 ? Math.min(1, d / len) : 1;
+      return { x: pts[i - 1].x + dx * u, z: pts[i - 1].z + dz * u, yaw: len > 0.02 ? Math.atan2(dx, dz) : null };
+    }
+    d -= len;
+  }
+  return { x: pts[0].x, z: pts[0].z, yaw: null };
+};
+
 export class Actor {
   readonly sim: SimState;
   readonly pose: Pose = neutralPose();
@@ -300,9 +349,20 @@ export class Actor {
   private resumeAct: Activity | null = null;
   private act: Activity | null = null;
   private actStage = 0;
+  /** yaw at the start of a turn on the spot (null = not turning yet) and which way round it goes when it is a half turn */
+  private turnFrom: number | null = null;
+  private turnDir = 1;
   /** away from the desk with the laptop left open (break or report) */
   private strolling = false;
   private resume = false;
+  /** the chair was left pulled out by the last time somebody got up: no pulling out, no swivelling */
+  private chairWasOut = false;
+  /** where the chair stands in the walking grid while it is left pulled out (null = tucked in, covered by the desk's own block) */
+  private chairBlock: { x: number; z: number; rot: number } | null = null;
+  /** seconds until a walk may look for a way round a new obstacle again */
+  private detourCool = 0;
+  /** direction of the first leg of the walk after getting up (found once per getting up) */
+  private standHead: number | null = null;
   private deskPetT = -1;
   /** napping in the desk chair (seconds so far, -1 = awake) */
   private sleepT = -1;
@@ -368,6 +428,48 @@ export class Actor {
     return this.isDirector ? ctx.layout.director.approach : ctx.layout.desks[this.sim.desk].approach;
   }
 
+  /** Geometry of the desk chair for the sit-down / get-up scenes: `at(out, lateral, back)` is a floor point relative to the tucked-in seat. */
+  private chairRig(ctx: ActorCtx) {
+    const seat = this.seatOf(ctx);
+    const rot = this.seatYaw(ctx);
+    const f = { x: Math.sin(rot), z: Math.cos(rot) };
+    const lat = { x: Math.cos(rot), z: -Math.sin(rot) };
+    const desk = this.isDirector ? null : ctx.layout.desks[this.sim.desk];
+    const side = this.isDirector ? ctx.layout.director.approachSide : desk!.approachSide;
+    const gd = this.isDirector ? 0.78 : 0.62;
+    const at = (out: number, lateral = 0, back = 0): V2 => ({
+      x: seat.x - f.x * (CHAIR_PULL * out + back) + lat.x * side * lateral,
+      z: seat.z - f.z * (CHAIR_PULL * out + back) + lat.z * side * lateral,
+    });
+    return {
+      rot,
+      side,
+      /** swivel of the chair turned towards the person who stands beside it */
+      half: (Math.PI / 2) * side,
+      /** angle of the empty chair */
+      casual: desk ? desk.chairTurn : 0,
+      at,
+      /** beside the tucked-in chair, level with its back */
+      beside: at(0, gd, 0.28),
+      /** in front of the chair once it is pulled out and turned */
+      front: at(1, gd, 0),
+    };
+  }
+
+  /** Direction of the first leg of the walk that follows getting up (so the turn can happen while standing up). */
+  private standHeading(ctx: ActorCtx, from: V2): number {
+    const { layout } = ctx;
+    const goal = this.strolling && this.act ? (this.act.outdoor ? layout.door.inside : this.act.target) : this.reporting ? layout.director.visitors[0] : layout.door.inside;
+    const path = layout.nav.findPath(from, goal) ?? [goal];
+    const p = path.find((q) => Math.hypot(q.x - from.x, q.z - from.z) > 0.15) ?? goal;
+    return Math.atan2(p.x - from.x, p.z - from.z);
+  }
+
+  /** Sets the yaw at once, on the same turn as before (so a quarter turn per frame never jumps by a full circle). */
+  private setYaw(yaw: number) {
+    this.sim.yaw += angleDiff(this.sim.yaw, yaw);
+  }
+
   /** the seated worker looks at the director (desks are placed to face the director's desk) */
   seatYaw(ctx: ActorCtx): number {
     return this.isDirector ? 0 : ctx.layout.desks[this.sim.desk].rot;
@@ -381,6 +483,8 @@ export class Actor {
     this.gated = false;
     this.gatedFor = 0;
     if (p !== 'returning') this.reportReturn = false;
+    if (p === 'sitting') this.chairWasOut = (this.sim.chairOut ?? 0) > 0.5;
+    if (p === 'standing') this.standHead = null;
     // back at the desk, reporting or gone: no longer on a break of its own
     if (p === 'working' || p === 'waiting' || p === 'leaving' || p === 'packing' || p === 'toBoss') this.sim.onBreak = false;
     if (p === 'activity') {
@@ -395,6 +499,23 @@ export class Actor {
   /** Plays a sound once, when the running scene passes `at` seconds. */
   private cue(name: Sfx, at: number) {
     if (this.prevT < at && this.t >= at) sfx(name, this.sim.roomId);
+  }
+
+  /** A chair left pulled out is an obstacle for everybody else's walks; a tucked chair is already covered by the desk. */
+  private setChairBlock(ctx: ActorCtx, on: boolean) {
+    const nav = ctx.layout.nav;
+    if (!on) {
+      if (!this.chairBlock) return;
+      const b = this.chairBlock;
+      nav.unblockOriented(b.x, b.z, CHAIR_BLOCK, CHAIR_BLOCK, b.rot, CHAIR_BLOCK_PAD);
+      this.chairBlock = null;
+      return;
+    }
+    if (this.chairBlock) return;
+    const R = this.chairRig(ctx);
+    const c = R.at(1);
+    this.chairBlock = { x: c.x, z: c.z, rot: R.rot + R.half };
+    nav.blockOriented(c.x, c.z, CHAIR_BLOCK, CHAIR_BLOCK, R.rot + R.half, CHAIR_BLOCK_PAD);
   }
 
   private startPath(points: V2[]) {
@@ -473,7 +594,20 @@ export class Actor {
     // the room has only MAX_WALKERS walking slots and starts walks at a minimum gap: a new walk waits standing until it may go
     this.gated = !s.walking && !this.takeWalkSlot(ctx, dt);
     if (this.gated) return false;
-    const target = this.path[this.pi];
+    let target = this.path[this.pi];
+    // something new (a chair somebody pulled out) lies across the way: walk round it
+    this.detourCool -= dt;
+    if (this.detourCool <= 0) {
+      const nav = ctx.layout.nav;
+      if (!nav.isBlocked(s.x, s.z) && !nav.isBlocked(target.x, target.z) && !nav.lineFree(s, target)) {
+        this.detourCool = 0.5;
+        const around = nav.findPath({ x: s.x, z: s.z }, target);
+        if (around) {
+          this.path = [...this.path.slice(0, this.pi), ...around, ...this.path.slice(this.pi + 1)];
+          target = this.path[this.pi];
+        }
+      }
+    }
     const dx = target.x - s.x;
     const dz = target.z - s.z;
     const dist = Math.hypot(dx, dz);
@@ -624,16 +758,94 @@ export class Actor {
       }
 
       case 'sitting': {
-        const seat = this.seatOf(ctx);
-        const u = smooth(this.t / 0.85);
-        s.x = lerp(this.from.x, seat.x, u);
-        s.z = lerp(this.from.z, seat.z, u);
-        this.faceYaw(this.seatYaw(ctx), dt, 10);
-        s.sitT = u;
-        if (!this.resume) this.bagT = seg(this.t, 0.15, 0.75);
-        this.seatedPose(pose, s.sitT);
-        pose.lean = 0.1 * Math.sin(u * Math.PI);
-        if (this.t >= 0.85) {
+        // tucked chair: step up, pull it out, swivel it while turning round and sitting down; chair left out: turn round and sit straight away; then slide back to the desk
+        const R = this.chairRig(ctx);
+        const t = this.t;
+        const out = this.chairWasOut;
+        this.setChairBlock(ctx, false);
+        const tA = out ? SIT_NEAR : SIT_PULL;
+        const tS = tA + (out ? SIT_SWING_OUT : SIT_SWING);
+        const tE = tS + SIT_IN_S;
+        const lookAtChair = () => {
+          const c = R.at(s.chairOut ?? 0);
+          this.faceYaw(Math.atan2(c.x - s.x, c.z - s.z), dt, 12);
+        };
+        if (!this.resume) this.bagT = seg(t, 0.1, tS - 0.2);
+        if (out && t < SIT_NEAR) {
+          const u = smooth(t / SIT_NEAR);
+          s.x = lerp(this.from.x, R.front.x, u);
+          s.z = lerp(this.from.z, R.front.z, u);
+          s.sitT = 0;
+          s.chairOut = 1;
+          s.chairSwivel = R.half;
+          lookAtChair();
+          this.walkPhase += dt * 5;
+          this.walkPose(pose, 0.7);
+        } else if (!out && t < SIT_STEP) {
+          const u = smooth(t / SIT_STEP);
+          s.x = lerp(this.from.x, R.beside.x, u);
+          s.z = lerp(this.from.z, R.beside.z, u);
+          s.sitT = 0;
+          s.chairOut = 0;
+          s.chairSwivel = R.casual;
+          lookAtChair();
+          this.walkPhase += dt * 5;
+          this.walkPose(pose, 0.5);
+        } else if (!out && t < SIT_PULL) {
+          // both hands on the back of the chair: step back and pull it out of the desk
+          const u = smooth((t - SIT_STEP) / (SIT_PULL - SIT_STEP));
+          s.x = lerp(R.beside.x, R.front.x, u);
+          s.z = lerp(R.beside.z, R.front.z, u);
+          s.sitT = 0;
+          s.chairOut = u;
+          s.chairSwivel = R.casual;
+          lookAtChair();
+          this.idlePose(pose);
+          this.reachPose(pose, 1);
+          pose.lean = 0.1;
+        } else if (t < tS) {
+          // the chair swivels while the person turns round on the spot and lowers onto the seat (the turn leads, the sitting follows)
+          const u = (t - tA) / (tS - tA);
+          const sw = out ? 1 : seg(u, 0, 0.5);
+          const turn = seg(u, out ? 0 : 0.1, 0.7);
+          const sit = seg(u, out ? 0.2 : 0.3, 1);
+          const c = R.at(1);
+          s.x = lerp(R.front.x, c.x, sit);
+          s.z = lerp(R.front.z, c.z, sit);
+          s.sitT = sit;
+          s.chairOut = 1;
+          s.chairSwivel = lerp(R.casual, R.half, sw);
+          this.setYaw(R.rot - R.half + R.side * Math.PI * turn);
+          this.idlePose(pose);
+          if (sit < 0.05) {
+            this.walkPhase += dt * 4;
+            this.walkPose(pose, 0.3 * (1 - turn));
+          }
+          this.seatedPose(pose, sit);
+          if (!out) this.reachPose(pose, 1 - seg(u, 0, 0.35));
+          const dip = Math.sin(sit * Math.PI);
+          pose.lean = 0.22 * dip;
+          pose.armLx -= 0.3 * dip;
+          pose.armRx -= 0.3 * dip;
+        } else {
+          // chair and sitter roll back up to the desk, the chair turns the person to face it
+          const u = smooth(Math.min(1, (t - tS) / (tE - tS)));
+          const c = R.at(1 - u);
+          s.x = c.x;
+          s.z = c.z;
+          s.sitT = 1;
+          s.chairOut = 1 - u;
+          s.chairSwivel = R.half * (1 - u);
+          this.setYaw(R.rot + s.chairSwivel);
+          this.seatedPose(pose, 1);
+          pose.lean = 0.1 * Math.sin(u * Math.PI);
+        }
+        if (t >= tE) {
+          s.x = R.at(0).x;
+          s.z = R.at(0).z;
+          s.chairOut = 0;
+          s.chairSwivel = 0;
+          this.setYaw(R.rot);
           if (this.resume) {
             // back from a break: the laptop is still open on the desk
             this.resume = false;
@@ -754,29 +966,47 @@ export class Actor {
       }
 
       case 'standing': {
-        const seat = this.seatOf(ctx);
-        const app = this.approachOf(ctx);
-        const u = smooth(this.t / 0.9);
-        s.x = lerp(seat.x, app.x, u);
-        s.z = lerp(seat.z, app.z, u);
-        s.sitT = 1 - u;
-        if (!this.strolling) this.bagT = 1 - seg(this.t, 0.0, 0.6);
-        this.faceYaw(this.isDirector ? 0 : Math.atan2(app.x - seat.x, app.z - seat.z), dt, 8);
+        // slide out of the desk with the chair while it swivels, rise from the seat while turning towards the way out, and walk on: the chair stays where it is
+        const R = this.chairRig(ctx);
+        const t = this.t;
+        const head = (this.standHead ??= this.standHeading(ctx, R.front));
+        const uo = smooth(Math.min(1, t / UP_OUT));
+        const w = seg(t, UP_RISE, UP_END);
+        const cs = R.at(uo);
+        s.x = lerp(cs.x, R.front.x, w);
+        s.z = lerp(cs.z, R.front.z, w);
+        s.sitT = 1 - w;
+        s.chairOut = uo;
+        s.chairSwivel = R.half * uo;
+        const base = R.rot + s.chairSwivel;
+        this.setYaw(base + angleDiff(base, head) * seg(t, UP_RISE + 0.1, UP_END));
+        if (!this.strolling) this.bagT = 1 - seg(t, UP_RISE, UP_END);
+        this.idlePose(pose);
+        if (w > 0.7) {
+          this.walkPhase += dt * 4;
+          this.walkPose(pose, 0.3 * seg(w, 0.7, 1));
+        }
         this.seatedPose(pose, s.sitT);
-        pose.lean = 0.12 * Math.sin(u * Math.PI);
-        if (this.t >= 0.9 && this.strolling && this.act) {
+        pose.lean = -0.05 * Math.sin(uo * Math.PI) + 0.25 * Math.sin(w * Math.PI);
+        pose.armLx = pose.armRx = -0.3 * Math.sin(w * Math.PI);
+        if (t >= UP_END) {
+          s.x = R.front.x;
+          s.z = R.front.z;
           s.sitT = 0;
-          this.startPath(this.act.outdoor ? this.routeOut(ctx, this.act.target) : layout.nav.findPath({ x: s.x, z: s.z }, this.act.target) ?? [this.act.target]);
-          this.setPhase('stroll');
-        } else if (this.t >= 0.9 && this.reporting) {
-          s.sitT = 0;
-          this.setPhase('toBoss');
-        } else if (this.t >= 0.9) {
-          this.bagT = 0;
-          s.sitT = 0;
-          this.startPath(this.routeOut(ctx));
-          this.waveDone.clear();
-          this.setPhase('leaving');
+          s.chairOut = 1;
+          s.chairSwivel = R.half;
+          this.setChairBlock(ctx, true);
+          if (this.strolling && this.act) {
+            this.startPath(this.act.outdoor ? this.routeOut(ctx, this.act.target) : layout.nav.findPath({ x: s.x, z: s.z }, this.act.target) ?? [this.act.target]);
+            this.setPhase('stroll');
+          } else if (this.reporting) {
+            this.setPhase('toBoss');
+          } else {
+            this.bagT = 0;
+            this.startPath(this.routeOut(ctx));
+            this.waveDone.clear();
+            this.setPhase('leaving');
+          }
         }
         break;
       }
@@ -1358,33 +1588,63 @@ export class Actor {
         const k = this.hip / HIP;
         const seatX = spot.x + Math.sin(spot.yaw) * SOFA_FWD * k;
         const seatZ = spot.z + Math.cos(spot.yaw) * SOFA_FWD * k;
+        // the sofa's front is +spot.yaw; the person sits facing the same way, with the back to the cushion
+        const fx = Math.sin(spot.yaw);
+        const fz = Math.cos(spot.yaw);
+        const stand = { x: seatX + fx * SOFA_STAND, z: seatZ + fz * SOFA_STAND };
+        /** the route between the spot where the walk ends (`end`) and the standing point in front of the seat: out to the standing distance, then along the front */
+        const route = (end: V2): V2[] => {
+          const lat = (end.x - seatX) * fz - (end.z - seatZ) * fx;
+          if (Math.abs(lat) < 0.05) return [end, stand];
+          return [end, { x: stand.x + fz * lat, z: stand.z - fx * lat }, stand];
+        };
         if (this.actStage === 0) {
-          // the line through the seat that the person backs in along (the sofa's front is +spot.yaw; they face the same way, away from the cushion)
-          const fx = Math.sin(spot.yaw);
-          const fz = Math.cos(spot.yaw);
-          const lat = (this.from.x - seatX) * fz - (this.from.z - seatZ) * fx;
-          const qx = this.from.x - fz * lat;
-          const qz = this.from.z + fx * lat;
-          if (t < SOFA_TURN_S) {
-            // standing in front of the sofa: turn round, with a small side step if the walk ended off to one side
-            const u = smooth(t / SOFA_TURN_S);
-            s.x = lerp(this.from.x, qx, u);
-            s.z = lerp(this.from.z, qz, u);
-            s.y = 0;
+          // walk up to the spot opposite the seat, turn round on the spot, then back down onto the cushion
+          const pts = route(this.from);
+          const len = polyLen(pts);
+          const walkT = Math.max(0.3, len / (WALK_SPEED * 0.8));
+          const turnEnd = walkT + SOFA_TURN_S2;
+          s.y = 0;
+          if (t < walkT) {
+            const u = t / walkT;
+            const p = polyAt(pts, len * (1 - (1 - u) * (1 - u)));
+            s.x = p.x;
+            s.z = p.z;
             s.sitT = 0;
-            this.faceYaw(spot.yaw, dt, 9);
-            if (Math.abs(lat) > 0.04) this.walkPose(pose, 0.5);
-            else this.idlePose(pose);
+            if (p.yaw !== null) this.faceYaw(p.yaw, dt, 11);
+            this.walkPhase += dt * WALK_SPEED * 0.8 * 4.6;
+            this.walkPose(pose, 0.8);
+          } else if (t < turnEnd) {
+            if (this.turnFrom === null) {
+              this.turnFrom = s.yaw;
+              this.turnDir = Math.random() < 0.5 ? 1 : -1;
+            }
+            const u = smooth((t - walkT) / SOFA_TURN_S2);
+            let delta = angleDiff(this.turnFrom, spot.yaw);
+            if (Math.abs(delta) > 2.8) delta = this.turnDir * Math.PI;
+            s.x = stand.x;
+            s.z = stand.z;
+            s.sitT = 0;
+            this.setYaw(this.turnFrom + delta * u);
+            this.idlePose(pose);
+            this.walkPhase += dt * 4.5;
+            this.walkPose(pose, 0.3 * Math.sin(u * Math.PI));
           } else {
-            const u = smooth((t - SOFA_TURN_S) / SOFA_SIT_S);
-            s.x = lerp(qx, seatX, u);
-            s.z = lerp(qz, seatZ, u);
-            s.y = lerp(0, yOn, u);
-            s.sitT = u;
-            this.faceYaw(spot.yaw, dt, 12);
-            this.seatedPose(pose, u, SOFA_KNEE);
-            if (t >= SOFA_TURN_S + SOFA_SIT_S) {
+            // lean forward a little, lower the hips back onto the seat (sideways first, then down)
+            const u = Math.min(1, (t - turnEnd) / SOFA_SIT_S2);
+            const h = smooth(u / 0.7);
+            const v = smooth(u);
+            s.x = lerp(stand.x, seatX, h);
+            s.z = lerp(stand.z, seatZ, h);
+            s.y = lerp(0, yOn, v);
+            s.sitT = v;
+            this.setYaw(spot.yaw);
+            this.seatedPose(pose, v, SOFA_KNEE);
+            pose.lean = 0.22 * Math.sin(u * Math.PI);
+            pose.armLx = pose.armRx = -0.3 * Math.sin(u * Math.PI);
+            if (u >= 1) {
               this.actStage = 1;
+              this.turnFrom = null;
               this.t = 0;
             }
           }
@@ -1405,14 +1665,35 @@ export class Actor {
             this.t = 0;
           }
         } else {
-          const u = smooth(t / 0.9);
-          s.x = lerp(seatX, spot.approach.x, u);
-          s.z = lerp(seatZ, spot.approach.z, u);
-          s.y = lerp(yOn, 0, u);
-          s.sitT = 1 - u;
+          // lean forward, push up, then step away along the front of the sofa
           this.held = 'none';
-          this.seatedPose(pose, s.sitT, SOFA_KNEE);
-          if (t >= 0.9) this.goHome(ctx);
+          const riseEnd = SOFA_LEAN_S + SOFA_RISE_S;
+          if (t < riseEnd) {
+            const u = smooth((t - SOFA_LEAN_S) / SOFA_RISE_S);
+            const h = smooth(u * 1.2);
+            s.x = lerp(seatX, stand.x, h);
+            s.z = lerp(seatZ, stand.z, h);
+            s.y = lerp(yOn, 0, u);
+            s.sitT = 1 - u;
+            this.setYaw(spot.yaw);
+            this.seatedPose(pose, s.sitT, SOFA_KNEE);
+            pose.lean = 0.3 * (t < SOFA_LEAN_S ? smooth(t / SOFA_LEAN_S) : 1 - u * 0.8);
+            pose.armLx = pose.armRx = -0.3 * Math.sin(Math.min(1, t / riseEnd) * Math.PI);
+          } else {
+            const pts = route(spot.approach).reverse();
+            const len = polyLen(pts);
+            const walkT = Math.max(0.25, len / (WALK_SPEED * 0.8));
+            const u = Math.min(1, (t - riseEnd) / walkT);
+            const p = polyAt(pts, len * u);
+            s.x = p.x;
+            s.z = p.z;
+            s.y = 0;
+            s.sitT = 0;
+            if (p.yaw !== null) this.faceYaw(p.yaw, dt, 11);
+            this.walkPhase += dt * WALK_SPEED * 0.8 * 4.6;
+            this.walkPose(pose, 0.8);
+            if (u >= 1) this.goHome(ctx);
+          }
         }
         break;
       }
@@ -2191,6 +2472,13 @@ export class Actor {
     p.lean = Math.sin(c * 1.6) * 0.015;
     p.headY = Math.sin(c * 0.7) * 0.12;
     p.armLz = p.armRz = 0.1 + Math.sin(c * 1.6) * 0.02;
+  }
+
+  /** both hands out in front on the back of a chair (k = 0 arms down .. 1 hands on it) */
+  private reachPose(p: Pose, k: number) {
+    p.armLx = p.armRx = CHAIR_ARM * k;
+    p.armLz = p.armRz = 0.1 - 0.25 * k;
+    p.foreLx = p.foreRx = -0.35 * k;
   }
 
   /** `kneeBend` 1 = the shins hang straight down (a chair); less = the lower legs stick out forward (a low, deep sofa) */

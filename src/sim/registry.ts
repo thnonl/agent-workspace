@@ -57,6 +57,9 @@ export interface SimState {
   calm?: boolean;
   /** the director holds the handset of the desk phone (the one on the desk is hidden meanwhile; cleared by the actor every frame it is not) */
   handsetUp?: boolean;
+  /** while sitting down / getting up: how far the desk chair is pulled out from the desk (0 = tucked in, 1 = fully out) and its swivel relative to the desk (radians); the chair follows exactly */
+  chairOut?: number;
+  chairSwivel?: number;
 }
 
 export const sims = new Map<string, SimState>();

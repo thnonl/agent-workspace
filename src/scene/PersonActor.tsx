@@ -310,7 +310,12 @@ export function PersonActor({ personKey, roomId, layout }: Props) {
       (carry.y * scale + (carry.floorY - carry.y * scale) * bt) + Math.sin(bt * Math.PI) * 0.35,
       bz + (floor.z - bz) * bt,
     );
-    bag.rotation.set(bt * 0.15, sim.yaw + carry.yaw * (1 - bt) + bt * 0.4 * side, 0);
+    // carried: turns with the body; set down: lies at a fixed angle beside the desk (it must not spin while the owner turns or walks about)
+    const carryYaw = sim.yaw + carry.yaw;
+    let toFloor = (seatRot + 0.4 * side - carryYaw) % (Math.PI * 2);
+    if (toFloor > Math.PI) toFloor -= Math.PI * 2;
+    else if (toFloor < -Math.PI) toFloor += Math.PI * 2;
+    bag.rotation.set(bt * 0.15, carryYaw + toFloor * bt, 0);
     bag.scale.setScalar(scale * carry.scale);
     rig.bagStraps.visible = sim.onStage && bt < 0.4;
 

@@ -229,14 +229,14 @@ export const RoomView = memo(function RoomView({ roomId }: { roomId: string }) {
 
       {/* movable furniture */}
       {stage >= STAGE.chairs && layout.desks.map((d) => (
-        <Chair key={d.index} x={d.seat.x} z={d.seat.z} rot={d.rot} turn={d.chairTurn} color={d.chairColor} roomId={roomId} deskIndex={d.index} approachSide={d.approachSide} seed={d.index} />
+        <Chair key={d.index} x={d.seat.x} z={d.seat.z} rot={d.rot} turn={d.chairTurn} color={d.chairColor} roomId={roomId} deskIndex={d.index} seed={d.index} />
       ))}
       {stage >= STAGE.director ? (
         <StaticBake key={Math.min(reports, 12)}>
           <DirectorDesk layout={layout} reports={reports} roomId={roomId} />
         </StaticBake>
       ) : null}
-      {stage >= STAGE.director ? <Chair x={layout.director.seat.x} z={layout.director.seat.z} rot={0} turn={0} color={shade(theme.accent2, -0.05)} roomId={roomId} deskIndex={-1} big approachSide={layout.director.approachSide} seed={99} /> : null}
+      {stage >= STAGE.director ? <Chair x={layout.director.seat.x} z={layout.director.seat.z} rot={0} turn={0} color={shade(theme.accent2, -0.05)} roomId={roomId} deskIndex={-1} big seed={99} /> : null}
 
       {stage >= STAGE.toys ? <CatToys roomId={roomId} layout={layout} /> : null}
       {stage >= STAGE.movables ? <MovableProps roomId={roomId} layout={layout} /> : null}
