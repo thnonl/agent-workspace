@@ -11,6 +11,21 @@ interface ConnectInfo {
   releasesUrl: string;
 }
 
+/** What the Android app (android/, MainActivity.AppBridge) adds to the page; missing in a browser and in app versions before it. */
+interface AppBridge {
+  /** leaves the office and shows the app's connect form */
+  changeServer(): void;
+  version(): string;
+}
+
+declare global {
+  interface Window {
+    AgentWorkspaceApp?: AppBridge;
+  }
+}
+
+export const appBridge = (): AppBridge | undefined => (typeof window === 'undefined' ? undefined : window.AgentWorkspaceApp);
+
 /** The page runs on a phone: in the Android app (its user agent carries `AgentWorkspaceApp/<version>`) or a mobile browser. */
 export const onPhone = typeof navigator !== 'undefined' && /AgentWorkspaceApp|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 

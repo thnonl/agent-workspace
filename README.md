@@ -143,7 +143,7 @@ The Android app shows the office of a computer on the same network. It is a thin
    * **app installed** – the app opens and connects right away;
    * **no app yet** – the phone downloads the newest APK from the [latest GitHub release](https://github.com/thnonl/agent-workspace/releases/latest) (allow your browser to *install unknown apps*). Install it and scan again.
 
-In the app you can also tap **Scan QR code**, or type the IP, port and token yourself. It remembers the last computer and connects to it on the next start; press back twice to pick another. While it is open, the app checks the latest GitHub release and offers **Download** when there is a newer version.
+In the app you can also tap **Scan QR code**, or type the IP, port and token yourself. It remembers the last computer and connects to it on the next start; *Settings → Server → Change server* (or back twice) picks another. While it is open, the app checks the latest GitHub release and offers **Download** when there is a newer version.
 
 The QR code opens `http://<ip>:<port>/m?t=<token>`: a small page on your computer that hands the address to the app (`agentworkspace://connect?h=…&p=…&t=…`), or offers the APK and the browser version. Anyone holding the code can watch your sessions; run with a new `--token` (or delete `~/.agent-workspace/token`) to lock out every phone.
 

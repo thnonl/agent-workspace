@@ -9,7 +9,7 @@ import { CONTEXT_WINDOWS, type ContextWindowPref } from '../context';
 import { useProgress } from '../progress';
 import { Dialog } from './Dialog';
 import { Icon } from './Icon';
-import { ConnectPhone, onPhone } from './ConnectPhone';
+import { appBridge, ConnectPhone, onPhone } from './ConnectPhone';
 
 const QUALITY_TEXT: Record<Quality, string> = {
   low: 'Plain and light: no glow, dust, rain or snow. Best for old laptops.',
@@ -64,6 +64,7 @@ export function SettingsDialog() {
   const resetView = useStore((s) => s.resetView);
   if (!show) return null;
   const close = () => setShow(false);
+  const app = appBridge();
   return (
     <Dialog backdrop="modal" card="modal-card modal-settings" label="Settings" onClose={close}>
       <button className="panel-close" onClick={close} aria-label="Close" title="Close (Esc)"><Icon name="x" size={16} /></button>
@@ -125,7 +126,17 @@ export function SettingsDialog() {
         </button>
       </div>
 
-      {onPhone ? null : (
+      {app ? (
+        <>
+          <h3>Server</h3>
+          <p className="muted">Connected to <code>{location.host}</code>.</p>
+          <div className="set-row">
+            <button type="button" className="btn" onClick={() => { close(); app.changeServer(); }}>
+              <Icon name="plug" size={16} /> Change server
+            </button>
+          </div>
+        </>
+      ) : onPhone ? null : (
         <>
           <h3>Connect a phone</h3>
           <ConnectPhone />

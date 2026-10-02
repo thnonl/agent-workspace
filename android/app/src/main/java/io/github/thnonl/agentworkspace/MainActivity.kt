@@ -8,6 +8,7 @@ import android.os.SystemClock
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -138,6 +139,7 @@ class MainActivity : ComponentActivity() {
             // the web app hides its "Connect a phone" settings when it finds this
             userAgentString = "$userAgentString AgentWorkspaceApp/${BuildConfig.VERSION_NAME}"
         }
+        web.addJavascriptInterface(AppBridge(), "AgentWorkspaceApp")
         web.webChromeClient = WebChromeClient()
         web.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -161,6 +163,20 @@ class MainActivity : ComponentActivity() {
                 if (request.isForMainFrame && response.statusCode == 401 && !panel.isVisible) disconnect(getString(R.string.err_token))
             }
         }
+    }
+
+    /**
+     * `window.AgentWorkspaceApp` for the page: its Settings show a "Change server" button when this is there. (Only the
+     * office of the connected computer is ever loaded: links elsewhere go to the browser.) Called on a WebView thread.
+     */
+    private inner class AppBridge {
+        @JavascriptInterface
+        fun changeServer() {
+            runOnUiThread { if (!isFinishing) disconnect(null) }
+        }
+
+        @JavascriptInterface
+        fun version(): String = BuildConfig.VERSION_NAME
     }
 
     private fun startScan() {
