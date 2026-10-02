@@ -374,7 +374,7 @@ export function DirectorDesk({ layout, reports }: { layout: RoomLayout; reports:
   const rng = useMemo(() => new Rng(layout.seed + 7), [layout.seed]);
   const sheetTilt = useMemo(() => Array.from({ length: 12 }, () => [rng.range(-0.12, 0.12), rng.range(-0.02, 0.02), rng.range(-0.02, 0.02), rng.pick(['#ffffff', '#fff7e0', '#ffe9f0', '#e8f6ff'])] as const), [rng]);
   return (
-    <group position={[director.desk.x, 0, director.desk.z]}>
+    <group position={[director.desk.x, 0, director.desk.z]} rotation={[0, director.rot, 0]}>
       <RB size={[3.0, 0.08, 1.2]} pos={[0, DESK_TOP - 0.04 + 0.02, 0]} color={wood} r={0.04} rough={0.5} />
       <RB size={[3.06, 0.03, 1.26]} pos={[0, DESK_TOP - 0.1 + 0.02, 0]} color={gold} r={0.015} metal={0.35} rough={0.4} />
       {[-1, 1].map((s) => (

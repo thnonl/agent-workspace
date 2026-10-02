@@ -41,12 +41,17 @@ export interface WindowSpec {
   sill: number;
   curtain: boolean;
   panes: 1 | 2 | 4;
-  /** two sashes: this half (+1 = the +x half of the wall, -1 = the -x half) stands open, the other one is closed */
+  /**
+   * 2 sashes: the half on `openSide` (+1 = the +x half of the wall, -1 = the -x half) stands open, the other one is closed;
+   * 1 sash (a narrow window): it always stands open, hinged on the `openSide` jamb
+   */
+  sashes: 1 | 2;
   openSide: 1 | -1;
 }
 
 export interface DoorSpec {
-  wall: 'back' | 'left';
+  /** back / left: in a wall that is drawn; front / right: in one of the lower walls of the picture, which are cut away (a door frame with a bit of wall) */
+  wall: 'back' | 'left' | 'front' | 'right';
   pos: number;
   width: number;
   height: number;
@@ -107,7 +112,13 @@ export interface DeskSlot {
   drawerSide: number;
 }
 
+/** where the director sits: along the back wall, or (preferred) along one of the lower edges of the picture (front, right) or across the bottom corner */
+export type DirSide = 'back' | 'front' | 'right' | 'corner';
+
 export interface DirectorSpec {
+  side: DirSide;
+  /** yaw the director faces (0 = +z, into the room from the back wall); the staff desks face the director */
+  rot: number;
   desk: V2;
   seat: V2;
   approach: V2;
@@ -189,25 +200,43 @@ export interface Spot {
   table?: number;
 }
 
-/** The toilet cubicle in a back corner: low partitions, a door that swings, a tiled floor; the sink stands right next to it. */
+/**
+ * The toilet cubicle in a corner of the room (or in an alcove behind the back or left wall): partitions, a door that swings, a tiled
+ * floor; the sink stands right next to it. Its own frame: local +z is the way the doorway faces (into the room), local x runs along it.
+ */
 export interface Restroom {
-  /** the cubicle (world rectangle, axis aligned) */
+  /** the middle of the cubicle (room coordinates) */
   x: number;
   z: number;
+  /** width along the doorway wall (local x) and depth (local z) */
   w: number;
   d: number;
-  /** which back corner: the partitions stand on the side that faces the room */
-  corner: 'backLeft' | 'backRight';
-  /** the partition with the doorway runs along z = frontZ; the closed one along x = sideX */
-  frontZ: number;
-  sideX: number;
-  /** doorway: centre x on the front partition and its width; the leaf swings about its hinge (x) */
-  doorX: number;
+  /** yaw the doorway faces: 0 = from the back wall into the room, PI/2 = from the left wall */
+  rot: number;
+  /** the cubicle sticks out behind the wall (its doorway is in the wall) instead of standing in the corner of the room */
+  alcove: boolean;
+  /** partitions at the local -x / +x side (none where a wall of the room stands, nor for an alcove: it has walls of its own) */
+  sides: [boolean, boolean];
+  /** the side (local x sign) the door is hinged on; the sink stands on the other side */
+  hinge: 1 | -1;
   doorW: number;
-  hingeX: number;
+  /** its look (colours of the walls, the door and the floor tiles), 0..3 */
+  style: number;
+  /** a long or wide alcove has its own sink inside: where one stands to wash (room coordinates), the way one looks, the tap */
+  sink?: { stand: V2; yaw: number; tap: V2 };
   /** index into `spots` of the toilet seat and into `stations` of the sink to wash at afterwards (-1: none) */
   spot: number;
   wash: number;
+}
+
+/** a point of the cubicle's own frame in room coordinates */
+export function rrWorld(rr: Restroom, lx: number, lz: number): V2 {
+  const o = rot2(lx, lz, rr.rot);
+  return { x: rr.x + o.x, z: rr.z + o.z };
+}
+/** a room point in the cubicle's own frame */
+export function rrLocal(rr: Restroom, x: number, z: number): V2 {
+  return rot2(x - rr.x, z - rr.z, -rr.rot);
 }
 
 /** A round table with chairs round it (where people sit to drink, eat and talk). */
@@ -221,6 +250,10 @@ export interface TableSpec {
 export interface RoomLayout {
   seed: number;
   kind: string;
+  /** the director's corner did not fit anywhere (an attempt of buildLayout that is only kept when no other one is better) */
+  cramped?: boolean;
+  /** an L-shaped (V) room: the corner nearest to the camera (front right) is cut away, this wide (x) and deep (z); null = the whole rectangle */
+  notch: { w: number; d: number } | null;
   seating: 'fan' | 'bench';
   width: number;
   depth: number;
@@ -276,11 +309,16 @@ const KINDS: SizeKind[] = [
   { name: 'cozy', w: 16, d: 12.5, arcs: 2, rows: 2, weight: 3 },
   { name: 'wide', w: 19, d: 12.5, arcs: 2, rows: 2, weight: 2 },
   { name: 'grand', w: 17, d: 15, arcs: 3, rows: 3, weight: 2 },
+  { name: 'square', w: 15.5, d: 15.5, arcs: 3, rows: 3, weight: 2 },
 ];
 
 const DESK_D = 1.0;
-/** the toilet cubicle in the back corner is this wide and deep */
-const RESTROOM = 1.75;
+/** the sizes a toilet cubicle comes in: width along its doorway wall, depth */
+const RR_SIZES: readonly [number, number][] = [[1.75, 1.75], [2.2, 1.75], [1.75, 2.2], [2.4, 2.0]];
+/** ...and behind the wall (an alcove): a long box reaching far out, or a wide one along the wall */
+const ALCOVE_SIZES: readonly [number, number][] = [[1.8, 2.9], [1.75, 3.4], [3.0, 1.8], [3.4, 2.0], [2.4, 2.4]];
+/** an alcove cubicle stands this far in from the corner of the room */
+const ALCOVE_IN = 0.6;
 /** the wall next to the cubicle that is kept free of windows for the sink (metres) */
 const SINK_SPAN = 1.6;
 /** the area in front of the cubicle door that nothing may stand in: half width and depth (metres) */
@@ -290,7 +328,8 @@ const APRON_DEPTH = 1.9;
 const WALL_CLEAR = 0.9;
 /** is (x, z) in the walk-up area in front of the cubicle door? (exported for the tidy-up and the festive decorations) */
 export function inRestroomApron(rr: Restroom, x: number, z: number, pad = 0): boolean {
-  return Math.abs(x - rr.doorX) < APRON_HALF + pad && z > rr.frontZ - 0.05 - pad && z < rr.frontZ - 0.05 + APRON_DEPTH + pad;
+  const l = rrLocal(rr, x, z);
+  return Math.abs(l.x) < APRON_HALF + pad && l.z > rr.d / 2 - 0.05 - pad && l.z < rr.d / 2 - 0.05 + APRON_DEPTH + pad;
 }
 /** round table: the chairs stand on a circle of this radius round the table's middle */
 const TABLE_CHAIR_R = 1.18;
@@ -305,7 +344,7 @@ const DESK_CANDIDATES_GRAND = 30;
 
 /** footprint [width along the wall, depth, height] of every prop */
 export const FOOT: Record<PropKind, [number, number, number]> = {
-  bookshelf: [2.0, 0.6, 2.0],
+  bookshelf: [1.3, 0.6, 2.0],
   plant: [0.75, 0.75, 1.0],
   tallPlant: [0.95, 0.95, 1.7],
   cactus: [0.55, 0.55, 1.05],
@@ -338,8 +377,13 @@ export const FOOT: Record<PropKind, [number, number, number]> = {
   toilet: [0.62, 0.8, 0.8],
 };
 
-/** props taller than this stay on the back / left walls (the default camera looks at those from the front) */
+/** width of a narrow window with a single sash (a two-sash one is 2.3) */
+const WIN_W1 = 1.25;
+
+/** props taller than this stay on the back / left walls (the default camera looks at those from the front)... */
 const TALL_PROP = 1.1;
+/** ...except these, which do not hide much: they may stand against the lower walls (right, front) too */
+const LOWER_WALL_OK = new Set<PropKind>(['coffee', 'fileCabinet']);
 
 /** furniture tall enough to hide posters / boards behind it */
 const BLOCKS_WALL = new Set<PropKind>(['bookshelf', 'vending', 'serverRack', 'fridge', 'coffee', 'cooler', 'fishtank', 'sink', 'stove']);
@@ -406,7 +450,28 @@ interface RawDesk {
   groupSize: number;
 }
 
+/** a point on the director's desk in room coordinates (desk-local x along the desk, z the way the director looks) */
+export function onDirectorDesk(layout: RoomLayout, lx: number, lz: number): { x: number; z: number } {
+  const { desk, rot } = layout.director;
+  return { x: desk.x + lx * Math.cos(rot) + lz * Math.sin(rot), z: desk.z - lx * Math.sin(rot) + lz * Math.cos(rot) };
+}
+
+/** a room seats at least this many staff: a shape that leaves fewer desks (or no reachable toilet, or no place for the director) is tried again with other choices (door, toilet, director side, then no cut-away corner) */
+const MIN_DESKS = 5;
+
 export function buildLayout(seed: number, themeIndex: number): RoomLayout {
+  let best: RoomLayout | null = null;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const l = buildLayoutTry(seed, themeIndex, attempt);
+    // (good: enough desks, the director's corner fits, the toilet can be reached)
+    const ok = (x: RoomLayout) => !x.cramped && !!x.restroom;
+    if (l.desks.length >= MIN_DESKS && ok(l)) return l;
+    if (!best || (!ok(best) && ok(l)) || (ok(best) === ok(l) && l.desks.length > best.desks.length)) best = l;
+  }
+  return best!;
+}
+
+function buildLayoutTry(seed: number, themeIndex: number, attempt: number): RoomLayout {
   const r = new Rng(seed);
   const theme = themeFor(themeIndex);
   const kind = r.weighted(KINDS.map((k) => [k, k.weight] as const));
@@ -414,64 +479,196 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
   const W = kind.w;
   const D = kind.d;
   const wallHeight = 3.1;
+  // the shape of the room: own generator, so the rest of the room keeps its randomness
+  // (another attempt, see MIN_DESKS: other choices for the shape, the door and the director)
+  const roomRng = new Rng((seed ^ 0x6a09e667 ^ Math.imul(attempt, 0x9e3779b9)) >>> 0);
+  // an L (V) shaped room: the front right corner (nearest to the camera) is cut away – not in the small rooms
+  const notch = kind.name !== 'cozy' && roomRng.chance(0.3) && attempt < 2 ? { w: Math.round(W * 0.36 * 2) / 2, d: Math.round(D * 0.36 * 2) / 2 } : null;
+  const notchOR: OR | null = notch ? { x: W / 2 - notch.w / 2, z: D / 2 - notch.d / 2, w: notch.w, d: notch.d, rot: 0 } : null;
+  // half of the rooms have the toilet cubicle sticking out behind the back wall instead of standing in a corner of the room
+  const alcove = roomRng.chance(0.5);
+  // a third of the doors are in one of the lower walls (front, right)
+  const lowerDoor: 'front' | 'right' | null = roomRng.chance(0.3) ? (roomRng.chance(0.5) ? 'front' : 'right') : null;
 
   // ------------------------------------------------------------------ door
   // the door stays in the top corner (left wall, next to the back wall) or the right corner (back wall, next to the right wall) of the picture
   const doorOnLeft = r.chance(0.68);
   const doorWidth = 1.5;
-  const door: DoorSpec = doorOnLeft
+  const door: DoorSpec = lowerDoor === 'front'
     ? (() => {
-        const z = -D / 2 + r.range(1.8, 2.6);
+        const x = -W / 2 + roomRng.range(2.4, 4.4);
+        return {
+          wall: 'front' as const, pos: x, width: doorWidth, height: 2.4,
+          threshold: { x, z: D / 2 }, inside: { x, z: D / 2 - 1.0 }, outside: { x, z: D / 2 + 2.7 }, dir: { x: 0, z: -1 },
+        };
+      })()
+    : lowerDoor === 'right'
+    ? (() => {
+        const z = D / 2 - (notch ? notch.d : 0) - roomRng.range(2.4, 3.8);
+        return {
+          wall: 'right' as const, pos: z, width: doorWidth, height: 2.4,
+          threshold: { x: W / 2, z }, inside: { x: W / 2 - 1.0, z }, outside: { x: W / 2 + 2.7, z }, dir: { x: -1, z: 0 },
+        };
+      })()
+    : doorOnLeft
+    ? (() => {
+        // (next to the back corner, or half of the time further along the wall)
+        const z = -D / 2 + r.range(1.8, 2.6) + (roomRng.chance(0.5) ? roomRng.range(0, Math.max(0, D - (notch ? notch.d : 0) - 6.5)) : 0);
         return {
           wall: 'left' as const, pos: z, width: doorWidth, height: 2.4,
           threshold: { x: -W / 2, z }, inside: { x: -W / 2 + 1.0, z }, outside: { x: -W / 2 - 2.7, z }, dir: { x: 1, z: 0 },
         };
       })()
     : (() => {
-        const x = W / 2 - 1.7;
+        // (next to the right corner, or half of the time further along the wall)
+        const x = W / 2 - 1.7 - (roomRng.chance(0.5) ? roomRng.range(0, W / 2) : 0);
         return {
           wall: 'back' as const, pos: x, width: doorWidth, height: 2.4,
           threshold: { x, z: -D / 2 }, inside: { x, z: -D / 2 + 1.0 }, outside: { x, z: -D / 2 - 2.7 }, dir: { x: 0, z: 1 },
         };
       })();
 
-  // -------------------------------------------------------------- director
-  const dirX = doorOnLeft ? r.range(-0.6, 1.4) : r.range(-2.0, 0.2);
-  const dirDeskZ = -D / 2 + 2.05;
-  const director: DirectorSpec = {
-    desk: { x: dirX, z: dirDeskZ },
-    seat: { x: dirX, z: -D / 2 + 1.25 },
-    approach: { x: dirX + 1.3, z: -D / 2 + 0.8 },
-    approachSide: 1,
-    laptop: { x: dirX, z: dirDeskZ - 0.16 },
-    visitors: [
-      { x: dirX, z: dirDeskZ + 1.15 },
-      { x: dirX - 1.15, z: dirDeskZ + 1.15 },
-      { x: dirX + 1.15, z: dirDeskZ + 1.15 },
-    ],
-    waiting: [
-      { x: dirX, z: dirDeskZ + 2.1 },
-      { x: dirX - 1.15, z: dirDeskZ + 2.1 },
-      { x: dirX + 1.15, z: dirDeskZ + 2.1 },
-    ],
-  };
-  const dirRect: OR = { x: dirX, z: dirDeskZ, w: 3.0, d: 1.2, rot: 0 };
-
   // ------------------------------------------------------- toilet cubicle
-  // in the back corner the door does not use (the camera looks at the back and left walls from the front)
-  const rrCorner: 'backLeft' | 'backRight' = door.wall === 'left' ? 'backRight' : 'backLeft';
-  const rrSign = rrCorner === 'backRight' ? 1 : -1;
-  const rrX = rrSign * (W / 2 - RESTROOM / 2);
-  const rrZ = -D / 2 + RESTROOM / 2;
-  const restRect: OR = { x: rrX, z: rrZ, w: RESTROOM, d: RESTROOM, rot: 0 };
+  // In a corner of the room: the top one (against the back wall or against the left wall), the right one (back wall) or the left one (left
+  // wall) – the corners the door leaves free – in the corner itself or in an alcove behind the wall. Several sizes and looks.
+  const [rrW, rrD] = roomRng.pick(alcove ? ALCOVE_SIZES : RR_SIZES);
+  /** a long or a wide alcove has room for the sink inside (the wide one beside the toilet, the long one on a side wall near the door) */
+  const innerSink: 'wide' | 'long' | null = !alcove ? null : rrW >= 3.0 ? 'wide' : rrD >= 2.9 ? 'long' : null;
+  const sinkSpan = innerSink ? 0 : SINK_SPAN;
+  const rrStyle = roomRng.int(0, 3);
+  /** the floor inside a door in the back or left wall */
+  const backDoorFloor: OR | null = door.wall === 'left' ? { x: -W / 2 + 1.7, z: door.pos, w: 3.4, d: 2.8, rot: 0 }
+    : door.wall === 'back' ? { x: door.pos, z: -D / 2 + 1.7, w: 2.8, d: 3.4, rot: 0 } : null;
+  /** a place for the cubicle: its middle, the way the doorway faces, the side (local x) its sink stands on */
+  interface RrPlace { x: number; z: number; rot: number; sink: 1 | -1 }
+  const inset = alcove ? ALCOVE_IN : 0;
+  const atBack = alcove ? -D / 2 - rrD / 2 : -D / 2 + rrD / 2;
+  const atLeft = alcove ? -W / 2 - rrD / 2 : -W / 2 + rrD / 2;
+  const rrPlaces: RrPlace[] = [
+    { x: -W / 2 + rrW / 2 + inset, z: atBack, rot: 0, sink: 1 }, // top corner, along the back wall
+    { x: W / 2 - rrW / 2 - inset, z: atBack, rot: 0, sink: -1 }, // right corner
+    { x: atLeft, z: -D / 2 + rrW / 2 + inset, rot: Math.PI / 2, sink: -1 }, // top corner, along the left wall
+    { x: atLeft, z: D / 2 - rrW / 2 - inset, rot: Math.PI / 2, sink: 1 }, // left corner
+  ];
+  const placeOR = (p: RrPlace, lx: number, lz: number, w: number, d: number): OR => { const o = rot2(lx, lz, p.rot); return { x: p.x + o.x, z: p.z + o.z, w, d, rot: p.rot }; };
+  /** the cubicle, its sink and the walk-up area in front of it, as one area */
+  const footprint = (p: RrPlace): OR => {
+    const x0 = p.sink > 0 ? -rrW / 2 : -rrW / 2 - sinkSpan;
+    const x1 = p.sink > 0 ? rrW / 2 + sinkSpan : rrW / 2;
+    const z0 = alcove ? rrD / 2 - 0.1 : -rrD / 2;
+    const z1 = rrD / 2 + APRON_DEPTH;
+    return placeOR(p, (x0 + x1) / 2, (z0 + z1) / 2, x1 - x0, z1 - z0);
+  };
+  const lowerDoorFloor: OR | null = door.wall === 'front' ? { x: door.pos, z: D / 2 - 1.6, w: 3.0, d: 3.2, rot: 0 }
+    : door.wall === 'right' ? { x: W / 2 - 1.6, z: door.pos, w: 3.2, d: 3.0, rot: 0 } : null;
+  const rrOk = (p: RrPlace): boolean => {
+    const fp = footprint(p);
+    return ![backDoorFloor, lowerDoorFloor, notchOR].some((q) => q && overlapOR(fp, q, 0.2));
+  };
+  const rrP = roomRng.shuffle(rrPlaces).find(rrOk) ?? rrPlaces[door.wall === 'left' ? 1 : 0];
+  const rrX = rrP.x;
+  const rrZ = rrP.z;
+  const rrRot = rrP.rot;
+  /** a point / an area in the cubicle's frame */
+  const rrAt = (lx: number, lz: number): V2 => { const o = rot2(lx, lz, rrRot); return { x: rrX + o.x, z: rrZ + o.z }; };
+  const rrOR = (lx: number, lz: number, w: number, d: number): OR => placeOR(rrP, lx, lz, w, d);
+  const restRect: OR = rrOR(0, 0, rrW, rrD);
   /** the stall plus the walk-up area in front of its doorway */
   const restZone: OR[] = [
-    { x: rrX, z: rrZ, w: RESTROOM + 0.3, d: RESTROOM + 0.3, rot: 0 },
-    { x: rrX, z: -D / 2 + RESTROOM + 0.9 - 0.05, w: 2 * APRON_HALF, d: APRON_DEPTH, rot: 0 },
+    ...(alcove ? [] : [rrOR(0, 0, rrW + 0.3, rrD + 0.3)]),
+    rrOR(0, rrD / 2 + 0.9 - 0.05, 2 * APRON_HALF, APRON_DEPTH),
   ];
   /** is (x, z) in the walk-up area in front of the cubicle door (where the door swings and people walk in and out)? */
-  const inApron = (x: number, z: number, pad = 0) =>
-    Math.abs(x - rrX) < APRON_HALF + pad && z > -D / 2 + RESTROOM - 0.05 - pad && z < -D / 2 + RESTROOM - 0.05 + APRON_DEPTH + pad;
+  const inApron = (x: number, z: number, pad = 0) => {
+    const l = rot2(x - rrX, z - rrZ, -rrRot);
+    return Math.abs(l.x) < APRON_HALF + pad && l.z > rrD / 2 - 0.05 - pad && l.z < rrD / 2 - 0.05 + APRON_DEPTH + pad;
+  };
+  /** the stretches of the back and left walls the cubicle and its sink take (no window, no picture there) */
+  const rrWall: Record<'back' | 'left', [number, number][]> = { back: [], left: [] };
+  {
+    const x0 = rrP.sink > 0 ? -rrW / 2 : -rrW / 2 - sinkSpan;
+    const x1 = rrP.sink > 0 ? rrW / 2 + sinkSpan : rrW / 2;
+    const cs = corners(rrOR((x0 + x1) / 2, 0, x1 - x0, rrD));
+    const xs = cs.map((c) => c.x);
+    const zs = cs.map((c) => c.z);
+    if (Math.min(...zs) <= -D / 2 + 0.05) rrWall.back.push([Math.min(...xs), Math.max(...xs)]);
+    if (Math.min(...xs) <= -W / 2 + 0.05) rrWall.left.push([Math.min(...zs), Math.max(...zs)]);
+  }
+  const nearRestroom = (wall: 'back' | 'left', pos: number) => rrWall[wall].some(([a, b]) => pos + winW / 2 + 0.9 > a && pos - winW / 2 - 0.9 < b);
+  /** the floor inside a door in one of the lower walls, where nothing else may stand */
+  const doorZone: OR | null = lowerDoorFloor;
+
+  // -------------------------------------------------------------- director
+  // The director sits along one edge of the room and faces into it; preferably along one of the lower edges of the picture (front, right),
+  // which leaves the back and left walls for windows, the door and the furniture. Everything round the director (seat, visitors, the staff
+  // desks that face them) is laid out in the director's own frame: local +z is the way they look, local x runs along their desk.
+  const dirOffset = lowerDoor ? r.range(-1.2, 1.2) : doorOnLeft ? r.range(-0.6, 1.4) : r.range(-2.0, 0.2);
+  // (the bottom corner: sitting across it, looking at the top corner)
+  const DIR_YAW = { back: 0, front: Math.PI, right: -Math.PI / 2, corner: Math.atan2(-1, -1) } as const;
+  /** how far a cubicle reaches along an edge: the largest x (front edge) / z (right edge) of its walk-up area near that edge */
+  const rrReach = (near: (c: V2) => boolean, of: (c: V2) => number, from: number): number =>
+    Math.max(from, ...restZone.flatMap((q) => corners(q)).filter(near).map(of));
+  const dirPlace = (side: DirSide): V2 => {
+    if (side === 'back') return { x: dirOffset, z: -D / 2 + 2.05 };
+    if (side === 'corner') return { x: W / 2 - 3.2, z: D / 2 - 3.2 };
+    if (side === 'front') {
+      // (along what is left of the front edge: clear of a cubicle in the left corner and of the cut-away corner of an L-shaped room)
+      const x0 = rrReach((c) => c.z > D / 2 - 4.8, (c) => c.x, -W / 2);
+      const x1 = W / 2 - (notch ? notch.w : 0);
+      return { x: (x0 + x1) / 2 + Math.max(-1.5, Math.min(1.5, dirOffset)), z: D / 2 - 2.05 };
+    }
+    // (along the right edge, clear of a cubicle in the right corner)
+    const z0 = rrReach((c) => c.x > W / 2 - 4.8, (c) => c.z, -D / 2);
+    const z1 = D / 2 - (notch ? notch.d : 0);
+    return { x: W / 2 - 2.05, z: (z0 + z1) / 2 + Math.max(-1.0, Math.min(1.0, dirOffset)) };
+  };
+  /** does the director's corner (desk, chair, the visitors in front) fit on that side? */
+  const dirFits = (side: DirSide): boolean => {
+    if (side === 'corner' && notch) return false;
+    const p = dirPlace(side);
+    const rot = DIR_YAW[side];
+    const at = (lx: number, lz: number): V2 => { const o = rot2(lx, lz, rot); return { x: p.x + o.x, z: p.z + o.z }; };
+    const c = at(0, 0.9);
+    const area: OR = { x: c.x, z: c.z, w: 4.6, d: 4.6, rot };
+    const blockers: OR[] = [...restZone, ...(doorZone ? [doorZone] : []), ...(notchOR ? [notchOR] : [])];
+    if (blockers.some((q) => overlapOR(area, q, 0.2))) return false;
+    // (inside the room, with room to walk round it)
+    return corners(area).every((q) => q.x > -W / 2 + 0.3 && q.x < W / 2 - 0.3 && q.z > -D / 2 + 0.3 && q.z < D / 2 - 0.3);
+  };
+  let dirCramped = false;
+  const dirSide: DirSide = (() => {
+    const wish = roomRng.weighted([['front', 3.5], ['right', 3], ['corner', 2.2], ['back', 2]] as const);
+    if (wish !== door.wall && dirFits(wish)) return wish;
+    for (const sd of ['front', 'right', 'corner', 'back'] as const) if (sd !== door.wall && dirFits(sd)) return sd;
+    // (nowhere fits: the next attempt tries other choices, see buildLayout)
+    dirCramped = true;
+    return 'back';
+  })();
+  const dirYaw = DIR_YAW[dirSide];
+  const dirDesk = dirPlace(dirSide);
+  /** a point in the director's frame (origin: the middle of the desk; +z: the way the director looks) */
+  const dirAt = (lx: number, lz: number): V2 => {
+    const o = rot2(lx, lz, dirYaw);
+    return { x: dirDesk.x + o.x, z: dirDesk.z + o.z };
+  };
+  /** a room point in the director's frame */
+  const dirLocal = (x: number, z: number): V2 => rot2(x - dirDesk.x, z - dirDesk.z, -dirYaw);
+  const director: DirectorSpec = {
+    side: dirSide,
+    rot: dirYaw,
+    desk: dirDesk,
+    seat: dirAt(0, -0.8),
+    approach: dirAt(1.3, -1.25),
+    approachSide: 1,
+    laptop: dirAt(0, -0.16),
+    visitors: [dirAt(0, 1.15), dirAt(-1.15, 1.15), dirAt(1.15, 1.15)],
+    waiting: [dirAt(0, 2.1), dirAt(-1.15, 2.1), dirAt(1.15, 2.1)],
+  };
+  /** an area in the director's frame (w along the desk, d the way the director looks) */
+  const dirOR = (lx: number, lz: number, w: number, d: number): OR => ({ ...dirAt(lx, lz), w, d, rot: dirYaw });
+  const dirRect: OR = dirOR(0, 0, 3.0, 1.2);
+  /** along the back wall the director's x is where the sign hangs and no window goes; elsewhere the middle of the wall */
+  const backMid = dirSide === 'back' ? dirDesk.x : 0;
 
   // ------------------------------------------------------------- staff desks
   // every desk faces the director; two seating styles keep rooms from looking alike
@@ -485,8 +682,12 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
     ];
   };
   const orInBounds = (rc: OR) => {
+    if (notchOR && overlapOR(rc, notchOR, 0.5)) return false;
+    if (doorZone && overlapOR(rc, doorZone, 0.1)) return false;
     for (const c of corners(rc)) {
-      if (c.x < -W / 2 + xmL || c.x > W / 2 - xmR || c.z > D / 2 - 1.5 || c.z < dirDeskZ + (Math.abs(c.x - dirX) > 3.4 ? 0.5 : 1.9)) return false;
+      if (c.x < -W / 2 + xmL || c.x > W / 2 - xmR || c.z > D / 2 - 1.5 || c.z < -D / 2 + (dirSide === 'back' ? 0.5 : 1.5)) return false;
+      const l = dirLocal(c.x, c.z);
+      if (l.z < (Math.abs(l.x) > 3.4 ? 0.5 : 1.9)) return false;
     }
     return true;
   };
@@ -497,8 +698,12 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
     return true;
   };
   const raw: RawDesk[] = [];
-  const maxCandidates = kind.name === 'grand' ? DESK_CANDIDATES_GRAND : DESK_CANDIDATES;
-  const visitorArea: OR = { x: dirX, z: dirDeskZ + 1.6, w: 3.6, d: 2.4, rot: 0 };
+  const maxCandidates = kind.rows >= 3 ? DESK_CANDIDATES_GRAND : DESK_CANDIDATES;
+  const visitorArea: OR = dirOR(0, 1.6, 3.6, 2.4);
+  // the room as seen from the director: how far it reaches to either side of the desk (desk-local x)
+  const roomCorners: V2[] = [{ x: -W / 2, z: -D / 2 }, { x: W / 2, z: -D / 2 }, { x: W / 2, z: D / 2 }, { x: -W / 2, z: D / 2 }].map((c) => dirLocal(c.x, c.z));
+  const latMin = Math.min(...roomCorners.map((c) => c.x)) + 1.5;
+  const latMax = Math.max(...roomCorners.map((c) => c.x)) - 1.5;
   const fits = (d: RawDesk) => {
     if (!inBounds(d)) return false;
     const mine = deskORs(d);
@@ -522,10 +727,11 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
         const a = a0 + k * step + r.range(-0.04, 0.04);
         if (Math.abs(a) > 1.4) continue;
         const rr = rad + r.range(-0.15, 0.15);
+        const p = dirAt(rr * Math.sin(a), rr * Math.cos(a));
         const d: RawDesk = {
-          x: dirX + rr * Math.sin(a),
-          z: dirDeskZ + rr * Math.cos(a),
-          rot: a + Math.PI + r.range(-0.05, 0.05),
+          x: p.x,
+          z: p.z,
+          rot: a + Math.PI + r.range(-0.05, 0.05) + dirYaw,
           w: r.pick([1.7, 1.9, 1.9, 2.1]),
           group: group++,
           seatInGroup: 0,
@@ -538,13 +744,14 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
     let group = 0;
     const rowGap = 3.2;
     for (let i = 0; i < kind.rows; i++) {
-      const z = dirDeskZ + 4.4 + i * rowGap + r.range(-0.12, 0.12);
-      let x = -W / 2 + xmL + r.range(0.2, 1.4) + (i % 2) * r.range(0.4, 1.2);
-      while (x < W / 2 - xmR) {
+      const z = 4.4 + i * rowGap + r.range(-0.12, 0.12);
+      let x = latMin + r.range(0.2, 1.4) + (i % 2) * r.range(0.4, 1.2);
+      while (x < latMax) {
         const size = r.pick([2, 2, 3, 3, 4]);
         for (let s = 0; s < size; s++) {
           const w = 1.9;
-          const d: RawDesk = { x: x + w / 2, z, rot: Math.PI, w, group, seatInGroup: s, groupSize: size };
+          const p = dirAt(x + w / 2, z);
+          const d: RawDesk = { x: p.x, z: p.z, rot: Math.PI + dirYaw, w, group, seatInGroup: s, groupSize: size };
           x += w + 0.02;
           if (raw.length < maxCandidates && fits(d)) raw.push(d);
         }
@@ -556,13 +763,14 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
   // fall back to a plain grid facing the director if the random layout came out too small
   if (raw.length < MAX_DESKS) {
     raw.length = 0;
-    const x0 = -W / 2 + xmL + 1.05;
-    const x1 = W / 2 - xmR - 1.05;
+    const x0 = latMin + 1.05;
+    const x1 = latMax - 1.05;
     const cols = Math.max(1, Math.floor((x1 - x0) / 3) + 1);
     const left = (x0 + x1) / 2 - ((cols - 1) * 3) / 2;
     for (let i = 0; i < 3; i++) {
       for (let c = 0; c < cols; c++) {
-        const d: RawDesk = { x: left + c * 3, z: dirDeskZ + 4.6 + i * 3.2, rot: Math.PI, w: 1.9, group: i * 8 + c, seatInGroup: 0, groupSize: 1 };
+        const p = dirAt(left + c * 3, 4.6 + i * 3.2);
+        const d: RawDesk = { x: p.x, z: p.z, rot: Math.PI + dirYaw, w: 1.9, group: i * 8 + c, seatInGroup: 0, groupSize: 1 };
         if (fits(d)) raw.push(d);
       }
     }
@@ -570,11 +778,11 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
 
   // room for exactly MAX_DESKS staff: keep the seats that face the director best
   if (raw.length > MAX_DESKS) {
-    const score = (d: RawDesk) => Math.abs(Math.atan2(d.x - dirX, d.z - dirDeskZ)) * 2.2 + Math.hypot(d.x - dirX, d.z - dirDeskZ) * 0.12;
+    const score = (d: RawDesk) => { const l = dirLocal(d.x, d.z); return Math.abs(Math.atan2(l.x, l.z)) * 2.2 + Math.hypot(l.x, l.z) * 0.12; };
     raw.sort((a, b) => score(a) - score(b));
-    if (kind.name === 'grand') {
+    if (kind.rows >= 3) {
       // spread the staff over the rows (two per row) instead of crowding the director: the front half of the big room stays lively
-      const rowOf = (d: RawDesk) => Math.max(0, Math.min(kind.rows - 1, Math.floor(((seating === 'bench' ? d.z - dirDeskZ : Math.hypot(d.x - dirX, d.z - dirDeskZ)) - 3.3) / 3.2)));
+      const rowOf = (d: RawDesk) => { const l = dirLocal(d.x, d.z); return Math.max(0, Math.min(kind.rows - 1, Math.floor(((seating === 'bench' ? l.z : Math.hypot(l.x, l.z)) - 3.3) / 3.2))); };
       const quota = Math.ceil(MAX_DESKS / kind.rows);
       const taken = new Map<number, number>();
       const chosen: RawDesk[] = [];
@@ -591,11 +799,13 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
     raw.length = MAX_DESKS;
     if (seating === 'bench') {
       // benches lost some seats: renumber them so dividers only stand between neighbours
-      raw.sort((a, b) => Math.round(a.z * 2) - Math.round(b.z * 2) || a.x - b.x);
+      // (rows and seats as the director sees them)
+      const lo = (d: RawDesk) => dirLocal(d.x, d.z);
+      raw.sort((a, b) => Math.round(lo(a).z * 2) - Math.round(lo(b).z * 2) || lo(a).x - lo(b).x);
       let g = -1;
       raw.forEach((d, i) => {
         const prev = raw[i - 1];
-        if (!(prev && Math.abs(prev.z - d.z) < 0.3 && d.x - prev.x < d.w + 0.15)) g++;
+        if (!(prev && Math.abs(lo(prev).z - lo(d).z) < 0.3 && lo(d).x - lo(prev).x < d.w + 0.15)) g++;
         d.group = g;
       });
       for (const d of raw) {
@@ -660,9 +870,10 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
         nv.blockOriented(o.x, o.z, o.w, o.d, o.rot, 0.2);
       }
     }
-    nv.blockRect({ x: dirX, z: dirDeskZ, w: 3.0, d: 1.2 }, 0.22);
+    nv.blockOriented(dirDesk.x, dirDesk.z, 3.0, 1.2, dirYaw, 0.22);
     nv.blockRect({ x: director.seat.x, z: director.seat.z, w: 0.7, d: 0.7 }, 0.12);
-    nv.blockRect(restRect, 0.02);
+    if (!alcove) nv.blockOriented(restRect.x, restRect.z, restRect.w, restRect.d, restRect.rot, 0.02);
+    if (notchOR) nv.blockRect(notchOR, 0.2);
     return nv;
   };
   /** where the worker of `d` walks up to the chair from: the side with the shortest way from the door that is free */
@@ -752,60 +963,74 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
   // which sash stands open (left or right) is random per window; own generator so the rest of the room is unaffected
   const sideRng = new Rng((seed ^ 0x5bd1e995) >>> 0);
   const sideOf = (): 1 | -1 => (sideRng.chance(0.5) ? 1 : -1);
+  // a third of the windows are narrow ones with a single sash (always open); own generator as well
+  const sashRng = new Rng((seed ^ 0x510e527f) >>> 0);
+  const sashOf = (): { sashes: 1 | 2; w: number } => (sashRng.chance(0.35) ? { sashes: 1, w: WIN_W1 } : { sashes: 2, w: winW });
   const winCount = r.pick([2, 3, 3]);
   const winW = 2.3;
-  const backWinX = winCount === 2 ? [dirX - 3.6, dirX + 3.6] : [dirX - 4.9, dirX, dirX + 4.9];
+  // never right behind the director's chair: the wall at the director's back stays plain (the office sign hangs there)
+  const behindBoss = (x: number) => dirSide === 'back' && Math.abs(x - backMid) < winW / 2 + 1.2;
+  const backWinX = winCount === 2 ? [backMid - 3.6, backMid + 3.6] : [backMid - 3.6, backMid + 3.6, backMid + (backMid > 0 ? -7.2 : 7.2)];
   for (const x of backWinX) {
-    if (Math.abs(x) > W / 2 - 1.6) continue;
+    if (Math.abs(x) > W / 2 - 1.6 || behindBoss(x)) continue;
     if (door.wall === 'back' && Math.abs(x - door.pos) < 2.4) continue;
     // (nothing above the cubicle or the sink next to it, and no curtains in the sink's way)
-    if (rrSign * (x - (rrX - rrSign * (RESTROOM / 2 + SINK_SPAN))) + winW / 2 + 0.9 > 0) continue;
-    windows.push({ wall: 'back', pos: x, w: winW, h: 1.6, sill: 1.05, curtain: r.chance(0.7), panes: r.pick([2, 4, 4] as const), openSide: sideOf() });
+    if (nearRestroom('back', x)) continue;
+    windows.push({ wall: 'back', pos: x, h: 1.6, sill: 1.05, curtain: r.chance(0.7), panes: r.pick([2, 4, 4] as const), openSide: sideOf(), ...sashOf() });
   }
   for (const z of [-D / 2 + 3.4, -D / 2 + 7.0]) {
     if (z > D / 2 - 1.6) continue;
     if (door.wall === 'left' && Math.abs(z - door.pos) < 2.3) continue;
-    if (rrCorner === 'backLeft' && z - winW / 2 < -D / 2 + RESTROOM + SINK_SPAN) continue;
-    if (r.chance(0.85)) windows.push({ wall: 'left', pos: z, w: winW, h: 1.6, sill: 1.05, curtain: r.chance(0.6), panes: r.pick([2, 4] as const), openSide: sideOf() });
+    if (nearRestroom('left', z)) continue;
+    if (r.chance(0.85)) windows.push({ wall: 'left', pos: z, h: 1.6, sill: 1.05, curtain: r.chance(0.6), panes: r.pick([2, 4] as const), openSide: sideOf(), ...sashOf() });
   }
   // every room has two or three windows: more than three are never kept, and where the usual places gave fewer, other places along the walls are tried
   // (the same rules: not at the door, not above the cubicle or its sink, not on top of another window; own generator so the rest of the room is unaffected)
   windows.splice(3);
-  if (windows.length < 2) {
-    const room = new Rng((seed ^ 0x2f6a9c1d) >>> 0);
-    const clear = (wall: 'back' | 'left', pos: number) => windows.every((w) => w.wall !== wall || Math.abs(w.pos - pos) >= winW + 0.7);
+  const clearOfWindows = (wall: 'back' | 'left', pos: number) => windows.every((w) => w.wall !== wall || Math.abs(w.pos - pos) >= winW + 0.7);
+  /**
+   * Other places along the back and left walls a window may go (not at the door, above the cubicle or its sink, or behind the director).
+   * `upper`: only the upper half of each wall in the picture (the left half of the back wall, the back half of the left wall): the
+   * furniture keeps to the lower halves (see tryWall).
+   */
+  const sparePlaces = (upper: boolean): { wall: 'back' | 'left'; pos: number }[] => {
     const spare: { wall: 'back' | 'left'; pos: number }[] = [];
-    for (let x = dirX - 7.4; x <= dirX + 7.4; x += 1.2) {
-      if (Math.abs(x) > W / 2 - 1.6) continue;
+    for (let x = backMid - 7.4; x <= backMid + 7.4; x += 1.2) {
+      if (Math.abs(x) > W / 2 - 1.6 || behindBoss(x) || (upper && x > 0)) continue;
       if (door.wall === 'back' && Math.abs(x - door.pos) < 2.4) continue;
-      if (rrSign * (x - (rrX - rrSign * (RESTROOM / 2 + SINK_SPAN))) + winW / 2 + 0.9 > 0) continue;
+      if (nearRestroom('back', x)) continue;
       spare.push({ wall: 'back', pos: x });
     }
     for (let z = -D / 2 + 3.4; z <= D / 2 - 1.6; z += 1.2) {
       if (door.wall === 'left' && Math.abs(z - door.pos) < 2.3) continue;
-      if (rrCorner === 'backLeft' && z - winW / 2 < -D / 2 + RESTROOM + SINK_SPAN) continue;
+      if (nearRestroom('left', z)) continue;
+      if (upper && z > 0) continue;
       spare.push({ wall: 'left', pos: z });
     }
-    for (const c of room.shuffle(spare)) {
-      if (windows.length >= 2) break;
-      if (!clear(c.wall, c.pos)) continue;
-      windows.push({ wall: c.wall, pos: c.pos, w: winW, h: 1.6, sill: 1.05, curtain: room.chance(0.6), panes: room.pick([2, 4] as const), openSide: sideOf() });
+    return spare;
+  };
+  // as many as the room was meant to have: at least two anywhere, a third only on the upper half of the walls
+  if (windows.length < winCount) {
+    const room = new Rng((seed ^ 0x2f6a9c1d) >>> 0);
+    for (const c of [...room.shuffle(sparePlaces(true)), ...room.shuffle(sparePlaces(false))]) {
+      if (windows.length >= winCount) break;
+      if (windows.length >= 2 && c.pos > 0) continue; // (the third: upper half only)
+      if (!clearOfWindows(c.wall, c.pos)) continue;
+      windows.push({ wall: c.wall, pos: c.pos, h: 1.6, sill: 1.05, curtain: room.chance(0.6), panes: room.pick([2, 4] as const), openSide: sideOf(), ...sashOf() });
     }
-  }
-  // a room never has all of its windows open on the same side
-  if (windows.length > 1 && windows.every((w) => w.openSide === windows[0].openSide)) {
-    windows[windows.length - 1].openSide = (windows[windows.length - 1].openSide * -1) as 1 | -1;
   }
   // the strip in front of a window that curtains and sill plants occupy (nothing stands in it)
   const curtainZone = (wn: WindowSpec): OR =>
     wn.wall === 'back' ? { x: wn.pos, z: -D / 2 + 0.35, w: wn.w + 1.2, d: 0.7, rot: 0 } : { x: -W / 2 + 0.35, z: wn.pos, w: 0.7, d: wn.w + 1.2, rot: 0 };
+  /** the floor under a window the office cats jump down to */
+  const windowFloor = (wn: WindowSpec): OR => (wn.wall === 'back' ? { x: wn.pos, z: -D / 2 + 0.95, w: 1.5, d: 1.9, rot: 0 } : { x: -W / 2 + 0.95, z: wn.pos, w: 1.9, d: 1.5, rot: 0 });
   // a desk or the director's chair that stands in that strip: no curtains there (they would hang through it)
   for (const wn of windows) {
     if (!wn.curtain) continue;
     const zone = curtainZone(wn);
     const blockers: OR[] = [
       ...desks.map((d) => ({ x: d.x, z: d.z, w: d.w, d: DESK_D, rot: d.rot })),
-      { x: dirX, z: dirDeskZ, w: 3.0, d: 1.2, rot: 0 },
+      dirRect,
       { x: director.seat.x, z: director.seat.z, w: 0.9, d: 0.9, rot: 0 },
     ];
     if (blockers.some((q) => overlapOR(zone, q, 0.1))) wn.curtain = false;
@@ -822,16 +1047,18 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
     ]),
     ...desks.flatMap((d) => d.wings.map((wg) => { const p = rot2(wg.x, wg.z, d.rot); return { x: d.x + p.x, z: d.z + p.z, w: wg.w + 0.3, d: wg.d + 0.3, rot: d.rot }; })),
     ...restZone,
-    { x: dirX, z: dirDeskZ, w: 4.4, d: 3.2, rot: 0 },
-    { x: dirX + 1.3, z: -D / 2 + 0.85, w: 1.8, d: 1.4, rot: 0 },
-    { x: dirX, z: dirDeskZ + 1.7, w: 3.8, d: 2.6, rot: 0 },
-    door.wall === 'left'
+    dirOR(0, 0, 4.4, 3.2),
+    dirOR(1.3, -1.2, 1.8, 1.4),
+    dirOR(0, 1.7, 3.8, 2.6),
+    doorZone ?? (door.wall === 'left'
       ? { x: -W / 2 + 1.7, z: door.pos, w: 3.4, d: 2.8, rot: 0 }
-      : { x: door.pos, z: -D / 2 + 1.7, w: 2.8, d: 3.4, rot: 0 },
+      : { x: door.pos, z: -D / 2 + 1.7, w: 2.8, d: 3.4, rot: 0 }),
+    // (nothing stands in the cut-away corner)
+    ...(notchOR ? [{ ...notchOR, w: notchOR.w + 0.3, d: notchOR.d + 0.3 }] : []),
   ];
   // keep the floor under every window free so the office cats can hop in and out
   for (const wn of windows) {
-    reserved.push(wn.wall === 'back' ? { x: wn.pos, z: -D / 2 + 0.95, w: 1.5, d: 1.9, rot: 0 } : { x: -W / 2 + 0.95, z: wn.pos, w: 1.9, d: 1.5, rot: 0 });
+    reserved.push(windowFloor(wn));
     reserved.push(curtainZone(wn));
   }
   const add = (kindName: PropKind, x: number, z: number, rot: number, pad = 0.18): boolean => {
@@ -845,52 +1072,77 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
     return true;
   };
 
-  /** try to put a prop against a wall (front faces into the room) */
-  const tryWall = (k: PropKind, walls: ('back' | 'left' | 'right' | 'front')[] = ['back', 'left', 'right']): boolean => {
+  /**
+   * Try to put a prop against a wall (front faces into the room). The walls at the bottom of the picture (right, front) come first, and on the back
+   * and left walls the end nearer to the camera: the upper part of those walls stays free for windows and pictures.
+   */
+  const tryWall = (k: PropKind, walls: ('back' | 'left' | 'right' | 'front')[] = ['back', 'left', 'right', 'front']): boolean => {
     const [w, d, h] = FOOT[k];
     // tall furniture on the right / front wall would show its back to the camera and hide whoever uses it (or the desks behind it)
-    if (h > TALL_PROP) walls = walls.filter((x) => x === 'back' || x === 'left');
+    if (h > TALL_PROP && !LOWER_WALL_OK.has(k)) walls = walls.filter((x) => x === 'back' || x === 'left');
     if (!walls.length) return false;
+    const near = walls.filter((x) => x === 'right' || x === 'front');
+    const far = walls.filter((x) => x === 'back' || x === 'left');
+    /** 0..1 leaning towards 1: the lower end of the back wall (right) and of the left wall (front) */
+    const low = () => Math.sqrt(r.next());
     for (let t = 0; t < 26; t++) {
-      const wall = r.pick(walls);
+      const wall = near.length && (t < 16 || !far.length) ? r.pick(near) : r.pick(far);
       if (wall === 'back') {
-        if (add(k, r.range(-W / 2 + w / 2 + 0.3, W / 2 - w / 2 - 0.3), -D / 2 + d / 2 + 0.06, 0)) return true;
+        if (add(k, -W / 2 + w / 2 + 0.3 + low() * (W - w - 0.6), -D / 2 + d / 2 + 0.06, 0)) return true;
       } else if (wall === 'left') {
-        if (add(k, -W / 2 + d / 2 + 0.06, r.range(-D / 2 + w / 2 + 0.4, D / 2 - w / 2 - 0.4), Math.PI / 2)) return true;
+        if (add(k, -W / 2 + d / 2 + 0.06, -D / 2 + w / 2 + 0.4 + low() * (D - w - 0.8), Math.PI / 2)) return true;
       } else if (wall === 'right') {
         if (add(k, W / 2 - d / 2 - 0.05, r.range(-D / 2 + w / 2 + 0.4, D / 2 - w / 2 - 0.4), -Math.PI / 2)) return true;
       } else if (add(k, r.range(-W / 2 + w / 2 + 0.5, W / 2 - w / 2 - 0.5), D / 2 - d / 2 - 0.05, Math.PI)) return true;
     }
-    // the random places did not fit: look along the walls for any gap that does (no random numbers: rooms that were furnished before keep their layout)
-    for (const wall of walls) {
-      for (let u = 0; u <= 1.0001; u += 0.025) {
+    // the random places did not fit: look along the walls for any gap that does, the lower walls and lower ends first (no random numbers)
+    for (const wall of [...near, ...far]) {
+      for (let v = 0; v <= 1.0001; v += 0.025) {
+        const u = 1 - v;
         if (wall === 'back' && add(k, -W / 2 + w / 2 + 0.3 + u * (W - w - 0.6), -D / 2 + d / 2 + 0.06, 0)) return true;
         if (wall === 'left' && add(k, -W / 2 + d / 2 + 0.06, -D / 2 + w / 2 + 0.4 + u * (D - w - 0.8), Math.PI / 2)) return true;
         if (wall === 'right' && add(k, W / 2 - d / 2 - 0.05, -D / 2 + w / 2 + 0.4 + u * (D - w - 0.8), -Math.PI / 2)) return true;
+        if (wall === 'front' && add(k, -W / 2 + w / 2 + 0.5 + u * (W - w - 1.0), D / 2 - d / 2 - 0.05, Math.PI)) return true;
       }
     }
     return false;
   };
+  /** the open floor starts in front of a director at the back wall, at the back wall otherwise (the reserved areas keep the director's corner free) */
+  const floorZ0 = dirSide === 'back' ? dirDesk.z + 2.6 : -D / 2 + 1.6;
   /** try to put a prop somewhere on the open floor */
   const tryFloor = (k: PropKind, rots: number[] = [0, Math.PI / 2, Math.PI, -Math.PI / 2]): boolean => {
     for (let t = 0; t < 40; t++) {
-      if (add(k, r.range(-W / 2 + 1.4, W / 2 - 1.4), r.range(dirDeskZ + 2.6, D / 2 - 1.0), r.pick(rots), 0.3)) return true;
+      if (add(k, r.range(-W / 2 + 1.4, W / 2 - 1.4), r.range(floorZ0, D / 2 - 1.0), r.pick(rots), 0.3)) return true;
     }
     return false;
   };
 
   if (door.wall === 'left') add('coatRack', -W / 2 + 0.45, door.pos + 1.5, Math.PI / 2);
-  else add('coatRack', door.pos - 1.5, -D / 2 + 0.45, 0);
+  else if (door.wall === 'back') add('coatRack', door.pos - 1.5, -D / 2 + 0.45, 0);
 
   // the toilet stands against the back wall in its cubicle; the sink (wash hands, wash face) next to it
   const restRng = new Rng((seed ^ 0x1b873593) >>> 0);
-  const toilet: Prop = { kind: 'toilet', x: rrX, z: -D / 2 + 0.43, rot: 0, variant: restRng.int(0, 3), color: '#f6f8fb', color2: restRng.pick(colorsAll) };
+  // (in a wide alcove the toilet stands to one side, the sink on the other)
+  const toiletX = innerSink === 'wide' ? -rrP.sink * 0.95 : 0;
+  const toilet: Prop = { kind: 'toilet', ...rrAt(toiletX, -rrD / 2 + 0.43), rot: rrRot, variant: restRng.int(0, 3), color: '#f6f8fb', color2: restRng.pick(colorsAll) };
   props.push(toilet);
   placed.push(restRect);
   let restSink: Prop | null = null;
-  for (const gap of [0.2, 0.45, 0.8, 1.2, 1.7]) {
+  /** the sink inside the cubicle: local place and yaw (into the cubicle) */
+  let inner: { x: number; z: number; yaw: number } | null = null;
+  if (innerSink === 'wide') inner = { x: rrP.sink * (rrW / 2 - 0.62), z: -rrD / 2 + 0.3, yaw: 0 };
+  else if (innerSink === 'long') inner = { x: rrP.sink * (rrW / 2 - 0.3), z: rrD / 2 - 1.15, yaw: -rrP.sink * Math.PI / 2 };
+  if (inner) {
+    // (pushed straight in: the cubicle stands outside the room the furniture is placed in)
+    const at = rrAt(inner.x, inner.z);
+    restSink = { kind: 'sink', x: at.x, z: at.z, rot: rrRot + inner.yaw, variant: r.int(0, 3), color: r.pick(colorsAll), color2: r.pick(colorsAll) };
+    props.push(restSink);
+  }
+  for (const gap of inner ? [] : [0.2, 0.45, 0.8, 1.2, 1.7]) {
     const n = props.length;
-    if (add('sink', rrX - rrSign * (RESTROOM / 2 + gap + 0.5), -D / 2 + 0.34, 0, 0.1)) {
+    // (against the wall beside the cubicle: the wall is the cubicle's back, or for an alcove its front)
+    const sp = rrAt(rrP.sink * (rrW / 2 + gap + 0.5), (alcove ? rrD / 2 : -rrD / 2) + 0.34);
+    if (add('sink', sp.x, sp.z, rrRot, 0.1)) {
       restSink = props[n];
       break;
     }
@@ -924,14 +1176,20 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
     if (!tryWall(k, ['back', 'left', 'right', 'front'])) tryFloor(k, [0]);
   }
 
+  // (a narrow window with a single sash has no curtains)
+  for (const wn of windows) if (wn.sashes === 1) wn.curtain = false;
+  // a room never has all of its windows open on the same side
+  if (windows.length > 1 && windows.every((w) => w.openSide === windows[0].openSide)) {
+    windows[windows.length - 1].openSide = (windows[windows.length - 1].openSide * -1) as 1 | -1;
+  }
+
   // ----------------------------------------------------------- wall decor
   const wallDecor: WallDecor[] = [];
   // intervals along each wall that tall furniture / windows / the door already use
   const busy: Record<'back' | 'left', [number, number][]> = { back: [], left: [] };
   for (const wn of windows) busy[wn.wall].push([wn.pos - wn.w / 2 - 0.3, wn.pos + wn.w / 2 + 0.3]);
-  busy[door.wall].push([door.pos - doorWidth / 2 - 0.4, door.pos + doorWidth / 2 + 0.4]);
-  busy.back.push([rrX - RESTROOM / 2 - WALL_CLEAR, rrX + RESTROOM / 2 + WALL_CLEAR]);
-  if (rrCorner === 'backLeft') busy.left.push([-D / 2, -D / 2 + RESTROOM + WALL_CLEAR]);
+  if (door.wall === 'back' || door.wall === 'left') busy[door.wall].push([door.pos - doorWidth / 2 - 0.4, door.pos + doorWidth / 2 + 0.4]);
+  for (const wall of ['back', 'left'] as const) for (const [a, b] of rrWall[wall]) busy[wall].push([a - WALL_CLEAR, b + WALL_CLEAR]);
   for (const p of props) {
     if (!BLOCKS_WALL.has(p.kind)) continue;
     const cs = corners(propRect(p));
@@ -944,9 +1202,9 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
     !busy[wall].some(([a, b]) => pos + w / 2 > a && pos - w / 2 < b) &&
     (wall === 'back' ? pos - w / 2 > -W / 2 + 0.4 && pos + w / 2 < W / 2 - 0.4 : pos - w / 2 > -D / 2 + 0.4 && pos + w / 2 < D / 2 - 0.4);
   let signPos: RoomLayout['signPos'] = null;
-  if (isFree('back', dirX, 3.4)) {
-    signPos = { wall: 'back', pos: dirX, y: windows.filter((w) => w.wall === 'back').length === 3 ? 2.62 : 2.4 };
-    busy.back.push([dirX - 1.7, dirX + 1.7]);
+  if (isFree('back', backMid, 3.4)) {
+    signPos = { wall: 'back', pos: backMid, y: windows.filter((w) => w.wall === 'back').length === 3 ? 2.62 : 2.4 };
+    busy.back.push([backMid - 1.7, backMid + 1.7]);
   }
   // everything big on a wall (screens, boards, pictures) is as tall as everything else and hangs at the same height, so the rows line up;
   // only the width and the shape change (standing, lying, square, round). The clock, the shelf and the small banner are fixtures of their own.
@@ -1041,9 +1299,9 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
 
   // ------------------------------------------------------------------- rug
   const rug = r.chance(0.85)
-    ? r.chance(0.5)
-      ? { x: dirX, z: dirDeskZ + 0.5, w: 4.6, d: 3.4, shape: 'rect' as const, color: theme.rug, color2: theme.accent3 }
-      : { x: dirX, z: dirDeskZ + 0.6, w: 4.2, d: 4.2, shape: 'round' as const, color: theme.rug, color2: theme.accent }
+    ? r.chance(0.5) && dirSide !== 'corner'
+      ? { ...dirAt(0, 0.5), w: dirSide === 'right' ? 3.4 : 4.6, d: dirSide === 'right' ? 4.6 : 3.4, shape: 'rect' as const, color: theme.rug, color2: theme.accent3 }
+      : { ...dirAt(0, 0.6), w: 4.2, d: 4.2, shape: 'round' as const, color: theme.rug, color2: theme.accent }
     : null;
 
   // ------------------------------------------------------------- nav grid
@@ -1060,9 +1318,10 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
         nav.blockOriented(d.x + q.x, d.z + q.z, wg.w, wg.d, d.rot, 0.2);
       }
     }
-    nav.blockRect(dirRect, 0.22);
+    nav.blockOriented(dirDesk.x, dirDesk.z, 3.0, 1.2, dirYaw, 0.22);
     nav.blockRect({ x: director.seat.x, z: director.seat.z, w: 0.7, d: 0.7 }, 0.12);
-    nav.blockRect(restRect, 0.02);
+    if (!alcove) nav.blockOriented(restRect.x, restRect.z, restRect.w, restRect.d, restRect.rot, 0.02);
+    if (notchOR) nav.blockRect(notchOR, 0.2);
     for (const p of list) blockProp(nav, p);
     return nav;
   };
@@ -1090,7 +1349,7 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
       else if (side === 'left') { sx = -W / 2 + sd / 2 + 0.06; sz = sofaRng.range(-D / 2 + sw / 2 + 0.4, D / 2 - sw / 2 - 0.4); srot = Math.PI / 2; }
       else if (side === 'right') { sx = W / 2 - sd / 2 - 0.05; sz = sofaRng.range(-D / 2 + sw / 2 + 0.4, D / 2 - sw / 2 - 0.4); srot = -Math.PI / 2; }
       else if (side === 'front') { sx = sofaRng.range(-W / 2 + sw / 2 + 0.5, W / 2 - sw / 2 - 0.5); sz = D / 2 - sd / 2 - 0.05; srot = Math.PI; }
-      else { sx = sofaRng.range(-W / 2 + 1.6, W / 2 - 1.6); sz = sofaRng.range(dirDeskZ + 2.6, D / 2 - 1.2); srot = sofaRng.pick([0, Math.PI / 2, Math.PI, -Math.PI / 2]); }
+      else { sx = sofaRng.range(-W / 2 + 1.6, W / 2 - 1.6); sz = sofaRng.range(floorZ0, D / 2 - 1.2); srot = sofaRng.pick([0, Math.PI / 2, Math.PI, -Math.PI / 2]); }
       const rect: OR = { x: sx, z: sz, w: sw, d: sd, rot: srot };
       if (!corners(rect).every((c) => c.x > -W / 2 + 0.05 && c.x < W / 2 - 0.05 && c.z > -D / 2 + 0.05 && c.z < D / 2 - 0.05)) continue;
       // the floor in front of the seats must be free (that is where one walks up to it)
@@ -1199,7 +1458,7 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
         if (side === 0) { gx = gymRng.range(-W / 2 + gw / 2 + 0.3, W / 2 - gw / 2 - 0.3); gz = -D / 2 + gd / 2 + 0.06; grot = 0; }
         else if (side === 1) { gx = -W / 2 + gd / 2 + 0.06; gz = gymRng.range(-D / 2 + gw / 2 + 0.4, D / 2 - gw / 2 - 0.4); grot = Math.PI / 2; }
         else if (side === 2) { gx = W / 2 - gd / 2 - 0.05; gz = gymRng.range(-D / 2 + gw / 2 + 0.4, D / 2 - gw / 2 - 0.4); grot = -Math.PI / 2; }
-        else { gx = gymRng.range(-W / 2 + 1.4, W / 2 - 1.4); gz = gymRng.range(dirDeskZ + 2.6, D / 2 - 1.0); grot = gymRng.pick([0, Math.PI / 2, Math.PI, -Math.PI / 2]); }
+        else { gx = gymRng.range(-W / 2 + 1.4, W / 2 - 1.4); gz = gymRng.range(floorZ0, D / 2 - 1.0); grot = gymRng.pick([0, Math.PI / 2, Math.PI, -Math.PI / 2]); }
         const rect: OR = { x: gx, z: gz, w: gw, d: gd, rot: grot };
         // the floor in front of it must be free too (that is where the person stands)
         const o = rot2(0, gd / 2 + 0.5, grot);
@@ -1241,7 +1500,7 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
     const back = wn.wall === 'back';
     const pt = (d: number, lat = 0): V2 => (back ? { x: wn.pos + lat, z: -D / 2 + d } : { x: -W / 2 + d, z: wn.pos + lat });
     // the cats go through the open sash: its centre is 0.59 off the window's centre (wall x runs along room -z on the left wall)
-    const wl = (back ? 1 : -1) * wn.openSide * 0.59;
+    const wl = wn.sashes === 1 ? 0 : (back ? 1 : -1) * wn.openSide * 0.59;
     for (const [d, lat] of [[0.55, 0], [1.0, 0], [1.0, 0.4], [1.0, -0.4]] as const) if (nav.isBlocked(pt(d, wl + lat).x, pt(d, wl + lat).z)) return;
     catWindows.push({ index, wall: wn.wall, out: pt(-(WT + 0.4), wl), sill: pt(0.12, wl), land: pt(1.0, wl), yaw: back ? 0 : Math.PI / 2, sillY: wn.sill - 0.1 });
   });
@@ -1289,17 +1548,31 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
   // the toilet seat: one walks up to it through the doorway of the cubicle
   let restroom: Restroom | null = null;
   {
-    const frontZ = -D / 2 + RESTROOM;
-    const approach = { x: rrX, z: frontZ + 0.5 };
+    const approach = rrAt(0, rrD / 2 + 0.5);
     if (!nav.isBlocked(approach.x, approach.z) && nav.reachable(door.inside, approach)) {
-      spots.push({ kind: 'toilet', x: toilet.x, z: toilet.z - 0.05, y: 0.42, yaw: 0, approach });
-      restroom = {
-        x: rrX, z: rrZ, w: RESTROOM, d: RESTROOM, corner: rrCorner, frontZ, sideX: rrSign * (W / 2 - RESTROOM),
-        doorX: rrX, doorW: 0.84, hingeX: rrX + rrSign * 0.42, spot: spots.length - 1, wash: -1,
+      spots.push({ kind: 'toilet', ...rrAt(toiletX, -rrD / 2 + 0.38), y: 0.42, yaw: rrRot, approach });
+      // (a side of the cubicle needs a partition unless it stands on a wall of the room)
+      const onWall = (sx: number) => {
+        const p = rrAt(sx * rrW / 2, 0);
+        return Math.abs(p.z + D / 2) < 0.05 || Math.abs(p.x + W / 2) < 0.05;
       };
+      restroom = {
+        x: rrX, z: rrZ, w: rrW, d: rrD, rot: rrRot, alcove,
+        sides: alcove ? [false, false] : [!onWall(-1), !onWall(1)],
+        hinge: (rrP.sink > 0 ? -1 : 1) as 1 | -1, doorW: 0.84, style: rrStyle, spot: spots.length - 1, wash: -1,
+      };
+      if (inner && restSink) {
+        // one stands in front of it (0.64 from its middle: half its depth and a step), facing it; the tap at its back
+        const f = rot2(0, 1, restSink.rot);
+        restroom.sink = {
+          stand: { x: restSink.x + f.x * 0.64, z: restSink.z + f.z * 0.64 },
+          yaw: restSink.rot + Math.PI,
+          tap: { x: restSink.x - f.x * 0.06, z: restSink.z - f.z * 0.06 },
+        };
+      }
     }
   }
-  spots.push({ kind: 'desk', x: dirX + 0.5, z: dirDeskZ + 0.12, y: 0.76, yaw: 0, approach: director.visitors[2] });
+  spots.push({ kind: 'desk', ...dirAt(0.5, 0.12), y: 0.76, yaw: dirYaw, approach: director.visitors[2] });
   for (const cw of catWindows) {
     if (cw.wall !== 'back') continue;
     const sx = windows[cw.index].pos + 0.75;
@@ -1329,7 +1602,7 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
       for (let k = 0; k < 4; k++) options.push({ x: pr.x + Math.cos((k * Math.PI) / 2) * rad, z: pr.z + Math.sin((k * Math.PI) / 2) * rad });
       options.sort((a, b) => Math.hypot(a.x, a.z - 1) - Math.hypot(b.x, b.z - 1));
     } else {
-      const lat = pr.kind === 'coffee' ? -0.5 : pr.kind === 'stove' ? -0.2 : pr.kind === 'bookshelf' ? r.range(-0.6, 0.6) : 0;
+      const lat = pr.kind === 'coffee' ? -0.5 : pr.kind === 'stove' ? -0.2 : pr.kind === 'bookshelf' ? r.range(-0.3, 0.3) : 0;
       for (const extra of [0, 0.15, 0.3]) {
         const o = rot2(lat, fd / 2 + gap + extra, pr.rot);
         options.push({ x: pr.x + o.x, z: pr.z + o.z });
@@ -1438,7 +1711,7 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
   });
 
   return {
-    seed, kind: kind.name, seating, width: W, depth: D, wallHeight, theme, door, windows, desks, director, props, wallDecor, decals, rug, signPos, catWindows, spots, restroom, tables, toys, movable, stations, catCount, nav,
+    seed, kind: kind.name, notch, seating, cramped: dirCramped, width: W, depth: D, wallHeight, theme, door, windows, desks, director, props, wallDecor, decals, rug, signPos, catWindows, spots, restroom, tables, toys, movable, stations, catCount, nav,
     late, lateBig, lateRank, lateDone: late.map(() => false), blockProp: (i) => blockProp(nav, props[i], 1), unblockProp: (i) => blockProp(nav, props[i], -1),
     fitDistance: Math.hypot(W, D) * 1.2 + 3.5,
   };

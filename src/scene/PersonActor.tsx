@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { useStore } from '../store';
 import { makeAppearance } from '../world/appearance';
-import { rot2 } from '../world/layout';
+import { onDirectorDesk, rot2 } from '../world/layout';
 import type { RoomLayout } from '../world/layout';
 import { Actor, laptopDist, SEAT_LIFT, type ActorCtx, type Pose } from '../sim/actor';
 import { anchors, catsInRoom, enqueueSpeech, lastSpeech, queueLength, runtimeFor, sims, simsInRoom, view, type SimState } from '../sim/registry';
@@ -527,7 +527,8 @@ export function PersonActor({ personKey, roomId, layout, frozen: frozenProp = fa
     if (f.visible) {
       const fp = toRoom(sim, 0, 0.55 * scale);
       const held = vHeld.set(fp.x, 0.78 * scale + 0.1, fp.z);
-      const pile = vPile.set(layout.director.desk.x + 0.95, DESK_TOP + 0.12, layout.director.desk.z + 0.1);
+      const pileAt = onDirectorDesk(layout, 0.95, 0.1);
+      const pile = vPile.set(pileAt.x, DESK_TOP + 0.12, pileAt.z);
       if (actor.folderP === 1) f.position.copy(held);
       else {
         const fe = ease((actor.folderT - 1) / 0.55);

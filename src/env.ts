@@ -24,7 +24,8 @@ export function envForHour(hIn: number): EnvState {
   const day = smooth(5.2, 7.6, hour) * (1 - smooth(17.2, 19.8, hour));
   const warm = Math.max(bell(hour, 6.4, 1.1), bell(hour, 18.6, 1.2)) * 0.9;
   const night = 1 - day;
-  const lamps = smooth(0.22, 0.65, night);
+  // (on as soon as dusk sets in: the room gets dark before the sky does)
+  const lamps = smooth(0.12, 0.5, night);
   return { hour, day, night, warm, lamps, overcast: 0 };
 }
 
@@ -37,8 +38,10 @@ export function stepEnv(target: EnvState, dt: number, overcast = 0) {
   env.day += (target.day - env.day) * k;
   env.night = 1 - env.day;
   env.warm += (target.warm - env.warm) * k;
-  env.lamps += (target.lamps - env.lamps) * k;
   env.overcast += (overcast - env.overcast) * (1 - Math.exp(-0.8 * dt));
+  // a dark rainy (stormy, snowy) day switches the lamps on too: rain and storm fully, cloud and fog hardly
+  const gloom = smooth(0.35, 0.8, env.overcast);
+  env.lamps += (Math.max(target.lamps, gloom) - env.lamps) * k;
 }
 
 export const HOUR_PRESETS = { day: 12.5, dusk: 18.6, night: 23 } as const;

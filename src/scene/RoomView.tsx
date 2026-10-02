@@ -11,7 +11,7 @@ import type { RoomLayout } from '../world/layout';
 import { G, M } from './kit';
 import { Chair, Desk, DirectorDesk, RB, Ms } from './furniture';
 import { PropView } from './props';
-import { DoorView, FloorDecals, layoutOpenings, Sign, Sunbeam, Wall, WallDecorView, WALL_T, WindowView } from './RoomParts';
+import { DoorView, FloorDecals, layoutOpenings, lFloorGeometry, Sign, Sunbeam, Wall, WallDecorView, WALL_T, WindowView } from './RoomParts';
 import { floorTexture } from './textures';
 import { PersonActor } from './PersonActor';
 import { StaticBake } from './StaticBake';
@@ -48,6 +48,18 @@ const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle, season,
   const t = WALL_T;
   const floorTex = useMemo(() => floorTexture(theme.floorKind, theme.floor, theme.floor2, theme.floorKind === 'wood' || theme.floorKind === 'carpetTile' ? W / 4 : W / 3, theme.floorKind === 'wood' || theme.floorKind === 'carpetTile' ? D / 4 : D / 3), [theme, W, D]);
   const { back, left } = useMemo(() => layoutOpenings(layout), [layout]);
+  // the base under the floor: one block, or two for an L-shaped room (x0..x1, z0..z1 of the blocks before the margins)
+  const baseBlocks = useMemo(() => {
+    const x0 = -W / 2 - t - 0.15;
+    const z0 = -D / 2 - t - 0.15;
+    const box = (xa: number, xb: number, za: number, zb: number) => ({ x: (xa + xb) / 2, z: (za + zb) / 2, w: xb - xa, d: zb - za });
+    const n = layout.notch;
+    if (!n) return [box(x0, W / 2 + 0.15, z0, D / 2 + 0.15)];
+    return [box(x0, W / 2 + 0.15, z0, D / 2 - n.d + 0.15), box(x0, W / 2 - n.w + 0.15, D / 2 - n.d - 0.5, D / 2 + 0.15)];
+  }, [layout, W, D, t]);
+  // the floor of an L-shaped room (two quads; the texture runs on across them as over the whole rectangle)
+  const floorGeo = useMemo(() => (layout.notch ? lFloorGeometry(W, D, layout.notch) : null), [layout, W, D]);
+  useEffect(() => () => floorGeo?.dispose(), [floorGeo]);
   const doorLocalBack = layout.door.wall === 'back' ? layout.door.pos + t / 2 : null;
   const doorLocalLeft = layout.door.wall === 'left' ? -layout.door.pos : null;
 
@@ -55,14 +67,24 @@ const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle, season,
   const floorPart = useMemo(() => (
     <>
       <StaticBake>
-      {/* diorama base */}
-      <RB size={[W + t + 0.3, 0.6, D + t + 0.3]} pos={[(-t + 0.3) / 2 - 0.15, -0.3, (-t + 0.3) / 2 - 0.15]} color={theme.base} r={0.16} receive />
-      {/* (its top sits 4 mm under the base top: equal heights z-fight in the doorway, where no floor plane covers them) */}
-      <RB size={[W + t + 0.3, 0.09, D + t + 0.3]} pos={[(-t + 0.3) / 2 - 0.15, -0.049, (-t + 0.3) / 2 - 0.15]} color={shade(theme.base, 0.1)} r={0.04} receive />
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.004, 0]} receiveShadow>
-        <planeGeometry args={[W, D]} />
-        <meshStandardMaterial map={floorTex} roughness={0.85} />
-      </mesh>
+      {/* diorama base (an L-shaped room: two blocks, the corner nearest to the camera is left out) */}
+      {baseBlocks.map((b, i) => (
+        <group key={i}>
+          <RB size={[b.w, 0.6, b.d]} pos={[b.x, -0.3, b.z]} color={theme.base} r={0.16} receive />
+          {/* (its top sits 4 mm under the base top: equal heights z-fight in the doorway, where no floor plane covers them) */}
+          <RB size={[b.w, 0.09, b.d]} pos={[b.x, -0.049, b.z]} color={shade(theme.base, 0.1)} r={0.04} receive />
+        </group>
+      ))}
+      {floorGeo ? (
+        <mesh geometry={floorGeo} position={[0, 0.004, 0]} receiveShadow>
+          <meshStandardMaterial map={floorTex} roughness={0.85} />
+        </mesh>
+      ) : (
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.004, 0]} receiveShadow>
+          <planeGeometry args={[W, D]} />
+          <meshStandardMaterial map={floorTex} roughness={0.85} />
+        </mesh>
+      )}
 
       {/* rug */}
       {layout.rug ? (
@@ -106,6 +128,25 @@ const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle, season,
       </group>
   ), [layout, back, signTitle, roomId]);
 
+  // a door in one of the lower walls (front, right): the walls there are cut away, the door stands in its frame with a bit of wall
+  const lowerDoorPart = useMemo(() => {
+    const d = layout.door;
+    if (d.wall !== 'front' && d.wall !== 'right') return null;
+    return d.wall === 'front' ? (
+      <group position={[0, 0, D / 2]} rotation={[0, Math.PI, 0]}>
+        <StaticBake>
+          <DoorView door={d} theme={theme} roomId={roomId} localX={-d.pos} cutaway />
+        </StaticBake>
+      </group>
+    ) : (
+      <group position={[W / 2, 0, 0]} rotation={[0, -Math.PI / 2, 0]}>
+        <StaticBake>
+          <DoorView door={d} theme={theme} roomId={roomId} localX={d.pos} cutaway />
+        </StaticBake>
+      </group>
+    );
+  }, [layout, roomId, theme, W, D]);
+
   const leftPart = useMemo(() => (
       <group position={[-W / 2, 0, 0]} rotation={[0, Math.PI / 2, 0]}>
         <StaticBake>
@@ -133,6 +174,7 @@ const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle, season,
       {stage >= STAGE.floor ? floorPart : null}
       {stage >= STAGE.back ? backPart : null}
       {stage >= STAGE.left ? leftPart : null}
+      {stage >= STAGE.left ? lowerDoorPart : null}
       {/* furniture */}
       {stage >= STAGE.desks ? (
         <StaticBake ready={stage >= STAGE.desks + DESK_STEPS - 1}>
@@ -142,7 +184,7 @@ const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle, season,
       {stage >= STAGE.props ? (
         <StaticBake ready={stage >= STAGE.props + PROP_STEPS - 1}>
           {layout.props.map((p, i) => (i < propCount && !layout.movable.includes(i) && layout.lateRank[i] < 0 ? <PropItem key={i} p={p} theme={theme} roomId={roomId} /> : null))}
-          {layout.restroom && stage >= STAGE.props + PROP_STEPS - 1 ? <RestroomShell rr={layout.restroom} /> : null}
+          {layout.restroom && stage >= STAGE.props + PROP_STEPS - 1 ? <RestroomShell rr={layout.restroom} layout={layout} /> : null}
         </StaticBake>
       ) : null}
       {/* festive decorations (Halloween, Christmas, Tết): baked again when the season changes */}
@@ -337,7 +379,7 @@ export const RoomView = memo(function RoomView({ roomId, active }: { roomId: str
           <DirectorDesk layout={layout} reports={reports} />
         </StaticBake>
       ) : null}
-      {stage >= STAGE.director ? <Chair x={layout.director.seat.x} z={layout.director.seat.z} rot={0} turn={0} color={shade(theme.accent2, -0.05)} roomId={roomId} deskIndex={-1} big seed={99} /> : null}
+      {stage >= STAGE.director ? <Chair x={layout.director.seat.x} z={layout.director.seat.z} rot={layout.director.rot} turn={0} color={shade(theme.accent2, -0.05)} roomId={roomId} deskIndex={-1} big seed={99} /> : null}
 
       {stage >= STAGE.chairs && layout.restroom ? <RestroomWalls roomId={roomId} layout={layout} rr={layout.restroom} /> : null}
       {stage >= STAGE.toys ? <CatToys roomId={roomId} layout={layout} /> : null}

@@ -1,5 +1,5 @@
 import type { PersonRec, SpeechKind, TaskRec } from '../types';
-import { FOOT, rot2, type PropKind, type RoomLayout, type Spot, type Station, type StationKind } from '../world/layout';
+import { FOOT, rot2, rrLocal, rrWorld, type PropKind, type RoomLayout, type Spot, type Station, type StationKind } from '../world/layout';
 import type { V2 } from '../world/nav';
 import { sfx, type Sfx } from '../audio';
 import { env } from '../env';
@@ -86,6 +86,8 @@ const CHAIR_STAND = 0.72;
 const CHAIR_FWD = 0.02;
 /** seconds the toilet visitor waits for a free sink before giving up */
 const SINK_WAIT_MAX = 18;
+/** seconds of washing up at the sink inside a long / wide cubicle */
+const INNER_WASH_S = 6;
 
 const pickOne = <T,>(list: readonly T[]): T => list[Math.floor(Math.random() * list.length)];
 
@@ -422,6 +424,8 @@ export class Actor {
   /** a coffee / bowl brought to the desk: seconds it stays in the hand (see deskSip) */
   private sipLeft = 0;
   private waveDone = new Set<number>();
+  /** washing up at the sink inside a long / wide cubicle after the toilet: 1 = on the way to it or at it (door shut), 2 = on the way out */
+  private innerWash: 0 | 1 | 2 = 0;
   private from: V2 = { x: 0, z: 0 };
   private blinkT = 2;
   private blinkOpen = 1;
@@ -592,7 +596,7 @@ export class Actor {
 
   /** the seated worker looks at the director (desks are placed to face the director's desk) */
   seatYaw(ctx: ActorCtx): number {
-    return this.isDirector ? 0 : ctx.layout.desks[this.sim.desk].rot;
+    return this.isDirector ? ctx.layout.director.rot : ctx.layout.desks[this.sim.desk].rot;
   }
 
   /** kind of the break the person is on (a break of its own: walking there, doing it, walking back) */
@@ -618,6 +622,7 @@ export class Actor {
     this.gated = false;
     this.gatedFor = 0;
     if (p !== 'returning') this.reportReturn = false;
+    if (p !== 'activity') this.innerWash = 0;
     if (p === 'sitting') this.chairWasOut = (this.sim.chairOut ?? 0) > 0.5;
     if (p === 'standing') this.standHead = null;
     // back at the desk, reporting or gone: no longer on a break of its own
@@ -1288,7 +1293,7 @@ export class Actor {
             this.startPath(layout.nav.findPath({ x: s.x, z: s.z }, target) ?? [target]);
           } else {
             // everybody is queueing – idle politely
-            this.faceYaw(Math.PI, dt);
+            this.faceYaw(layout.director.rot + Math.PI, dt);
             this.idlePose(pose);
             break;
           }
@@ -1300,7 +1305,7 @@ export class Actor {
 
       case 'handover': {
         const t = this.t;
-        this.faceYaw(Math.PI, dt, 12);
+        this.faceYaw(layout.director.rot + Math.PI, dt, 12);
         this.idlePose(pose);
         this.folderT = t;
         if (t < 1.0) {
@@ -2055,6 +2060,8 @@ export class Actor {
           if (back || t >= a.dur) {
             this.actStage = 2;
             this.t = 0;
+            // (a cubicle with its own sink: the door stays shut, one washes up in there first)
+            if (a.kind === 'toilet' && ctx.layout.restroom?.sink && !back) this.innerWash = 1;
           }
         } else if (this.actStage === 2) {
           // lean forward, push up, then step away along the front of the sofa
@@ -2064,6 +2071,8 @@ export class Actor {
           if (a.kind === 'toilet') this.cue('flush', 0.4);
           const riseEnd = SOFA_LEAN_S + SOFA_RISE_S;
           if (t < riseEnd) {
+            // (with a sink in the cubicle the door stays shut while getting up: one washes before going out)
+            if (a.kind === 'toilet' && ctx.layout.restroom?.sink && !back) this.innerWash = 1;
             const u = smooth((t - SOFA_LEAN_S) / SOFA_RISE_S);
             const h = smooth(u * 1.2);
             s.x = lerp(seatX, stand.x, h);
@@ -2074,6 +2083,9 @@ export class Actor {
             this.seatedPose(pose, s.sitT, knee);
             pose.lean = 0.3 * (t < SOFA_LEAN_S ? smooth(t / SOFA_LEAN_S) : 1 - u * 0.8);
             pose.armLx = pose.armRx = -0.3 * Math.sin(Math.min(1, t / riseEnd) * Math.PI);
+          } else if (a.kind === 'toilet' && ctx.layout.restroom?.sink && !back) {
+            // a cubicle with its own sink: wash up in there, then out through the doorway
+            if (this.innerWashRun(dt, ctx, pose, t - riseEnd, stand, spot.approach)) this.goHome(ctx);
           } else {
             const pts = route(spot.approach).reverse();
             const len = polyLen(pts);
@@ -2390,6 +2402,66 @@ export class Actor {
     p.headX = p.headX - 0.12 * raise;
   }
 
+  /**
+   * After the toilet in a long / wide cubicle: over to the sink inside it, wash up (INNER_WASH_S), then out through the doorway to the
+   * walk-up point. `tt`: seconds since standing up. Returns true when outside.
+   */
+  private innerWashRun(dt: number, ctx: ActorCtx, pose: Pose, tt: number, from: V2, approach: V2): boolean {
+    const rr = ctx.layout.restroom!;
+    const sk = rr.sink!;
+    const s = this.sim;
+    const tp = this.tempo();
+    const walkT = (pts: V2[]) => Math.max(0.25 / tp, polyLen(pts) / (WALK_SPEED * 0.8 * tp));
+    const walk = (pts: V2[], u: number) => {
+      const p = polyAt(pts, polyLen(pts) * u);
+      s.x = p.x;
+      s.z = p.z;
+      if (p.yaw !== null) this.faceYaw(p.yaw, dt, 11);
+      this.walkPhase += dt * WALK_SPEED * 0.8 * tp * 4.6;
+      this.walkPose(pose, 0.8);
+    };
+    s.y = 0;
+    s.sitT = 0;
+    const leg1 = [from, sk.stand];
+    const t1 = walkT(leg1);
+    const t2 = t1 + INNER_WASH_S;
+    const leg2 = [sk.stand, rrWorld(rr, 0, rr.d / 2 - 0.35), approach];
+    const t3 = t2 + walkT(leg2);
+    if (tt < t1) {
+      this.innerWash = 1;
+      walk(leg1, tt / t1);
+    } else if (tt < t2) {
+      // at the sink: hands under the tap, rubbing, water running
+      this.innerWash = 1;
+      const w = tt - t1;
+      s.x = sk.stand.x;
+      s.z = sk.stand.z;
+      this.faceYaw(sk.yaw, dt, 9);
+      this.idlePose(pose);
+      const rub = Math.sin(this.clock * 13) * 0.12 * seg(w, 0.6, 1.0) * (1 - seg(w, INNER_WASH_S - 1.4, INNER_WASH_S - 1.0));
+      const reach = seg(w, 0.1, 0.7) * (1 - seg(w, INNER_WASH_S - 0.8, INNER_WASH_S - 0.2));
+      pose.armRx = pose.armLx = -0.9 * reach;
+      pose.armRz = pose.armLz = -0.25 * reach;
+      pose.foreRx = -0.7 * reach + rub;
+      pose.foreLx = -0.7 * reach - rub;
+      pose.lean = 0.3 * reach;
+      pose.headX = 0.25 * reach;
+      this.tap = sk.tap;
+      this.tapFlow = seg(w, 0.6, 0.9) * (1 - seg(w, INNER_WASH_S - 1.2, INNER_WASH_S - 0.9));
+      this.cue('water', this.t - tt + t1 + 0.6);
+      if (w > INNER_WASH_S - 1.0) pose.happy = 1;
+    } else if (tt < t3) {
+      this.innerWash = 2;
+      this.tap = null;
+      this.tapFlow = 0;
+      walk(leg2, (tt - t2) / (t3 - t2));
+    } else {
+      this.innerWash = 0;
+      return true;
+    }
+    return false;
+  }
+
   /** the seat is free again; after the toilet one goes and washes their hands, anything else goes home */
   private leaveSeat(ctx: ActorCtx, a: Activity, back: boolean) {
     if (a.kind === 'toilet' && !back) {
@@ -2444,9 +2516,11 @@ export class Actor {
         const ap = ctx.layout.spots[a.spot!].approach;
         if (Math.hypot(s.x - ap.x, s.z - ap.z) < 3) v = 1;
       } else if (s.phase === 'activity') {
-        if (this.actStage === 0) v = s.z > rr.frontZ - 0.35 ? 1 : 2;
+        // (how far in front of the doorway, in the cubicle's own frame)
+        const lz = rrLocal(rr, s.x, s.z).z - rr.d / 2;
+        if (this.actStage === 0) v = lz > -0.35 ? 1 : 2;
         else if (this.actStage === 1) v = 2;
-        else if (this.actStage === 2) v = s.z < rr.frontZ + 0.9 ? 3 : undefined;
+        else if (this.actStage === 2) v = this.innerWash === 1 ? 2 : lz < 0.9 ? 3 : undefined;
       }
     }
     s.wc = v;

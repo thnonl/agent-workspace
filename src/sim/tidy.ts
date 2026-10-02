@@ -1,4 +1,4 @@
-import { FOOT, type RoomLayout } from '../world/layout';
+import { FOOT, rrWorld, type RoomLayout } from '../world/layout';
 import type { V2 } from '../world/nav';
 import { lateAvailable, movedOf, notifyMoved, type MovedProp } from './registry';
 
@@ -69,7 +69,7 @@ export function findTidySpot(roomId: string, layout: RoomLayout, idx: number): P
   }
   const far = (x: number, z: number, list: readonly V2[], r: number) => list.every((q) => Math.hypot(q.x - x, q.z - z) > r);
   const keepClear: V2[] = [
-    door.inside, ...(layout.restroom ? [0.3, 0.9, 1.5].flatMap((dz) => [-0.8, 0, 0.8].map((dx) => ({ x: layout.restroom!.doorX + dx, z: layout.restroom!.frontZ + dz }))) : []),
+    door.inside, ...(layout.restroom ? [0.3, 0.9, 1.5].flatMap((dz) => [-0.8, 0, 0.8].map((dx) => (rrWorld(layout.restroom!, dx, layout.restroom!.d / 2 + dz)))) : []),
     ...layout.stations.flatMap((s) => [s.stand, s.target]), ...layout.spots.map((s) => s.approach),
     ...layout.catWindows.flatMap((c) => [c.land, c.sill]), ...layout.toys.map((t) => ({ x: t.x, z: t.z })),
     ...items.flatMap((o, k) => (k === idx ? [] : [o, ...(o.to ? [o.to] : [])])),

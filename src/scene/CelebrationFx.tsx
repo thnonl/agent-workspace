@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
-import type { RoomLayout } from '../world/layout';
+import { onDirectorDesk, type RoomLayout } from '../world/layout';
 import { dropCelebrations, takeCelebrations, type Show } from '../sim/celebrate';
 import { frame } from '../sim/frame';
 import { DESK_TOP, Ms, RB } from './furniture';
@@ -36,6 +36,7 @@ export function CelebrationFx({ roomId, layout }: { roomId: string; layout: Room
   const cakeLeft = useRef(0);
   const { width: W, depth: D } = layout;
   const desk = layout.director.desk;
+  const cakeAt = onDirectorDesk(layout, 0.72, 0.12);
 
   const spawn = (n: number, palette: string[], make: (i: number) => [number, number, number, number, number, number], floaty = false) => {
     const s = sim.current;
@@ -149,7 +150,7 @@ export function CelebrationFx({ roomId, layout }: { roomId: string; layout: Room
       <points ref={pts} geometry={geo} frustumCulled={false} renderOrder={6} raycast={() => null}>
         <pointsMaterial size={0.15} sizeAttenuation vertexColors transparent opacity={0.95} depthWrite={false} />
       </points>
-      <group ref={cake} position={[desk.x + 0.72, DESK_TOP + 0.02, desk.z + 0.12]} visible={false}>
+      <group ref={cake} position={[cakeAt.x, DESK_TOP + 0.02, cakeAt.z]} rotation={[0, layout.director.rot, 0]} visible={false}>
         <Ms geo={G.cyl(0.26, 0.27, 0.03, 24)} mat={M('#ffffff', { rough: 0.4 })} pos={[0, 0.015, 0]} cast={false} />
         <Ms geo={G.cyl(0.2, 0.2, 0.12, 24)} mat={M('#ff9ec4', { rough: 0.7 })} pos={[0, 0.09, 0]} cast={false} />
         <Ms geo={G.cyl(0.205, 0.205, 0.03, 24)} mat={M('#fff6e8', { rough: 0.6 })} pos={[0, 0.16, 0]} cast={false} />

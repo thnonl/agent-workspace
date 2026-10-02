@@ -16,15 +16,19 @@ import { FileCabinet, Copier, MeetingSet, WhiteboardStand, Boxes, ServerRack, Fr
 
 // ------------------------------------------------------------------------ props
 
+/** width of the bookshelf (see FOOT in layout.ts) */
+const SHELF_W = 1.3;
+
 function Bookshelf({ p, theme }: { p: Prop; theme: RoomTheme }) {
   const wood = shade(theme.desk, -0.05);
+  const hw = SHELF_W / 2;
   const books = useMemo(() => {
     const r = new Rng(Math.floor(p.x * 91 + p.z * 13) + 5);
     const cols = [theme.accent, theme.accent2, theme.accent3, '#ffffff', shade(theme.wall, -0.1), theme.chair];
     const out: { x: number; y: number; w: number; h: number; c: string; t: number }[] = [];
     for (const y of [0.32, 0.78, 1.24, 1.7]) {
-      let x = -0.85;
-      while (x < 0.8) {
+      let x = -(SHELF_W / 2 - 0.15);
+      while (x < SHELF_W / 2 - 0.2) {
         if (r.chance(0.12)) {
           x += r.range(0.12, 0.3);
           continue;
@@ -39,18 +43,18 @@ function Bookshelf({ p, theme }: { p: Prop; theme: RoomTheme }) {
   }, [p.x, p.z, theme]);
   return (
     <group>
-      <RB size={[2.0, 2.0, 0.05]} pos={[0, 1.0, -0.27]} color={shade(wood, -0.06)} r={0.015} />
+      <RB size={[SHELF_W, 2.0, 0.05]} pos={[0, 1.0, -0.27]} color={shade(wood, -0.06)} r={0.015} />
       {[-1, 1].map((s) => (
-        <RB key={s} size={[0.06, 2.0, 0.6]} pos={[s * 0.97, 1.0, 0]} color={wood} r={0.02} />
+        <RB key={s} size={[0.06, 2.0, 0.6]} pos={[s * (hw - 0.03), 1.0, 0]} color={wood} r={0.02} />
       ))}
       {[0.02, 0.5, 0.96, 1.42, 1.88].map((y) => (
-        <RB key={y} size={[1.92, 0.05, 0.58]} pos={[0, y + 0.02, 0]} color={wood} r={0.015} />
+        <RB key={y} size={[SHELF_W - 0.08, 0.05, 0.58]} pos={[0, y + 0.02, 0]} color={wood} r={0.015} />
       ))}
       {books.map((b, i) => (
         <RB key={i} size={[b.w, b.h, 0.3]} pos={[b.x, b.y - 0.05 + b.h / 2 - 0.14, -0.05]} rot={[0, 0, b.t]} color={b.c} r={0.01} rough={0.85} cast={false} />
       ))}
-      <Ms geo={G.sphere(0.12, 12, 10)} mat={M(theme.accent3)} pos={[0.6, 2.1, -0.05]} scale={[1, 0.9, 1]} />
-      <RB size={[0.3, 0.2, 0.3]} pos={[-0.4, 2.12, -0.05]} color={theme.accent2} r={0.04} />
+      <Ms geo={G.sphere(0.12, 12, 10)} mat={M(theme.accent3)} pos={[hw - 0.28, 2.1, -0.05]} scale={[1, 0.9, 1]} />
+      <RB size={[0.3, 0.2, 0.3]} pos={[-(hw - 0.3), 2.12, -0.05]} color={theme.accent2} r={0.04} />
     </group>
   );
 }

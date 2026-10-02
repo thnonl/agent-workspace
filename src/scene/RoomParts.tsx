@@ -51,16 +51,21 @@ export function Wall({ length, height, openings, theme, doorCenter, doorWidth }:
     return list;
   }, [openings, length, height]);
 
-  // trim runs (skip the doorway)
+  // trim runs: they skip the doorway and every other opening down to the floor (the cubicle in an alcove behind the wall)
   const runs = useMemo(() => {
-    if (doorCenter === null) return [{ x: 0, w: length }];
-    const a = doorCenter - doorWidth / 2 - 0.08;
-    const b = doorCenter + doorWidth / 2 + 0.08;
-    return [
-      { x: (-length / 2 + a) / 2, w: a + length / 2 },
-      { x: (b + length / 2) / 2, w: length / 2 - b },
-    ];
-  }, [doorCenter, doorWidth, length]);
+    const gaps: [number, number][] = [];
+    if (doorCenter !== null) gaps.push([doorCenter - doorWidth / 2 - 0.08, doorCenter + doorWidth / 2 + 0.08]);
+    for (const o of openings) if (o.bottom <= 0.01) gaps.push([o.center - o.width / 2 - 0.02, o.center + o.width / 2 + 0.02]);
+    gaps.sort((p, q) => p[0] - q[0]);
+    const out: { x: number; w: number }[] = [];
+    let cursor = -length / 2;
+    for (const [g0, g1] of gaps) {
+      if (g0 > cursor) out.push({ x: (cursor + g0) / 2, w: g0 - cursor });
+      cursor = Math.max(cursor, g1);
+    }
+    if (cursor < length / 2) out.push({ x: (cursor + length / 2) / 2, w: length / 2 - cursor });
+    return out;
+  }, [doorCenter, doorWidth, length, openings]);
 
   return (
     <group>
@@ -86,8 +91,8 @@ export function Wall({ length, height, openings, theme, doorCenter, doorWidth }:
 const SASH_SWING = 1.2;
 
 /**
- * A two-sash casement window. One sash stays closed, the other one always stands open, swung outwards
- * (the office cats hop in through the open half).
+ * A casement window. Two sashes: one stays closed, the other one always stands open, swung outwards (the office cats hop in
+ * through the open half). One sash (a narrow window): it always stands open, swung outwards.
  */
 export function WindowView({ spec, theme, localX, wallHeight }: { spec: WindowSpec; theme: RoomTheme; localX: number; wallHeight: number }) {
   const { w, h, sill } = spec;
@@ -97,8 +102,9 @@ export function WindowView({ spec, theme, localX, wallHeight }: { spec: WindowSp
   const open = spec.openSide;
   const closed = -open;
   const hw = w / 2;
+  const single = spec.sashes === 1;
   const mullion = 0.07;
-  const sw = hw - mullion / 2; // width of one sash
+  const sw = single ? w : hw - mullion / 2; // width of one sash
   const bar = 0.05;
   const glassW = sw - bar * 2;
   const glassH = h - bar * 2;
@@ -119,11 +125,15 @@ export function WindowView({ spec, theme, localX, wallHeight }: { spec: WindowSp
   return (
     <group position={[localX, 0, 0]}>
       {/* the closed sash sits in the wall opening; a little knob on the middle bar */}
-      <group position={[0, 0, -t / 2]}>
-        {sash(closed * (mullion / 2 + sw / 2))}
-        <Ms geo={G.sphere(0.03, 8, 6)} mat={M(theme.accent3, { metal: 0.4, rough: 0.4 })} pos={[closed * (mullion / 2 + 0.12), cy - 0.1, 0.06]} cast={false} />
-      </group>
-      <RB size={[mullion, h, t * 0.6]} pos={[0, cy, -t / 2]} color={frame} r={0.01} />
+      {single ? null : (
+        <>
+          <group position={[0, 0, -t / 2]}>
+            {sash(closed * (mullion / 2 + sw / 2))}
+            <Ms geo={G.sphere(0.03, 8, 6)} mat={M(theme.accent3, { metal: 0.4, rough: 0.4 })} pos={[closed * (mullion / 2 + 0.12), cy - 0.1, 0.06]} cast={false} />
+          </group>
+          <RB size={[mullion, h, t * 0.6]} pos={[0, cy, -t / 2]} color={frame} r={0.01} />
+        </>
+      )}
       {/* the open sash: hinged on the outer jamb, swung outwards */}
       <group position={[open * hw, 0, -t / 2 - 0.03]} rotation={[0, -open * SASH_SWING, 0]}>
         {sash(-open * (sw / 2))}
@@ -138,8 +148,13 @@ export function WindowView({ spec, theme, localX, wallHeight }: { spec: WindowSp
       ))}
       {/* sill */}
       <RB size={[w + 0.5, 0.06, 0.3]} pos={[0, sill - 0.13, 0.1]} color={theme.stripe} r={0.02} />
-      <Ms geo={G.cyl(0.07, 0.055, 0.1, 12)} mat={M(theme.accent, { rough: 0.6 })} pos={[closed * (w / 2 - 0.2), sill - 0.05, 0.12]} />
-      <Ms geo={G.sphere(0.075, 10, 8)} mat={M('#59c27d')} pos={[closed * (w / 2 - 0.2), sill + 0.05, 0.12]} />
+      {/* a little plant on the sill, beside the way the cats come in (a narrow window has no room for one) */}
+      {single ? null : (
+        <>
+          <Ms geo={G.cyl(0.07, 0.055, 0.1, 12)} mat={M(theme.accent, { rough: 0.6 })} pos={[closed * (w / 2 - 0.2), sill - 0.05, 0.12]} />
+          <Ms geo={G.sphere(0.075, 10, 8)} mat={M('#59c27d')} pos={[closed * (w / 2 - 0.2), sill + 0.05, 0.12]} />
+        </>
+      )}
       {/* curtains */}
       {spec.curtain ? (
         <>
@@ -158,7 +173,7 @@ export function WindowView({ spec, theme, localX, wallHeight }: { spec: WindowSp
   );
 }
 
-export function DoorView({ door, theme, roomId, localX }: { door: DoorSpec; theme: RoomTheme; roomId: string; localX: number }) {
+export function DoorView({ door, theme, roomId, localX, cutaway = false }: { door: DoorSpec; theme: RoomTheme; roomId: string; localX: number; cutaway?: boolean }) {
   const leaf = useRef<THREE.Group>(null);
   useBaked(leaf);
   const t = WALL_T;
@@ -192,6 +207,13 @@ export function DoorView({ door, theme, roomId, localX }: { door: DoorSpec; them
       {[-1, 1].map((s) => (
         <RB key={s} size={[0.11, h + 0.1, t + 0.08]} pos={[s * (w / 2 + 0.075), (h + 0.1) / 2, -t / 2]} color={theme.trim} r={0.02} />
       ))}
+      {/* in one of the lower walls (which are cut away for the camera): a short piece of wall either side of the frame */}
+      {cutaway
+        ? [-1, 1].map((s) => (
+            <RB key={`stub${s}`} size={[0.55, h + 0.3, t]} pos={[s * (w / 2 + 0.13 + 0.275), (h + 0.3) / 2, -t / 2]} color={theme.wall} r={0.02} />
+          ))
+        : null}
+      {cutaway ? <RB size={[w + 0.3 + 1.1, 0.06, t + 0.04]} pos={[0, h + 0.33, -t / 2]} color={theme.trim} r={0.015} /> : null}
       {/* door leaf hinged on -x, opens outwards (towards -z) */}
       <group ref={leaf} userData={{ dynamic: true }} position={[-w / 2, 0, -t / 2]}>
         <RB size={[w - 0.04, h - 0.04, 0.07]} pos={[w / 2, h / 2, 0]} color={theme.accent} r={0.03} rough={0.5} />
@@ -586,6 +608,31 @@ export function Sign({ title, localX, y, theme }: { title: string; localX: numbe
   );
 }
 
+/** The floor of an L-shaped room: the rectangle without its front right corner, as two quads (uv as over the whole W x D rectangle). */
+export function lFloorGeometry(W: number, D: number, notch: { w: number; d: number }): THREE.BufferGeometry {
+  const pos: number[] = [];
+  const uv: number[] = [];
+  const nrm: number[] = [];
+  const idx: number[] = [];
+  const quad = (x0: number, x1: number, z0: number, z1: number) => {
+    const b = pos.length / 3;
+    for (const [x, z] of [[x0, z0], [x0, z1], [x1, z1], [x1, z0]]) {
+      pos.push(x, 0, z);
+      nrm.push(0, 1, 0);
+      uv.push((x + W / 2) / W, (D / 2 - z) / D);
+    }
+    idx.push(b, b + 1, b + 2, b, b + 2, b + 3);
+  };
+  quad(-W / 2, W / 2, -D / 2, D / 2 - notch.d);
+  quad(-W / 2, W / 2 - notch.w, D / 2 - notch.d, D / 2);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  return g;
+}
+
 export function layoutOpenings(layout: RoomLayout) {
   const back: (Opening & { win?: WindowSpec })[] = [];
   const left: (Opening & { win?: WindowSpec })[] = [];
@@ -597,6 +644,13 @@ export function layoutOpenings(layout: RoomLayout) {
   const d = layout.door;
   const door = { center: 0, width: d.width + 0.16, bottom: 0, top: d.height + 0.02 };
   if (d.wall === 'back') back.push({ ...door, center: d.pos + WALL_T / 2 });
-  else left.push({ ...door, center: -d.pos });
+  else if (d.wall === 'left') left.push({ ...door, center: -d.pos });
+  // a cubicle in an alcove behind the back wall: the wall is open over its whole width (the partition with the cubicle door stands there)
+  const rr = layout.restroom;
+  if (rr?.alcove) {
+    const o = { width: rr.w, bottom: 0, top: layout.wallHeight + 1 };
+    if (rr.rot === 0) back.push({ ...o, center: rr.x + WALL_T / 2 });
+    else left.push({ ...o, center: -rr.z });
+  }
   return { back, left };
 }

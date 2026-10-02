@@ -1,7 +1,7 @@
 import { useRef } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
-import { FOOT, type PropKind, type RoomLayout } from '../world/layout';
+import { FOOT, onDirectorDesk, type PropKind, type RoomLayout } from '../world/layout';
 import { useStore } from '../store';
 import { burst } from '../sim/celebrate';
 import { frame } from '../sim/frame';
@@ -68,7 +68,7 @@ export function PropHits({ roomId, layout }: { roomId: string; layout: RoomLayou
 
 /** A little radio on the director's desk: click it to play lo-fi music (it bounces with the beat and lets notes float up). */
 export function Radio({ roomId, layout }: { roomId: string; layout: RoomLayout }) {
-  const desk = layout.director.desk;
+  const spot = onDirectorDesk(layout, -0.88, -0.28);
   const body = useRef<THREE.Group>(null);
   const dial = useRef<THREE.Mesh>(null);
   const pointer = usePointerCursor();
@@ -85,11 +85,11 @@ export function Radio({ roomId, layout }: { roomId: string; layout: RoomLayout }
     if (dial.current) dial.current.visible = on;
     if (on && clock.current - noteAt.current > 1.5) {
       noteAt.current = clock.current;
-      burst(roomId, 'notes', [desk.x - 0.88, DESK_TOP + 0.3, desk.z - 0.28]);
+      burst(roomId, 'notes', [spot.x, DESK_TOP + 0.3, spot.z]);
     }
   });
   return (
-    <group position={[desk.x - 0.88, DESK_TOP + 0.02, desk.z - 0.28]} rotation={[0, 0.25, 0]}>
+    <group position={[spot.x, DESK_TOP + 0.02, spot.z]} rotation={[0, 0.25 + layout.director.rot, 0]}>
       <group
         ref={body}
         {...pointer}

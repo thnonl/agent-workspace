@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
-import type { RoomLayout } from '../world/layout';
+import { onDirectorDesk, type RoomLayout } from '../world/layout';
 import { DESK_TOP } from './furniture';
 import { frame } from '../sim/frame';
 import { propHere } from '../sim/registry';
@@ -39,7 +39,7 @@ export function lampsOf(layout: RoomLayout): LampSpot[] {
     }
   }
   {
-    const [x, z] = [layout.director.desk.x - 1.14, layout.director.desk.z - 0.25];
+    const { x, z } = onDirectorDesk(layout, -1.14, -0.25);
     out.push({ x, y: DESK_TOP + 0.4, z, pool: 0.75, floor: DESK_TOP + 0.03 });
   }
   for (const w of layout.wallDecor) {

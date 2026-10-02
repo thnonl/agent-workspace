@@ -41,7 +41,8 @@ export function lightParams(): LightParams {
   // at night the shadow-casting light stands in for the room lamps: warm, and strong enough that people and furniture still cast clear shadows
   // (an empty office has its lights off: only the moon then)
   const lamps = lampsNow();
-  params.dirColor.copy(c.sun).lerp(c.warm, env.warm * env.day).lerp(c.moon, env.night).lerp(c.lamp, lamps);
+  params.dirColor.copy(c.sun).lerp(c.warm, env.warm * env.day).lerp(c.moon, env.night).lerp(c.lamp, lamps * (0.35 + 0.65 * env.night));
+  // (lamps on by day – a dark rainy day – tint the light a little; at night they stand in for it)
   params.dirIntensity = (0.42 + 1.5 * env.day + 0.25 * env.warm + 1.05 * lamps * env.night) * (1 - 0.3 * env.overcast * env.day);
   params.hemiSky.copy(c.skyNight).lerp(c.skyDay, env.day);
   params.hemiGround.copy(c.groundNight).lerp(c.groundDay, env.day);

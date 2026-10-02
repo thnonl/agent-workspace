@@ -99,8 +99,6 @@ export interface RoomRuntime {
   burstSeq: number;
   /** tasks waiting for somebody to be free (set every tick: the office hurries when many are waiting) */
   queued: number;
-  /** when the latest tool calls came in (Date.now(), the last few seconds only): how many people the office needs follows from them */
-  callAt: number[];
   /** when a person was last brought in (hired or called back from home), and when a staff member last came through the door (Date.now()) */
   lastHire: number;
   lastNewcomer: number;
@@ -322,7 +320,7 @@ export function runtimeFor(roomId: string): RoomRuntime {
   if (!rt) {
     rt = {
       doorFreeAt: 0, leaveFreeAt: 0, motionAt: -99, motionBy: null, visitors: [null, null, null], directorSeated: false, directorKey: null, receivedAt: -99,
-      burstKey: null, burstStart: 0, lastToolAt: 0, burstSeq: 0, queued: 0, callAt: [], lastHire: 0, lastNewcomer: 0, lastNewHire: 0, prompt: '', idleSince: 0, leaving: false, wasBusy: false, runStart: 0, lastText: '', knownFinal: '', talkDeadline: 0,
+      burstKey: null, burstStart: 0, lastToolAt: 0, burstSeq: 0, queued: 0, lastHire: 0, lastNewcomer: 0, lastNewHire: 0, prompt: '', idleSince: 0, leaving: false, wasBusy: false, runStart: 0, lastText: '', knownFinal: '', talkDeadline: 0,
       parcel: 'none', parcelAt: 0, parcelBy: null, parcelRank: -1, parcelBig: false, askAt: 0, cheerUntil: 0, summaryDue: false,
     };
     roomRuntime.set(roomId, rt);

@@ -174,11 +174,8 @@ const CALL_STALE_MS = 3000;
 const CALL_KEEP = 3;
 /** a picture a tool brought back is a job somebody shows (a thumbnail in the bubble): it waits this long for a free person before it is skipped */
 const IMAGE_WAIT_MS = 15_000;
-/** a new task hires a new person until this many staff are around, afterwards the staff take turns (more are hired only when every one of them is busy) */
+/** while other rooms are being loaded ahead nobody comes back from home and the team grows to this size at most */
 const MIN_TEAM = 3;
-/** how many people the office needs follows from the tool calls of the last DEMAND_WINDOW_MS: one person for every CALLS_PER_PERSON of them (at least MIN_TEAM) */
-const DEMAND_WINDOW_MS = 10_000;
-const CALLS_PER_PERSON = 3;
 /** a room seats the director and at most this many staff (the layout has exactly this many desks) */
 export const MAX_STAFF = 6;
 
@@ -531,17 +528,28 @@ function waitingOutside(staff: PersonRec[], now: number): boolean {
 }
 
 /**
- * A room nobody has looked at yet but that is working has people at their desks already, more the more jobs the session has done:
- * one after 2 tasks, two after 5, three after 10, four after 20 (never more than the desks). They sit there when the room is first built.
+ * The size of the team follows the number of jobs the session has done: one person after 2 tasks, two after 5, three after 10, four
+ * after 20, five after 30, six after 40 (never more than the desks). A room nobody has looked at yet stops at PRESET_MAX.
  */
-const PRESET_STAFF: readonly [number, number][] = [[20, 4], [10, 3], [5, 2], [2, 1]];
+const TEAM_BY_TASKS: readonly [number, number][] = [[40, 6], [30, 5], [20, 4], [10, 3], [5, 2], [2, 1]];
+const PRESET_MAX = 4;
+function teamSize(get: Get, roomId: string): number {
+  const room = get().rooms[roomId];
+  if (!room) return 0;
+  // (the monitor counts the whole session, the page only what happened since it opened: whichever knows more)
+  const open = tasksOf(get(), roomId).length;
+  const done = Math.max(room.toolCalls ?? 0, room.tasksDone + open);
+  let n = TEAM_BY_TASKS.find(([k]) => done >= k)?.[1] ?? 0;
+  if (!enteredRooms.has(roomId)) n = Math.min(n, PRESET_MAX);
+  // (a room on screen with work waiting has somebody to do it, even before the second task)
+  else if (open > 0) n = Math.max(n, 1);
+  return Math.min(staffCap(get, roomId), n);
+}
+
+/** A room nobody has looked at yet but that is working has its team (see teamSize) at their desks already: they sit there when the room is first built. */
 function presetStaff(get: Get, set: SetFn, roomId: string) {
   if (enteredRooms.has(roomId)) return;
-  const room = get().rooms[roomId];
-  if (!room) return;
-  // (the monitor counts the whole session, the page only what happened since it opened: whichever knows more)
-  const done = Math.max(room.toolCalls ?? 0, room.tasksDone + tasksOf(get(), roomId).length);
-  const want = Math.min(staffCap(get, roomId), PRESET_STAFF.find(([n]) => done >= n)?.[1] ?? 0);
+  const want = teamSize(get, roomId);
   const staff = peopleOf(get(), roomId).filter((p) => p.role === 'staff');
   let missing = want - staff.filter((p) => p.present).length;
   if (missing <= 0) return;
@@ -603,8 +611,6 @@ function sayForTask(get: Get, set: SetFn, task: TaskRec, sp: SpeechIn) {
 function callTask(get: Get, set: SetFn, roomId: string, c: { label: string; origin: string; text: string; tool?: string }): TaskRec {
   const rt = runtimeFor(roomId);
   rt.lastToolAt = Date.now();
-  rt.callAt.push(rt.lastToolAt);
-  while (rt.callAt.length && rt.lastToolAt - rt.callAt[0] > DEMAND_WINDOW_MS) rt.callAt.shift();
   const key = `${roomId}::call#${++rt.burstSeq}`;
   return createTask(get, set, roomId, 'main', c.origin, key, c.label, '', { origin: c.origin, tool: c.tool ?? '', first: clip(c.text, 70), steps: 1 });
 }
@@ -649,17 +655,14 @@ function freeStaff(get: Get, roomId: string): PersonRec[] {
 }
 
 /**
- * Bring one more person into the office (when the flow of calls needs more people than are here): somebody who went home comes back first, otherwise a new
- * person is hired (up to the size of the room). Returns 1 when somebody is on the way (or will be once the gap is over), 0 when nobody can come.
+ * Bring one more person into the office (while the team is smaller than the jobs of the session call for, see teamSize): somebody who went home comes back
+ * first, otherwise a new person is hired (up to the size of the room). Returns 1 when somebody is on the way (or will be once the gap is over), 0 when nobody can come.
  */
 function bringIn(get: Get, set: SetFn, roomId: string, wanted: number): number {
   const staff = peopleOf(get(), roomId).filter((p) => p.role === 'staff');
   const loading = loadingAhead();
-  // (the team follows the flow of calls, not the pile of waiting ones: a pile that is skipped after a few seconds is no reason to hire the whole room)
   const rt = runtimeFor(roomId);
-  const recent = rt.callAt.filter((t) => Date.now() - t <= DEMAND_WINDOW_MS).length;
-  const team = Math.min(staffCap(get, roomId), Math.max(MIN_TEAM, Math.ceil(recent / CALLS_PER_PERSON)));
-  const need = Math.min(wanted, team - staff.filter((p) => p.present).length);
+  const need = Math.min(wanted, teamSize(get, roomId) - staff.filter((p) => p.present).length);
   if (need <= 0) return 0;
   // One person at a time, at least HIRE_GAP_MS apart – somebody who comes back from home counts like a new hire. Nobody is brought in while the one before
   // still waits outside the door (rooms being loaded hold the door shut) and the gap runs from the moment the last one came in: otherwise they pile up
@@ -932,6 +935,8 @@ function tickRoom(get: Get, set: SetFn, roomId: string, now: number) {
     }
     ensureDirector(get, set, roomId);
     dispatchRoom(get, set, roomId);
+    // the team grows with the jobs of the session (one at a time, HIRE_GAP_MS apart), not only when a task finds nobody free
+    if (enteredRooms.has(roomId)) bringIn(get, set, roomId, Infinity);
     autoHire(get, set, roomId, now);
     presetStaff(get, set, roomId);
     if (!room.demo) notePeople(peopleOf(get(), roomId).filter((p) => p.present && (p.inside !== false || roomId !== get().activeRoomId)).length);

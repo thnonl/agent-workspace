@@ -2,7 +2,7 @@ import { useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import { FOOT, type PropKind, type RoomLayout } from '../world/layout';
 import { WALL_T } from './RoomParts';
-import { restroomPieces } from './restroom';
+import { restroomWorldPieces } from './restroom';
 import { FX, initFx } from './fx';
 
 /** props that are too low to cast a visible shadow */
@@ -41,8 +41,8 @@ function buildAO(layout: RoomLayout): THREE.BufferGeometry {
       rects.push({ x: d.x + wg.x * c + wg.z * s, z: d.z - wg.x * s + wg.z * c, w: wg.w, d: wg.d, rot: d.rot, m: 0.28 });
     }
   }
-  if (layout.restroom) for (const pc of restroomPieces(layout, layout.restroom)) rects.push({ x: pc.x, z: pc.z, w: Math.max(pc.w, 0.1), d: Math.max(pc.d, 0.1), rot: 0, m: 0.22 });
-  rects.push({ x: layout.director.desk.x, z: layout.director.desk.z, w: 3.0, d: 1.2, rot: 0, m: 0.4 });
+  if (layout.restroom) for (const pc of restroomWorldPieces(layout.restroom)) rects.push({ x: pc.x, z: pc.z, w: Math.max(pc.w, 0.1), d: Math.max(pc.d, 0.1), rot: pc.rot, m: 0.22 });
+  rects.push({ x: layout.director.desk.x, z: layout.director.desk.z, w: 3.0, d: 1.2, rot: layout.director.rot, m: 0.4 });
   for (const [pi, p] of layout.props.entries()) {
     // (the movable ones and the things that come by delivery have a floor shadow of their own)
     if (NO_AO.has(p.kind) || layout.movable.includes(pi) || layout.lateRank[pi] >= 0) continue;
