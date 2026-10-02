@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- themed icon (Android 13+): the favicon's face and hair in one colour, eyes and smile cut out -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:scaleX="1.5"
+        android:scaleY="1.5"
+        android:translateX="6"
+        android:translateY="4.5">
+        <path
+            android:fillColor="#FFFFFF"
+            android:fillType="evenOdd"
+            android:pathData="M12,34a20,20 0,1 0,40 0a20,20 0,1 0,-40 0zM20.5,34a3.5,3.5 0,1 0,7 0a3.5,3.5 0,1 0,-7 0zM36.5,34a3.5,3.5 0,1 0,7 0a3.5,3.5 0,1 0,-7 0zM26,41.2q6,6.5 12,0q-6,3.2 -12,0z" />
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M12,28q4,-16 20,-16t20,16q-10,-8 -20,-8t-20,8z" />
+    </group>
+</vector>

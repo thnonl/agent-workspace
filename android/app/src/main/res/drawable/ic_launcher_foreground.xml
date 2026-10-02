@@ -1,20 +1,39 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- the office building of the web app's HUD (Icon.tsx), centred in the adaptive icon's safe zone -->
+<!-- the web app's favicon (public/favicon.svg, a 64-unit grid) scaled 1.5× into the adaptive icon's safe zone -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
     <group
-        android:scaleX="2.5"
-        android:scaleY="2.5"
-        android:translateX="24"
-        android:translateY="24">
+        android:scaleX="1.5"
+        android:scaleY="1.5"
+        android:translateX="6"
+        android:translateY="4.5">
+        <!-- face -->
         <path
-            android:pathData="M4,21V5a1,1 0,0 1,1 -1h9a1,1 0,0 1,1 1v16M15,9h4a1,1 0,0 1,1 1v11M2,21h20M8,8h2M8,12h2M8,16h2"
-            android:strokeWidth="2"
-            android:strokeColor="#F2A65A"
-            android:strokeLineCap="round"
-            android:strokeLineJoin="round" />
+            android:fillColor="#FFE7D6"
+            android:pathData="M12,34a20,20 0,1 0,40 0a20,20 0,1 0,-40 0z" />
+        <!-- eyes and their shine -->
+        <path
+            android:fillColor="#3B2A3F"
+            android:pathData="M20.5,34a3.5,3.5 0,1 0,7 0a3.5,3.5 0,1 0,-7 0zM36.5,34a3.5,3.5 0,1 0,7 0a3.5,3.5 0,1 0,-7 0z" />
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M21.6,32.8a1.2,1.2 0,1 0,2.4 0a1.2,1.2 0,1 0,-2.4 0zM37.6,32.8a1.2,1.2 0,1 0,2.4 0a1.2,1.2 0,1 0,-2.4 0z" />
+        <!-- smile -->
+        <path
+            android:pathData="M27,42q5,5 10,0"
+            android:strokeWidth="2.6"
+            android:strokeColor="#3B2A3F"
+            android:strokeLineCap="round" />
+        <!-- hair -->
+        <path
+            android:fillColor="#FF8FAB"
+            android:pathData="M12,28q4,-16 20,-16t20,16q-10,-8 -20,-8t-20,8z" />
+        <!-- cheeks -->
+        <path
+            android:fillColor="#FFB3C1"
+            android:pathData="M15,41a3,3 0,1 0,6 0a3,3 0,1 0,-6 0zM43,41a3,3 0,1 0,6 0a3,3 0,1 0,-6 0z" />
     </group>
 </vector>

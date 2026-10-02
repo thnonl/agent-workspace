@@ -6,7 +6,7 @@
     <color name="ink">#F4EFE6</color>
     <color name="ink_soft">#B5ADC9</color>
     <color name="error">#FF8A80</color>
-    <color name="icon_bg">#2B2640</color>
+    <color name="icon_bg">#FFD9C7</color>
 
     <style name="Theme.AgentWorkspace" parent="@android:style/Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/bg</item>
