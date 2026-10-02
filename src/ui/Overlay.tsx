@@ -641,6 +641,7 @@ export function SummaryPaper() {
   const running = useStore((s) => (s.summaryOpen ? Object.values(s.tasks).filter((t) => t.sessionId === s.summaryOpen).length : 0));
   // a room can only be released while nothing is going on in it
   const idle = useStore((s) => !!s.summaryOpen && !s.rooms[s.summaryOpen]?.mainActive && !Object.values(s.tasks).some((t) => t.sessionId === s.summaryOpen));
+  const pip = useStore((s) => s.pip);
   if (!roomId || !summary || !room) return null;
   const failed = summary.tasks.filter((t) => t.failed).length;
   const reports = summary.tasks.filter((t) => t.reported);
@@ -649,7 +650,9 @@ export function SummaryPaper() {
   for (const c of calls) mix.set(c.tool || 'other', (mix.get(c.tool || 'other') ?? 0) + 1);
   const callMix = [...mix.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([tool, n]) => `${tool.replace(/^mcp__/, '')} ×${n}`).join(' · ');
   const soFar = summary.partial;
-  return (
+  // in the floating window React hears no clicks through the page's root (see PipContext): a portal makes it listen on the office itself
+  const pipTarget = pip ? floatingWindow()?.document.querySelector('.app') : null;
+  const paper = (
     <Dialog backdrop="paper-backdrop" card="paper" as="article" label={`Session summary: ${room.project}`} onClose={close}>
       <span className="paper-tape" aria-hidden="true" />
       <button className="paper-close" onClick={close} aria-label="Close" title="Close (Esc)"><Icon name="x" size={18} /></button>
@@ -702,6 +705,7 @@ export function SummaryPaper() {
       </div>
     </Dialog>
   );
+  return pipTarget ? createPortal(paper, pipTarget) : paper;
 }
 
 /** "Release this room?" (from the summary paper) or "Release every idle room?" (from the room list). */

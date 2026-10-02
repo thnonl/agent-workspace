@@ -191,7 +191,18 @@
 
 /* --- picture-in-picture: the office lives in a small floating window --------------------------------------------------- */
 /* (the .cinema class is on as well: no buttons, no pointer; dialogs would only crowd the little window) */
-.app.pip .modal, .app.pip .paper-backdrop, .app.pip .confirm-backdrop, .app.pip .cinema-hint { display: none; }
+.app.pip .modal, .app.pip .confirm-backdrop, .app.pip .cinema-hint { display: none; }
+/* the summary paper does show in the floating window, just smaller (and without "Release room", whose confirmation is not shown there) */
+.app.pip .paper-backdrop { backdrop-filter: none; }
+.app.pip .paper { width: calc(100% - 16px); max-height: calc(100% - 16px); transform: none; animation: fadeIn 0.25s both; }
+.app.pip .paper-tape { display: none; }
+.app.pip .paper-close { top: 6px; right: 8px; width: 28px; height: 28px; }
+.app.pip .paper-scroll { --m: 14px; padding: 14px 12px 8px 26px; line-height: 1.45; }
+.app.pip .paper h2 { font-size: 18px; }
+.app.pip .paper-sub, .app.pip .paper-text, .app.pip .paper-quote { font-size: 12px; }
+.app.pip .paper section { margin-top: 10px; }
+.app.pip .paper-foot { padding: 8px 0 10px; }
+.app.pip .paper-foot .btn:not(.btn-big) { display: none; }
 .app.pip { cursor: default; }
 .pip-bar { position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 60; display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; pointer-events: none; }
 .pip-ctx { min-width: 0; max-width: calc(100% - 76px); display: flex; align-items: center; gap: 8px; padding: 5px 14px 5px 5px; border-radius: 22px; background: rgba(30, 24, 60, 0.62); color: #fff; font-size: 11px; font-weight: 800; font-variant-numeric: tabular-nums; --ctx: #3ddc97; }
