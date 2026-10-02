@@ -2,6 +2,16 @@
 
 A cute, isometric 3D office that shows your **Claude Code**, **Codex** and **OpenCode** sessions at work, in real time.
 
+## ⚡ Install in one line
+
+Needs [Node.js](https://nodejs.org) 20 or newer. Start a Claude Code, Codex or OpenCode session anywhere, then run:
+
+```bash
+npx @thnonline/agent-workspace@latest
+```
+
+Your browser opens on <http://localhost:4173> and every running session shows up as a room. Stop it with <kbd>Ctrl</kbd>+<kbd>C</kbd>. More ways to run it, and how to update: [Quick start](#quick-start).
+
 ![Agent Workspace tour: rooms for every session, coffee breaks, cats, a commit party, day and night, weather and seasons](https://raw.githubusercontent.com/thnonl/agent-workspace/main/docs/demo.gif)
 
 ## Highlights
