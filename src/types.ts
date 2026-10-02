@@ -8,10 +8,10 @@ export type SpeechKind = 'thinking' | 'text' | 'tool' | 'task' | 'done' | 'error
 export type MonitorEvent =
   | { type: 'hello'; claudeDir: string; sources?: Record<string, string | null>; windowMin: number }
   | { type: 'ready' }
-  | { type: 'session'; sessionId: string; title: string; cwd: string; project: string; provider?: Provider; updatedAt: number; lastPrompt?: string; lastFinal?: string; context?: ContextInfo }
+  | { type: 'session'; sessionId: string; title: string; cwd: string; project: string; provider?: Provider; updatedAt: number; lastPrompt?: string; lastFinal?: string; context?: ContextInfo; toolCalls?: number }
   | { type: 'session_end'; sessionId: string; reason?: 'idle' | 'gone' }
   | { type: 'agent_start'; sessionId: string; agentId: string; role: AgentRole; label: string; agentType?: string }
-  | { type: 'agent_say'; sessionId: string; agentId: string; kind: SpeechKind; text: string; tool?: string; full?: string; cue?: 'commit' | 'push' }
+  | { type: 'agent_say'; sessionId: string; agentId: string; kind: SpeechKind; text: string; tool?: string; full?: string; cue?: 'commit' | 'push'; image?: string }
   | { type: 'agent_done'; sessionId: string; agentId: string; summary?: string; failed?: boolean }
   /** the main agent asks the user something and waits (AskUserQuestion / plan approval / OpenCode question): pending until agent_ask_end */
   | { type: 'agent_ask'; sessionId: string; text: string; full?: string }
@@ -42,6 +42,8 @@ export interface Speech {
   at: number;
   /** a bubble of the summary talk: it stays up this long (ms), is never dropped and never preempted */
   hold?: number;
+  /** a picture a tool brought back (URL of the monitor's copy): shown as a thumbnail in the bubble */
+  image?: string;
 }
 
 export type PersonRole = 'director' | 'staff';
@@ -177,5 +179,7 @@ export interface RoomRec {
   mainActive: boolean;
   /** context window use of the main agent (when the transcript says) */
   context?: ContextInfo;
+  /** tool calls the session has made so far, as far as the monitor knows (also from before this page was opened) */
+  toolCalls?: number;
   demo: boolean;
 }

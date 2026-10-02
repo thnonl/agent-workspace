@@ -11,7 +11,7 @@ import { OVERCAST } from '../weather';
 import { photoHooks } from '../photo';
 import { floatingWindow } from '../pipHost';
 import { lightParams } from './lighting';
-import { updateGlow } from './glow';
+import { roomLit, updateGlow } from './glow';
 import { RoomView, roomOrigin } from './RoomView';
 
 const AZIMUTH = 0.72;
@@ -638,14 +638,17 @@ function PerfHook() {
 
 /** Feeds the system clock into the damped `env` object and refreshes time-reactive materials. */
 function EnvSync() {
-  const last = useRef({ lamps: -1, day: -1, night: -1, overcast: -1 });
+  const last = useRef({ lamps: -1, day: -1, night: -1, overcast: -1, lit: -1 });
   useFrame((_, dt) => {
     const st = useStore.getState();
     stepEnv(envForHour(st.hour), Math.min(Math.max(dt, 0), 0.1), OVERCAST[st.weather]);
+    syncRoomLit(st, Math.min(Math.max(dt, 0), 0.1));
+    const lit = roomLit.get(frame.activeId ?? '') ?? 1;
     const l = last.current;
-    // the materials only need a refresh while the time of day (or the weather) is actually changing
-    if (Math.abs(l.lamps - env.lamps) + Math.abs(l.day - env.day) + Math.abs(l.night - env.night) + Math.abs(l.overcast - env.overcast) > 1e-5) {
+    // the materials only need a refresh while the time of day (or the weather, or the lights of the room on screen) is actually changing
+    if (Math.abs(l.lamps - env.lamps) + Math.abs(l.day - env.day) + Math.abs(l.night - env.night) + Math.abs(l.overcast - env.overcast) + Math.abs(l.lit - lit) > 1e-5) {
       l.lamps = env.lamps;
+      l.lit = lit;
       l.day = env.day;
       l.night = env.night;
       l.overcast = env.overcast;
@@ -653,6 +656,33 @@ function EnvSync() {
     }
   });
   return null;
+}
+
+/** Somebody is in the room: a person on stage (the room on screen), or one who is present (a room whose people only exist as records). */
+function occupied(id: string, present: Set<string>): boolean {
+  let hasSims = false;
+  for (const s of simsInRoom(id)) {
+    if (s.onStage) return true;
+    hasSims = true;
+  }
+  return !hasSims && present.has(id);
+}
+
+const presentRooms = new Set<string>();
+let presentFor: unknown = null;
+/** The lights of every room follow whether anybody is in: the first one in switches them on, the last one out switches them off (quickly, like a switch). */
+function syncRoomLit(st: ReturnType<typeof useStore.getState>, dt: number) {
+  if (presentFor !== st.people) {
+    presentFor = st.people;
+    presentRooms.clear();
+    for (const p of Object.values(st.people)) if (p.present) presentRooms.add(p.sessionId);
+  }
+  const k = 1 - Math.exp(-6 * dt);
+  for (const id of st.visibleOrder) {
+    const target = occupied(id, presentRooms) ? 1 : 0;
+    const cur = roomLit.get(id);
+    roomLit.set(id, cur === undefined ? target : Math.abs(target - cur) < 0.002 ? target : cur + (target - cur) * k);
+  }
 }
 
 /**
@@ -700,7 +730,7 @@ function RoomLights() {
         l.intensity = 0; // fade in again at the new room
         l.position.set(r.x - 0.3, 7.6, r.z + 0.4);
       }
-      const target = r ? env.lamps * 22 : 0;
+      const target = r ? env.lamps * 22 * (roomLit.get(r.id) ?? 1) : 0;
       l.intensity += (target - l.intensity) * k;
       if (l.intensity > 0.5) on = true;
     }

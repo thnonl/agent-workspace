@@ -11,7 +11,7 @@ import { anchors, holdTalk, sims, idleDismissedAt, nextSpeech, peekSpeech, queue
 
 const TOOL_ICONS: Record<string, string> = {
   Read: '📖', Edit: '✏️', MultiEdit: '✏️', NotebookEdit: '✏️', Write: '📝', Bash: '⌨️', PowerShell: '⌨️', Grep: '🔍', Glob: '🔍',
-  WebFetch: '🌐', WebSearch: '🌐', TodoWrite: '✅', TaskCreate: '✅', TaskUpdate: '✅', Agent: '📨', Task: '📨',
+  WebFetch: '🌐', WebSearch: '🌐', TodoWrite: '✅', TaskCreate: '✅', TaskUpdate: '✅', Agent: '📨', Task: '📨', Image: '🖼️',
 };
 
 /** a bubble stays until something new is said; after this long it shrinks to save space */
@@ -490,6 +490,7 @@ const BubbleItem = memo(function BubbleItem({ personKey }: { personKey: string }
               {icon ? <span className="bubble-icon">{icon}</span> : null}
               <span>{bubbleText(cur)}</span>
             </div>
+            {cur.image ? <img className="bubble-thumb" src={cur.image} alt="" decoding="async" draggable={false} /> : null}
           </div>
         ) : (
           <button className={`nametag${selected ? ' selected' : ''}`} onClick={() => useStore.getState().select(personKey)}>

@@ -64,6 +64,8 @@ export interface SimState {
   wc?: 1 | 2 | 3;
   /** kind of the break (activity) the person is on, set by the actor every frame; undefined = none (see store.assignRank) */
   actKind?: string;
+  /** fetching the parcel or carrying a carton to open it: no task is handed to them until it is done (see store.dispatchRoom) */
+  carrying?: boolean;
 }
 
 export const sims = new Map<string, SimState>();
@@ -99,12 +101,11 @@ export interface RoomRuntime {
   queued: number;
   /** when the latest tool calls came in (Date.now(), the last few seconds only): how many people the office needs follows from them */
   callAt: number[];
-  /** how long the office has worked in all (ms, summed over the runs while the room was busy), and when that was last added up (Date.now(), 0 = not busy): the room can seat more staff the longer it works */
-  workMs: number;
-  workAt: number;
   /** when a person was last brought in (hired or called back from home), and when a staff member last came through the door (Date.now()) */
   lastHire: number;
   lastNewcomer: number;
+  /** when a new person was last hired (Date.now(), 0 = not yet looked at): AUTO_HIRE_MS after it the office hires one more, needed or not (see store.autoHire) */
+  lastNewHire: number;
   /** the latest user prompt (names the main agent's tasks) */
   prompt: string;
   /** when the office ran out of work (Date.now(), 0 = busy) */
@@ -321,7 +322,7 @@ export function runtimeFor(roomId: string): RoomRuntime {
   if (!rt) {
     rt = {
       doorFreeAt: 0, leaveFreeAt: 0, motionAt: -99, motionBy: null, visitors: [null, null, null], directorSeated: false, directorKey: null, receivedAt: -99,
-      burstKey: null, burstStart: 0, lastToolAt: 0, burstSeq: 0, queued: 0, callAt: [], workMs: 0, workAt: 0, lastHire: 0, lastNewcomer: 0, prompt: '', idleSince: 0, leaving: false, wasBusy: false, runStart: 0, lastText: '', knownFinal: '', talkDeadline: 0,
+      burstKey: null, burstStart: 0, lastToolAt: 0, burstSeq: 0, queued: 0, callAt: [], lastHire: 0, lastNewcomer: 0, lastNewHire: 0, prompt: '', idleSince: 0, leaving: false, wasBusy: false, runStart: 0, lastText: '', knownFinal: '', talkDeadline: 0,
       parcel: 'none', parcelAt: 0, parcelBy: null, parcelRank: -1, parcelBig: false, askAt: 0, cheerUntil: 0, summaryDue: false,
     };
     roomRuntime.set(roomId, rt);

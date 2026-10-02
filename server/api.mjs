@@ -85,6 +85,18 @@ export function createApi(monitor, { idleStopMs = 30_000, settings } = {}) {
       });
       return;
     }
+    if (url.pathname.startsWith('/api/image/')) {
+      const img = monitor.image?.(url.pathname.slice('/api/image/'.length));
+      if (!img) {
+        res.writeHead(404, { 'Cache-Control': 'no-store' });
+        res.end();
+        return;
+      }
+      // (an id is never reused: the picture behind it never changes)
+      res.writeHead(200, { 'Content-Type': img.mime, 'Content-Length': img.data.length, 'Cache-Control': 'private, max-age=86400, immutable', 'X-Content-Type-Options': 'nosniff' });
+      res.end(img.data);
+      return;
+    }
     if (url.pathname === '/api/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, claudeDir: monitor.claudeDir, sources: monitor.sources, sessions: monitor.sessionCount() }));

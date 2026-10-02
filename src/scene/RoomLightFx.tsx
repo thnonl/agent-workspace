@@ -8,6 +8,7 @@ import { propHere } from '../sim/registry';
 import { useDeliveryVersion } from './useDelivery';
 import { env } from '../env';
 import { DUST, FX, HALO, initFx } from './fx';
+import { litOf } from './glow';
 
 /** Point of a prop / desk item in room space: room-local offset (x, z) turned by `rot`, then moved to (cx, cz). */
 const at = (cx: number, cz: number, rot: number, x: number, z: number): [number, number] => [cx + x * Math.cos(rot) + z * Math.sin(rot), cz - x * Math.sin(rot) + z * Math.cos(rot)];
@@ -85,6 +86,13 @@ export function RoomLightFx({ layout, roomId, halos, dust }: { layout: RoomLayou
     return g;
   }, [lamps]);
   useEffect(() => () => haloGeo.dispose(), [haloGeo]);
+  // (own copies of the shared pool / halo materials: they go dark with this room's lights, see roomLit)
+  const poolMat = useMemo(() => FX.pool.clone(), []);
+  const haloMat = useMemo(() => HALO.clone(), []);
+  useEffect(() => () => {
+    poolMat.dispose();
+    haloMat.dispose();
+  }, [poolMat, haloMat]);
 
   // dust: each window's light patch spans from the wall into the room along `dir`
   const windows = useMemo(() => {
@@ -103,6 +111,9 @@ export function RoomLightFx({ layout, roomId, halos, dust }: { layout: RoomLayou
   const pts = useRef<THREE.Points>(null);
   const clock = useRef(0);
   useFrame((_, dt) => {
+    const lit = litOf(roomId);
+    poolMat.opacity = FX.pool.opacity * lit;
+    haloMat.opacity = HALO.opacity * lit;
     const o = pts.current;
     if (!o || !dust || !frame.animRooms.has(roomId)) return;
     const vis = env.day * (1 - env.overcast);
@@ -125,8 +136,8 @@ export function RoomLightFx({ layout, roomId, halos, dust }: { layout: RoomLayou
 
   return (
     <>
-      {pools ? <mesh geometry={pools} material={FX.pool} renderOrder={3} raycast={() => null} /> : null}
-      {halos ? <points geometry={haloGeo} material={HALO} renderOrder={4} raycast={() => null} frustumCulled={false} /> : null}
+      {pools ? <mesh geometry={pools} material={poolMat} renderOrder={3} raycast={() => null} /> : null}
+      {halos ? <points geometry={haloGeo} material={haloMat} renderOrder={4} raycast={() => null} frustumCulled={false} /> : null}
       {dust ? <points ref={pts} geometry={dustGeo} material={DUST} renderOrder={4} raycast={() => null} frustumCulled={false} /> : null}
     </>
   );

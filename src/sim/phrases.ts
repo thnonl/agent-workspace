@@ -179,6 +179,29 @@ const TIDY = [
 const SMOKE = ['Just a quick smoke break', 'Fresh air and a cigarette', 'One cigarette, then back to work', 'Stepping out for a puff'];
 const SLEEP = ['So sleepy… a little nap', 'Just resting my eyes', 'Power nap time', 'Five minutes of sleep…', 'Zzz… wake me when there is work'];
 
+const LOUNGE = [
+  'Time to sink into the bean bag', 'Bean bag, here I come!', 'Lying down for a bit – I can still work from there', 'The bean bag is calling me',
+  'Horizontal mode: on', 'A little lie-down on the bean bag', 'I’ll take the bean bag, thank you', 'Five minutes flat on the bean bag',
+  'Best seat in the office: the bean bag', 'Bean bag under the back, eyes on the ceiling',
+];
+
+// ------------------------------------- grumbles at the computer while there is no task
+const TIRED = [
+  'So tired today… *yawn*', 'My eyes hurt from this screen', 'I need a holiday. A long one.', 'Is it home time yet?', 'My back is killing me',
+  'Running on two hours of sleep', 'Brain is buffering…', 'Too tired to even scroll', 'One more coffee and I might survive', 'Why is Monday so long? Wait, is it Monday?',
+  'I could sleep right here on the keyboard', 'Exhausted, and nothing has even started', 'My neck is stiff from staring at this', 'Somebody wake me when the task comes',
+  'Low battery: me, not the laptop', 'Need… more… sleep', 'This chair is too comfy, I’m fading', 'Sigh… long day',
+];
+const NET_SLOW = [
+  'Ugh, the Wi-Fi is so slow today 🐌', 'Why is the internet crawling again?', 'This page is taking forever to load…', 'The loading spinner and I are best friends now',
+  'Is the network down? Hello?', 'One bar of Wi-Fi. One!', 'Buffering… buffering… still buffering', 'Who is downloading the whole internet?',
+  'My ping is higher than my salary', 'The video keeps freezing on the same face', 'Refresh. Refresh. Refresh. Nothing.', 'The router needs a nap too, apparently',
+  'Packets lost somewhere between here and the cloud', 'Dial-up called, it wants its speed back', 'Slow network, slow brain, slow day', 'Did somebody unplug the router again?',
+];
+
+/** sitting at the computer with no task: tired, or the network is slow (`net` = the network one) */
+export const grumbleLine = (net = Math.random() < 0.5): [string, string] => (net ? [pick(NET_SLOW), 'browse'] : [pick(TIRED), 'sleep']);
+
 const PHONE = [
   'Scrolling my phone 📱', 'Just a quick scroll through my phone 📱', 'Let me check my phone 📱', 'Scrolling my phone 📱 – five minutes',
   'Anything new on my phone? 📱', 'A little doomscroll never hurt 📱', 'Checking what my friends posted 📱', 'Phone break! 📱',
@@ -298,6 +321,7 @@ export const thoughts = {
   scroll: () => scrollLine(),
   wander: () => pick(WANDER),
   sofa: () => pick(SOFA),
+  lounge: () => pick(LOUNGE),
   watch: (name: string) => pick(WATCH)(name),
   window: () => pick(WINDOW),
   pet: () => pick(PET),

@@ -27,6 +27,10 @@ const BUSY_TRUST_MS = 60 * MIN;
 /** the process says "idle" and nothing is pending: the turn is over, the grace covers the status file lagging behind a fresh prompt */
 const IDLE_GRACE_MS = 30_000;
 const LIVE_REFRESH_MS = 1000;
+/** pictures from tool results kept for the page (see handleImages): at most this many, this many bytes in all, none bigger than IMAGE_MAX_BYTES */
+const IMAGE_KEEP = 60;
+const IMAGE_KEEP_BYTES = 48 * 1024 * 1024;
+const IMAGE_MAX_BYTES = 12 * 1024 * 1024;
 
 const encodeDir = (p) => String(p).replace(/[^a-zA-Z0-9]/g, '-');
 
@@ -65,6 +69,10 @@ class Session {
     this.lastPrompt = '';
     this.lastFinal = '';
     this.pendingTools = new Set();
+    /** tool calls the session has made so far (main agent and sub-agents, also the ones read from the transcript's history) */
+    this.toolCalls = 0;
+    /** tool-use id -> tool name of the latest calls (names the pictures a result brings back) */
+    this.toolNames = new Map();
     /** the main agent waits for the user: { id of the interactive tool call, text, full } */
     this.ask = null;
     this.agents = new Map(); // toolUseId -> { id,label,agentType,status,lastSay,asyncId,lastAt }
@@ -124,6 +132,43 @@ export function createMonitor({
     if (!s.silent) emitter.emit('event', ev);
   };
 
+  // ---------------------------------------------------------------- images
+  // Images an agent gets back from a tool (a screenshot, a picture it read…) are kept in memory for a while and served by the API
+  // (/api/image/<id>): the event only carries the id, the page shows a thumbnail in the bubble of whoever does the job.
+  /** @type {Map<string, { mime: string, data: Buffer }>} */
+  const images = new Map();
+  let imageBytes = 0;
+  let imageSeq = 0;
+  const keepImage = (mime, base64) => {
+    const data = Buffer.from(base64, 'base64');
+    if (!data.length || data.length > IMAGE_MAX_BYTES) return null;
+    const id = `${Date.now().toString(36)}${(++imageSeq).toString(36)}`;
+    images.set(id, { mime, data });
+    imageBytes += data.length;
+    // the oldest go first: at most IMAGE_KEEP of them, IMAGE_KEEP_BYTES in all
+    for (const [k, v] of images) {
+      if (images.size <= IMAGE_KEEP && imageBytes <= IMAGE_KEEP_BYTES) break;
+      images.delete(k);
+      imageBytes -= v.data.length;
+    }
+    return id;
+  };
+
+  /** A tool result with pictures in it: every picture is a job of its own (a bubble with a thumbnail), said by the agent that made the call. */
+  const handleImages = (s, ownerKey, block) => {
+    if (s.silent || !Array.isArray(block.content)) return;
+    const name = s.toolNames.get(block.tool_use_id) || '';
+    s.toolNames.delete(block.tool_use_id);
+    for (const c of block.content) {
+      const src = c?.type === 'image' ? c.source : null;
+      if (!src || src.type !== 'base64' || typeof src.data !== 'string' || !/^image\/(png|jpe?g|gif|webp)$/i.test(src.media_type || '')) continue;
+      const id = keepImage(src.media_type, src.data);
+      if (!id) continue;
+      const short = name.startsWith('mcp__') ? name.split('__').slice(2).join('__') : name;
+      out(s, { type: 'agent_say', sessionId: s.id, agentId: ownerKey, kind: 'tool', tool: 'Image', text: short ? `Image from ${short}` : 'Image', image: `/api/image/${id}` });
+    }
+  };
+
   const sessionEvent = (s) => ({
     type: 'session',
     sessionId: s.id,
@@ -135,7 +180,18 @@ export function createMonitor({
     ...(s.lastPrompt ? { lastPrompt: s.lastPrompt } : {}),
     ...(s.lastFinal ? { lastFinal: s.lastFinal } : {}),
     ...(s.context ? { context: s.context } : {}),
+    toolCalls: s.toolCalls,
   });
+
+  /** The session event is sent again a moment later (a transcript read from the start would otherwise send one per line). */
+  const sessionSoon = (s) => {
+    if (s.contextTimer) return;
+    s.contextTimer = setTimeout(() => {
+      s.contextTimer = null;
+      out(s, sessionEvent(s));
+    }, 300);
+    s.contextTimer.unref?.();
+  };
 
   /**
    * How full the main agent's context window is. Remembered on every message, told to the page a moment later (a transcript that is
@@ -146,12 +202,7 @@ export function createMonitor({
     const p = s.context;
     if (p && p.window === c.window && Math.abs(p.used - c.used) < 500 && p.model === c.model) return;
     s.context = c;
-    if (s.contextTimer) return;
-    s.contextTimer = setTimeout(() => {
-      s.contextTimer = null;
-      out(s, sessionEvent(s));
-    }, 300);
-    s.contextTimer.unref?.();
+    sessionSoon(s);
   };
 
   const announceTitle = (s) => {
@@ -163,6 +214,11 @@ export function createMonitor({
   };
 
   const say = (s, agentKey, kind, text, tool, cue) => {
+    // (every tool call is a job of the office: the page seats people in a room it has not shown yet by this count)
+    if (kind === 'tool') {
+      s.toolCalls++;
+      sessionSoon(s);
+    }
     // the main agent's messages also travel unclipped (line breaks kept): the last one is the session summary
     const full = agentKey === 'main' && kind === 'text' ? String(text ?? '').replace(/\r/g, '').trim().slice(0, 6000) : undefined;
     // remembered for the session event: an idle session can still show what was asked and how it ended
@@ -272,6 +328,11 @@ export function createMonitor({
       } else if (b.type === 'text') {
         say(s, ownerKey, 'text', b.text);
       } else if (b.type === 'tool_use') {
+        // (the name of the call, for the pictures its result may bring back – see handleImages)
+        if (b.id && b.name) {
+          s.toolNames.set(b.id, b.name);
+          if (s.toolNames.size > 200) s.toolNames.delete(s.toolNames.keys().next().value);
+        }
         if (SPAWN_TOOLS.has(b.name)) {
           spawnAgent(s, b.id, b.input?.description || b.input?.subagent_type, b.input?.subagent_type);
         } else if (ownerKey === 'main') {
@@ -322,7 +383,10 @@ export function createMonitor({
         } else if (Array.isArray(c)) {
           let text = '';
           for (const b of c) {
-            if (b?.type === 'tool_result') handleToolResult(s, b, o.toolUseResult);
+            if (b?.type === 'tool_result') {
+              handleToolResult(s, b, o.toolUseResult);
+              handleImages(s, 'main', b);
+            }
             else if (b?.type === 'text') text += ` ${b.text}`;
           }
           const p = cleanPrompt(text);
@@ -355,7 +419,11 @@ export function createMonitor({
     if (o.type === 'assistant' && o.message) {
       handleBlocks(s, key, o.message.content, o.message.stop_reason);
     } else if (o.type === 'user' && Array.isArray(o.message?.content)) {
-      for (const b of o.message.content) if (b?.type === 'tool_result') handleToolResult(s, b, o.toolUseResult);
+      for (const b of o.message.content) {
+        if (b?.type !== 'tool_result') continue;
+        handleToolResult(s, b, o.toolUseResult);
+        handleImages(s, key, b);
+      }
     }
   };
 
@@ -781,6 +849,8 @@ export function createMonitor({
       return () => emitter.off('event', fn);
     },
     snapshot: () => [...sessions.values()].flatMap(snapshotSession),
+    /** a picture a tool brought back (see handleImages), while it is still kept */
+    image: (id) => images.get(id) ?? null,
     sessionCount: () => sessions.size,
     start() {
       if (hotTimer) return;

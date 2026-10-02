@@ -379,6 +379,9 @@ kbd { font-family: 'JetBrains Mono Variable', monospace; font-size: 12px; paddin
 .bubble-talk .bubble-body > span:last-child { white-space: pre-line; }
 .bubble-done { --bg: #e3fbea; --accent: #35c27d; }
 /* a bubble that has been up for a while shrinks: it keeps saying what the character is doing without covering the room */
+/* a picture a tool brought back (a screenshot, an image that was read): a small thumbnail under the text */
+.bubble-thumb { display: block; margin: 5px 0 1px; max-width: 148px; max-height: 96px; width: auto; height: auto; border-radius: 6px; border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); background: #fff; object-fit: contain; pointer-events: none; }
+.bubble-settled .bubble-thumb { max-width: 104px; max-height: 66px; }
 .bubble-settled { max-width: 176px; min-width: 0; padding: 4px 9px 6px; font-size: 10.5px; animation: none; }
 .bubble-settled .bubble-head { margin-bottom: 1px; font-size: 11px; }
 .bubble-settled .bubble-body > span:last-child { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }

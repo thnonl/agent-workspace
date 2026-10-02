@@ -313,6 +313,7 @@ export function PersonActor({ personKey, roomId, layout, frozen: frozenProp = fa
     }
     sim.lively = sim.onStage && actor.deskMode !== null;
     sim.actKind = sim.phase === 'activity' || sim.phase === 'stroll' || sim.phase === 'standing' ? actor.actKind : undefined;
+    sim.carrying = sim.actKind !== undefined && actor.carrying;
     sim.calm = (sim.phase === 'working' || sim.phase === 'waiting') && !sim.walking && actor.typing < 0.2 && rt.cheerUntil < now;
     calm.current = !!sim.calm;
     // a celebration (run finished, commit, push): arms up, big smile, a little hop

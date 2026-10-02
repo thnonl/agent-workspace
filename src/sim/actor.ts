@@ -4,7 +4,7 @@ import type { V2 } from '../world/nav';
 import { sfx, type Sfx } from '../audio';
 import { env } from '../env';
 import { frame, SLOW_MAX_DT } from './frame';
-import { CHAT_SCRIPTS, TABLE_LINES, eatLine, goodbyeLine, greetingLine, reportLine, serveLine, thoughts } from './phrases';
+import { CHAT_SCRIPTS, TABLE_LINES, eatLine, goodbyeLine, greetingLine, grumbleLine, reportLine, serveLine, thoughts } from './phrases';
 import { kickDummy, takeDumbbells } from './gym';
 import { notePet } from '../progress';
 import { HIRE_GAP_MS, HURRY_QUEUE, claimLate, commitDelivery, debugFlags, lateAvailable, movedIfAny, movedOf, notifyMoved, dismissIdle, enqueueSpeech, greet, parcelDone, releaseLate, roomRuntime, tickParcel, sims, simsInRoom, spotOwners, type CatSim, type Phase, type RoomRuntime, type SimState } from './registry';
@@ -74,7 +74,7 @@ export interface ActorCtx {
 /** what somebody does at the desk when there is no work: listen to music with headphones on, watch a video, type something of their own */
 export type DeskAct = 'music' | 'video' | 'browse' | 'game' | 'call' | 'shop' | 'mail';
 
-type ActivityKind = DeskAct | 'wander' | 'sofa' | 'watch' | 'window' | 'pet' | 'stay' | 'chat' | 'parcel' | 'tidy' | 'sleep' | 'toilet' | 'table' | 'fetch' | StationKind;
+type ActivityKind = DeskAct | 'wander' | 'sofa' | 'lounge' | 'watch' | 'window' | 'pet' | 'stay' | 'chat' | 'parcel' | 'tidy' | 'sleep' | 'toilet' | 'table' | 'fetch' | StationKind;
 
 /** activities that sit down on a spot (sofa, toilet, chair at the round table) */
 const SEATED = new Set<ActivityKind>(['sofa', 'toilet', 'table']);
@@ -158,6 +158,13 @@ const ENTRY_GAP_FREE_SPAN = 0.6;
 const GREET_HURRY_MS = 2000;
 /** the loading flag flickers between two rooms: nothing is taken to be left to load until it has been false for this long (ms) */
 const LOAD_PAUSE_MS = 3000;
+
+/** breaks that keep the person in the chair (see pickActivity) */
+const DESK_KINDS: ReadonlySet<string> = new Set(['stay', 'music', 'video', 'browse', 'game', 'call', 'shop', 'mail', 'sleep']);
+/** weight factor of a break away from the desk (the desk breaks keep theirs) */
+const AWAY_SHARE = 0.35;
+/** desk breaks on the computer that may come with a grumble about the network or being tired */
+const GRUMBLE_ACTS: ReadonlySet<string> = new Set(['video', 'browse', 'game', 'shop', 'mail']);
 const roomsLoading = () => frame.loading || performance.now() - frame.loadingAt < LOAD_PAUSE_MS;
 
 /**
@@ -167,7 +174,7 @@ const roomsLoading = () => frame.loading || performance.now() - frame.loadingAt 
 function thoughtOf(a: Activity, name: string): [string, string] | null {
   switch (a.kind) {
     case 'wander': return [thoughts.wander(), 'walk'];
-    case 'sofa': return a.sleep ? [thoughts.sleep(), 'sleep'] : a.phone ? [thoughts.phone(), 'phone'] : [thoughts.sofa(), 'sofa'];
+    case 'sofa': return a.sleep ? [thoughts.sleep(), 'sleep'] : a.lounge ? [thoughts.lounge(), 'sofa'] : a.phone ? [thoughts.phone(), 'phone'] : [thoughts.sofa(), 'sofa'];
     case 'watch': return [thoughts.watch(name), 'watch'];
     case 'window': return a.smoke ? [thoughts.smoke(), 'smoke'] : [thoughts.window(), 'window'];
     case 'parcel': return [thoughts.parcel(), 'parcel'];
@@ -247,6 +254,8 @@ interface Activity {
   /** window: smoke a cigarette while looking out; sofa: sleep there (eyes shut, drooping head) */
   smoke?: boolean;
   sleep?: boolean;
+  /** lying back on a bean bag (a sofa break on a bean bag) */
+  lounge?: boolean;
   /** sofa: scroll a phone while sitting there */
   phone?: boolean;
   /** the target is on the porch: the way there leads through the door (see routeOut) */
@@ -477,6 +486,8 @@ export class Actor {
   private deskAct: DeskAct | null = null;
   private deskActT = 0;
   private deskActDur = 0;
+  /** deskActT at which the person grumbles about being tired or the slow network (-1 = not this time) */
+  private grumbleAt = -1;
   /** standing and waiting for a free walking slot with the phone in the hand (set by walkPose) */
   private phoneWait = false;
   /** the phone in the hand is the one the user's message came on (see messagePose) */
@@ -586,7 +597,17 @@ export class Actor {
 
   /** kind of the break the person is on (a break of its own: walking there, doing it, walking back) */
   get actKind(): string | undefined {
-    return this.act?.kind;
+    const a = this.act;
+    // (sitting or lying on a bean bag counts as a break of its own: work reaches them there first, see store.assignRank)
+    if (a?.kind === 'sofa' && a.spot !== undefined && this.layoutRef.spots[a.spot]?.kind === 'beanbag') return 'beanbag';
+    return a?.kind;
+  }
+
+  /** fetching the parcel from the porch, or carrying a carton to open it (until it is open and admired): no task may cut in (see store.dispatchRoom) */
+  get carrying(): boolean {
+    const a = this.act;
+    if (!a) return false;
+    return a.kind === 'parcel' || (a.kind === 'tidy' && ((a.openRank !== undefined && a.openRank >= 0) || this.actStage === 3));
   }
 
   private setPhase(p: Phase) {
@@ -1394,6 +1415,10 @@ export class Actor {
     }
     if (this.deskAct) {
       this.deskActT += dt;
+      if (this.grumbleAt >= 0 && this.deskActT >= this.grumbleAt) {
+        this.grumbleAt = -1;
+        this.announce(ctx, grumbleLine(Math.random() < 0.7));
+      }
       if (this.deskActT > this.deskActDur) {
         dismissIdle(this.sim.key);
         this.deskAct = null;
@@ -1443,7 +1468,8 @@ export class Actor {
       return;
     }
     if (a.kind === 'stay') {
-      // stay in the chair a while longer
+      // stay in the chair a while longer – now and then with a sigh about being tired or the slow network
+      if (Math.random() < 0.45) this.announce(ctx, grumbleLine());
       this.restT = 0;
       this.nextIdleAt = 18 + Math.random() * 16;
       return;
@@ -1458,6 +1484,8 @@ export class Actor {
       this.deskAct = a.deskAct;
       this.deskActT = 0;
       this.deskActDur = a.dur;
+      // (on the computer with nothing to do: half of the time the page loads slowly, or they feel tired, somewhere in the middle)
+      this.grumbleAt = GRUMBLE_ACTS.has(a.deskAct) && Math.random() < 0.5 ? a.dur * (0.3 + Math.random() * 0.3) : -1;
     } else if (a.kind === 'sleep') {
       this.sleepT = 0;
       this.zzzStep = -1;
@@ -1682,8 +1710,9 @@ export class Actor {
     const coffeeSt = stationsOf('drink').filter(({ st }) => st.prop === 'coffee');
     const fridgeSt = stationsOf('fridge');
     const canFetch = coffeeSt.length > 0 || (fridgeSt.length > 0 && chairsFree.length > 0);
+    const beanbags = seats.filter(({ sp }) => sp.kind === 'beanbag');
     const options: [ActivityKind, number][] = [
-      ['wander', staff ? 0.4 : 0.9], ['sofa', seats.length ? (staff ? 4 : 3) : 0], ['watch', watchable.length ? (staff ? 1.5 : 4) : 0],
+      ['wander', staff ? 0.4 : 0.9], ['sofa', seats.length ? (staff ? 4 : 3) : 0], ['lounge', beanbags.length ? (staff ? 7 : 3) : 0], ['watch', watchable.length ? (staff ? 1.5 : 4) : 0],
       ['fetch', canFetch ? (staff ? 3.5 : 2.5) : 0], ['window', windowsFree.length ? (staff ? 1.5 : 2.5) : 0], ['pet', petCats.length ? (staff ? 4.5 : 5) : 0], ['stay', staff ? 5 : 0],
       ['drink', stationsOf('drink').length ? 4 : 0], ['read', stationsOf('read').length ? 3.5 : 0], ['fish', stationsOf('fish').length ? 3.5 : 0],
       ['wash', stationsOf('wash').length ? 2.5 : 0], ['water', stationsOf('water').length ? 3.5 : 0],
@@ -1696,6 +1725,8 @@ export class Actor {
       // a box on the porch: the first to roll it goes (nobody else is on the way); a nap is likelier at night
       ['parcel', parcelFree ? 150 : 0], ['tidy', untidy.length ? (openable ? (staff ? 9 : 6) : staff ? 4 : 2.5) : 0], ['sleep', staff || !ctx.rt.visitors.some((v) => v !== null) ? 2 * (1 + env.night) : 0],
     ];
+    // people mostly stay at their desk: every break that takes them away from it is rarer (the parcel and a carton to open keep their weight)
+    for (const o of options) if (!DESK_KINDS.has(o[0]) && o[0] !== 'parcel' && !(o[0] === 'tidy' && openable)) o[1] *= AWAY_SHARE;
     let roll = Math.random() * options.reduce((a, [, w]) => a + w, 0);
     let kind: ActivityKind = 'wander';
     const forced = debugFlags.activity as ActivityKind | undefined;
@@ -1775,6 +1806,12 @@ export class Actor {
         const { sp, i } = pick(seats);
         spotOwners.set(`${s.roomId}#${i}`, s.key);
         return { kind, target: sp.approach, yaw: sp.yaw, dur: 24 + Math.random() * 24, spot: i, phone: Math.random() < SOFA_PHONE_CHANCE };
+      }
+      case 'lounge': {
+        // lying back on a free bean bag (the sofa flow does the walking, sitting down and getting up)
+        const { sp, i } = pick(beanbags);
+        spotOwners.set(`${s.roomId}#${i}`, s.key);
+        return { kind: 'sofa', target: sp.approach, yaw: sp.yaw, dur: 28 + Math.random() * 26, spot: i, lounge: true };
       }
       case 'watch': {
         const w = pick(watchable);
@@ -2005,6 +2042,8 @@ export class Actor {
           else if (a.sleep) {
             this.sleepPose(pose, true);
             this.zzz(ctx, t);
+          } else if (a.lounge) {
+            this.loungePose(pose, t);
           } else if (a.drinkCup) {
             this.cupSeat(pose, t);
           } else if (a.phone) {
@@ -2835,6 +2874,22 @@ export class Actor {
       this.cue('huff', curlEnd + 0.4);
     }
     if (t > d - 1.0) pose.happy = 1;
+  }
+
+  /** lying back on a bean bag: the body sinks back over the first second, legs stretched out, hands folded on the belly */
+  private loungePose(p: Pose, t: number) {
+    const c = this.clock;
+    const u = smooth(Math.min(1, t / 1.2));
+    p.lean = -0.95 * u;
+    p.thighLx = p.thighRx = -Math.PI / 2 + 0.25 * u;
+    p.kneeLx = (Math.PI / 2) * (1 - 0.7 * u);
+    p.kneeRx = (Math.PI / 2) * (1 - 0.55 * u) + Math.max(0, Math.sin(c * 0.9)) * 0.15 * u;
+    p.armLx = p.armRx = -0.55 * u;
+    p.armLz = p.armRz = 0.3 * u;
+    p.foreLx = p.foreRx = -1.45 * u + Math.sin(c * 0.6) * 0.04;
+    p.headX = 0.35 * u + Math.sin(c * 0.5) * 0.04;
+    p.headY = Math.sin(c * 0.3) * 0.25;
+    p.happy = 0.6 * u;
   }
 
   private sofaPose(p: Pose) {

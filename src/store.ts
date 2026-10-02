@@ -160,6 +160,8 @@ const directorKeyOf = (sessionId: string) => `${sessionId}::director`;
 // ------------------------------------------------------------------ tuning
 /** the office stays this long after the last piece of work before everybody goes home */
 const GRACE_MS = 5000;
+/** the director stays in the office at least this long after the work is done (the staff go home at once) */
+const DIRECTOR_STAY_MS = 5 * 60_000;
 /** gap between two people walking out */
 const LEAVE_STAGGER_MS = 15000;
 /** ...and this once no other room is left to load ahead */
@@ -170,6 +172,8 @@ const MAIN_TASK_MS = 4500;
 const CALL_STALE_MS = 3000;
 /** ...except the newest few, which wait for somebody however long it takes */
 const CALL_KEEP = 3;
+/** a picture a tool brought back is a job somebody shows (a thumbnail in the bubble): it waits this long for a free person before it is skipped */
+const IMAGE_WAIT_MS = 15_000;
 /** a new task hires a new person until this many staff are around, afterwards the staff take turns (more are hired only when every one of them is busy) */
 const MIN_TEAM = 3;
 /** how many people the office needs follows from the tool calls of the last DEMAND_WINDOW_MS: one person for every CALLS_PER_PERSON of them (at least MIN_TEAM) */
@@ -369,6 +373,15 @@ function makeBatcher(rawSet: (p: Partial<State>) => void, rawGet: Get): { set: B
 }
 type SpeechIn = Omit<Speech, 'id' | 'at'>;
 
+/** (the floating window is an about:blank document: a picture's address must not depend on the page it is shown in) */
+const absoluteUrl = (u: string) => {
+  try {
+    return new URL(u, location.href).href;
+  } catch {
+    return u;
+  }
+};
+
 const peopleOf = (s: State, roomId: string) => Object.values(s.people).filter((p) => p.sessionId === roomId);
 /**
  * Rooms the user has looked at since this page was opened. Until then a working room is run by its director alone: no staff is hired
@@ -443,9 +456,10 @@ function removeTask(get: Get, set: SetFn, key: string) {
 /** Queue something for a character to say (and remember it in the log of that character). */
 function deliver(get: Get, set: SetFn, personKey: string, sp: SpeechIn, bubbleTool = sp.tool) {
   const chunks = chunkText(sp.text, sp.kind === 'thinking' ? 110 : 130, sp.kind === 'thinking' ? 1 : 2);
-  for (const c of chunks) enqueueSpeech(personKey, { kind: sp.kind, text: c, tool: bubbleTool });
+  // (a picture goes with the last piece of the text)
+  chunks.forEach((c, i) => enqueueSpeech(personKey, { kind: sp.kind, text: c, tool: bubbleTool, ...(sp.image && i === chunks.length - 1 ? { image: sp.image } : {}) }));
   const s = get();
-  const entry: Speech = { id: logId++, kind: sp.kind, text: sp.text, tool: sp.tool, at: Date.now() };
+  const entry: Speech = { id: logId++, kind: sp.kind, text: sp.text, tool: sp.tool, at: Date.now(), ...(sp.image ? { image: sp.image } : {}) };
   const prev = s.logs[personKey] ?? [];
   set({ logs: { ...s.logs, [personKey]: [...prev.slice(-39), entry] } });
 }
@@ -489,12 +503,6 @@ function ensureDirector(get: Get, set: SetFn, roomId: string): PersonRec {
   return director;
 }
 
-/** The team starts with MIN_TEAM people and may grow by one for every GROW_STAFF_MS the office has worked (up to what the room seats). */
-const GROW_STAFF_MS = 40_000;
-function staffLimit(get: Get, roomId: string): number {
-  return Math.min(staffCap(get, roomId), MIN_TEAM + Math.floor(runtimeFor(roomId).workMs / GROW_STAFF_MS));
-}
-
 function staffCap(get: Get, roomId: string): number {
   const room = get().rooms[roomId];
   if (!room) return 0;
@@ -513,7 +521,62 @@ function hireStaff(get: Get, set: SetFn, roomId: string): PersonRec | null {
   if (!free.length) return null;
   const n = staff.reduce((m, p) => Math.max(m, Number(p.key.split('::staff')[1]) || 0), 0) + 1;
   const key = `${roomId}::staff${n}`;
+  runtimeFor(roomId).lastNewHire = Date.now();
   return createPerson(get, set, roomId, 'staff', new Rng(hashString(key)).pick(free), key);
+}
+
+/** A hired person who has not come through the door yet (rooms being loaded hold the door shut). */
+function waitingOutside(staff: PersonRec[], now: number): boolean {
+  return staff.some((p) => p.present && (sims.has(p.key) ? !sims.get(p.key)!.onStage : p.sessionId === frame.activeId && now - p.joinedAt < 20_000));
+}
+
+/**
+ * A room nobody has looked at yet but that is working has people at their desks already, more the more jobs the session has done:
+ * one after 2 tasks, two after 5, three after 10, four after 20 (never more than the desks). They sit there when the room is first built.
+ */
+const PRESET_STAFF: readonly [number, number][] = [[20, 4], [10, 3], [5, 2], [2, 1]];
+function presetStaff(get: Get, set: SetFn, roomId: string) {
+  if (enteredRooms.has(roomId)) return;
+  const room = get().rooms[roomId];
+  if (!room) return;
+  // (the monitor counts the whole session, the page only what happened since it opened: whichever knows more)
+  const done = Math.max(room.toolCalls ?? 0, room.tasksDone + tasksOf(get(), roomId).length);
+  const want = Math.min(staffCap(get, roomId), PRESET_STAFF.find(([n]) => done >= n)?.[1] ?? 0);
+  const staff = peopleOf(get(), roomId).filter((p) => p.role === 'staff');
+  let missing = want - staff.filter((p) => p.present).length;
+  if (missing <= 0) return;
+  const patches: Record<string, Partial<PersonRec>> = {};
+  // somebody of the team who went home earlier is back first, then new people
+  for (const p of staff) {
+    if (missing <= 0) break;
+    if (p.present) continue;
+    patches[p.key] = { present: true, leaveAt: 0, restored: true, inside: undefined };
+    missing--;
+  }
+  patchPeople(get, set, patches);
+  for (; missing > 0; missing--) {
+    const p = hireStaff(get, set, roomId);
+    if (!p) break;
+    // (already in the office: at the desk from the start, counted as inside)
+    patchPeople(get, set, { [p.key]: { restored: true, inside: undefined } });
+  }
+}
+
+/** every this long after the last new hire, the office takes on one more person – needed or not (up to the desks of the room) */
+const AUTO_HIRE_MS = 5 * 60_000;
+function autoHire(get: Get, set: SetFn, roomId: string, now: number) {
+  if (!enteredRooms.has(roomId)) return; // (only the director works in a room nobody has looked at)
+  const rt = runtimeFor(roomId);
+  if (!rt.lastNewHire) rt.lastNewHire = now; // (the clock starts when the office first works)
+  if (now - rt.lastNewHire < AUTO_HIRE_MS) return;
+  const staff = peopleOf(get(), roomId).filter((p) => p.role === 'staff');
+  if (staff.length >= staffCap(get, roomId)) return; // (every desk has its person already)
+  // (not while rooms are being loaded, one behind the other, and HIRE_GAP_MS after anybody came in)
+  if (loadingAhead() || waitingOutside(staff, now) || now - Math.max(rt.lastHire, rt.lastNewcomer) < HIRE_GAP_MS) return;
+  const p = hireStaff(get, set, roomId);
+  if (!p) return;
+  rt.lastHire = now;
+  logActivity(get, set, roomId, { kind: 'system', who: 'Office', text: `${p.name} joins the team` });
 }
 
 // ------------------------------------------------------------------- tasks
@@ -563,21 +626,25 @@ function loadingAhead(): boolean {
 }
 
 /**
- * Who gets the next task (lower first; within a rank the rotation of freeStaff decides): somebody at the desk, then on the toilet, on the
- * sofa, at the round table, then everybody else (away from the desk, on the move or on another break) if there are still tasks.
+ * Who gets the next task (lower first; within a rank the rotation of freeStaff decides): somebody at the desk, then on a bean bag, on the
+ * toilet, on the sofa, at the round table, then everybody else (away from the desk, on the move or on another break) if there are still tasks.
  */
-const MOVING_RANK = 4;
+const MOVING_RANK = 5;
 function assignRank(p: PersonRec): number {
   const s = sims.get(p.key);
   if (!s) return 0; // (a room that is not on screen has no people to see: all of them sit at their desks)
   if (s.phase === 'working' || s.phase === 'sitting' || s.phase === 'unpacking') return 0;
-  if (s.phase === 'activity' && s.sitT > 0.5) return s.actKind === 'toilet' ? 1 : s.actKind === 'sofa' ? 2 : s.actKind === 'table' ? 3 : MOVING_RANK;
+  if (s.phase === 'activity' && s.sitT > 0.5) {
+    const k = s.actKind;
+    return k === 'beanbag' ? 1 : k === 'toilet' ? 2 : k === 'sofa' ? 3 : k === 'table' ? 4 : MOVING_RANK;
+  }
   return MOVING_RANK;
 }
 
 /** Staff without a task who are not on their way out – at home or in the office – the one who finished a task longest ago (or never had one) first. */
 function freeStaff(get: Get, roomId: string): PersonRec[] {
-  const free = peopleOf(get(), roomId).filter((p) => p.role === 'staff' && !p.taskKey && !(p.present && p.leaveAt));
+  // (whoever fetches the parcel or carries a carton to open it finishes that first: no task cuts in)
+  const free = peopleOf(get(), roomId).filter((p) => p.role === 'staff' && !p.taskKey && !(p.present && p.leaveAt) && !sims.get(p.key)?.carrying);
   return free.sort((a, b) => a.lastWorkEnd - b.lastWorkEnd || a.joinedAt - b.joinedAt);
 }
 
@@ -591,18 +658,17 @@ function bringIn(get: Get, set: SetFn, roomId: string, wanted: number): number {
   // (the team follows the flow of calls, not the pile of waiting ones: a pile that is skipped after a few seconds is no reason to hire the whole room)
   const rt = runtimeFor(roomId);
   const recent = rt.callAt.filter((t) => Date.now() - t <= DEMAND_WINDOW_MS).length;
-  const team = Math.min(staffLimit(get, roomId), Math.max(MIN_TEAM, Math.ceil(recent / CALLS_PER_PERSON)));
+  const team = Math.min(staffCap(get, roomId), Math.max(MIN_TEAM, Math.ceil(recent / CALLS_PER_PERSON)));
   const need = Math.min(wanted, team - staff.filter((p) => p.present).length);
   if (need <= 0) return 0;
   // One person at a time, at least HIRE_GAP_MS apart – somebody who comes back from home counts like a new hire. Nobody is brought in while the one before
   // still waits outside the door (rooms being loaded hold the door shut) and the gap runs from the moment the last one came in: otherwise they pile up
   // outside and walk in one behind the other. A person held back by the gap counts as on the way, so the task waits for them.
   const now = Date.now();
-  const waitingOutside = staff.some((p) => p.present && (sims.has(p.key) ? !sims.get(p.key)!.onStage : p.sessionId === frame.activeId && now - p.joinedAt < 20_000));
-  const mayCome = !waitingOutside && now - Math.max(rt.lastHire, rt.lastNewcomer) >= HIRE_GAP_MS;
+  const mayCome = !waitingOutside(staff, now) && now - Math.max(rt.lastHire, rt.lastNewcomer) >= HIRE_GAP_MS;
   // (while other rooms are being loaded nobody comes back and only the minimum team is hired)
   const home = loading ? undefined : freeStaff(get, roomId).find((p) => !p.present);
-  const limit = loading ? Math.min(MIN_TEAM, staffCap(get, roomId)) : staffLimit(get, roomId);
+  const limit = loading ? Math.min(MIN_TEAM, staffCap(get, roomId)) : staffCap(get, roomId);
   if (home) {
     if (mayCome) {
       patchPeople(get, set, { [home.key]: { present: true, leaveAt: 0 } });
@@ -727,10 +793,11 @@ function finishRun(get: Get, set: SetFn, roomId: string, now: number) {
   });
 }
 
-/** Nobody of the room is at work or on the way: every person has been sent home and has walked out of the door. */
-function officeEmpty(st: State, roomId: string): boolean {
-  if (peopleOf(st, roomId).some((p) => p.present)) return false;
-  for (const s of sims.values()) if (s.roomId === roomId && s.onStage) return false;
+/** None of the staff of the room is at work or on the way: every one of them has been sent home and has walked out of the door (the director may still be there, see DIRECTOR_STAY_MS). */
+function staffGone(st: State, roomId: string): boolean {
+  const staff = peopleOf(st, roomId).filter((p) => p.role === 'staff');
+  if (staff.some((p) => p.present)) return false;
+  for (const p of staff) if (sims.get(p.key)?.onStage) return false;
   return true;
 }
 
@@ -846,14 +913,12 @@ function tickRoom(get: Get, set: SetFn, roomId: string, now: number) {
   // a tool call nobody had time for within CALL_STALE_MS is old news: the director settles it (it still counts), the staff take the newest calls.
   // The newest CALL_KEEP calls stay however old they are: while nobody is in the office yet (people are walking in) they are what the first one does.
   waiting.sort((a, b) => b.startedAt - a.startedAt);
-  for (let i = CALL_KEEP; i < waiting.length; i++) if (now - waiting[i].startedAt > CALL_STALE_MS) settleByDirector(get, set, roomId, waiting[i], now);
+  for (let i = CALL_KEEP; i < waiting.length; i++) {
+    const age = now - waiting[i].startedAt;
+    if (age > (waiting[i].tool === 'Image' ? IMAGE_WAIT_MS : CALL_STALE_MS)) settleByDirector(get, set, roomId, waiting[i], now);
+  }
   rt.queued = tasksOf(get(), roomId).filter((t) => !t.assignee && !t.done).length;
   const busy = room.mainActive || tasksOf(get(), roomId).length > 0;
-  // the working time of the office (a gap in the ticks, e.g. a hidden page, counts for one second at most)
-  if (busy) {
-    if (rt.workAt) rt.workMs += Math.min(now - rt.workAt, 1000);
-    rt.workAt = now;
-  } else rt.workAt = 0;
   if (busy) {
     touchRoom(roomId, now);
     rt.idleSince = 0;
@@ -867,6 +932,8 @@ function tickRoom(get: Get, set: SetFn, roomId: string, now: number) {
     }
     ensureDirector(get, set, roomId);
     dispatchRoom(get, set, roomId);
+    autoHire(get, set, roomId, now);
+    presetStaff(get, set, roomId);
     if (!room.demo) notePeople(peopleOf(get(), roomId).filter((p) => p.present && (p.inside !== false || roomId !== get().activeRoomId)).length);
   } else if (!rt.idleSince) {
     rt.idleSince = now;
@@ -890,14 +957,18 @@ function tickRoom(get: Get, set: SetFn, roomId: string, now: number) {
     const boss = get().people[directorKeyOf(roomId)];
     if (boss?.present && !boss.leaveAt && !directorTalking(get, roomId, now)) {
       const lastStaff = peopleOf(get(), roomId).reduce((m, p) => (p.role === 'staff' ? Math.max(m, p.leaveAt) : m), 0);
-      patchPeople(get, set, { [boss.key]: { leaveAt: Math.max(now + 400, lastStaff + (loadingAhead() ? LEAVE_STAGGER_MS : LEAVE_STAGGER_FREE_MS)) } });
+      // (the director stays a while after the work is done: DIRECTOR_STAY_MS from the moment the office ran out of work)
+      const stay = (rt.idleSince || now) + DIRECTOR_STAY_MS;
+      patchPeople(get, set, { [boss.key]: { leaveAt: Math.max(now + 400, stay, lastStaff + (loadingAhead() ? LEAVE_STAGGER_MS : LEAVE_STAGGER_FREE_MS)) } });
     }
   }
   const due: Record<string, Partial<PersonRec>> = {};
-  for (const p of peopleOf(get(), roomId)) if (p.leaveAt && now >= p.leaveAt) due[p.key] = { present: false, leaveAt: 0 };
+  // (somebody who goes home walks in like everybody else next time: no longer "at the desk from the start")
+  for (const p of peopleOf(get(), roomId)) if (p.leaveAt && now >= p.leaveAt) due[p.key] = { present: false, leaveAt: 0, restored: false };
   patchPeople(get, set, due);
-  // the run is over and the last person has gone: the summary paper opens by itself (when the room is the one on screen and nothing else is open)
-  if (rt.summaryDue && rt.leaving && !busy && officeEmpty(get(), roomId)) {
+  // the run is over and the last of the staff has gone (the director stays on a while, nobody waits for that): the summary paper opens by
+  // itself once the director has announced the end (when the room is the one on screen and nothing else is open)
+  if (rt.summaryDue && rt.leaving && !busy && staffGone(get(), roomId) && !directorTalking(get, roomId, now)) {
     rt.summaryDue = false;
     const st = get();
     if (st.activeRoomId === roomId && st.summaries[roomId] && !st.summaryOpen && !st.releaseAsk && !st.releaseAllAsk) set({ summaryOpen: roomId });
@@ -923,7 +994,7 @@ function handleEvent(get: Get, set: SetFn, ev: MonitorEvent, demo: boolean) {
       }
       const existing = s.rooms[ev.sessionId];
       const base = existing ?? newRoom(ev.sessionId, Object.values(s.rooms), demo);
-      const room: RoomRec = { ...base, title: ev.title || base.title, project: ev.project || base.project, provider: ev.provider ?? base.provider, cwd: ev.cwd || base.cwd, updatedAt: ev.updatedAt, context: ev.context ?? base.context };
+      const room: RoomRec = { ...base, title: ev.title || base.title, project: ev.project || base.project, provider: ev.provider ?? base.provider, cwd: ev.cwd || base.cwd, updatedAt: ev.updatedAt, context: ev.context ?? base.context, toolCalls: ev.toolCalls ?? base.toolCalls };
       set({
         rooms: { ...s.rooms, [room.id]: room },
         roomOrder: existing ? s.roomOrder : [...s.roomOrder, room.id],
@@ -1017,7 +1088,7 @@ function handleEvent(get: Get, set: SetFn, ev: MonitorEvent, demo: boolean) {
         celebrate(roomId, ev.cue);
         if (!s.rooms[roomId].demo) noteCue(ev.cue);
       }
-      const sp: SpeechIn = { kind: ev.kind, text: ev.text, tool: ev.tool };
+      const sp: SpeechIn = { kind: ev.kind, text: ev.text, tool: ev.tool, ...(ev.image ? { image: absoluteUrl(ev.image) } : {}) };
       if (ev.agentId !== 'main') {
         const task = s.tasks[agentKey(roomId, ev.agentId)];
         if (task && ev.kind === 'tool') {

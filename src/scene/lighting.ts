@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { env } from '../env';
+import { lampsNow } from './glow';
 
 const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
 
@@ -38,8 +39,10 @@ export function lightParams(): LightParams {
   const moon = new THREE.Vector3(-4, 15, 8);
   params.dirOffset.copy(sun).lerp(moon, env.night);
   // at night the shadow-casting light stands in for the room lamps: warm, and strong enough that people and furniture still cast clear shadows
-  params.dirColor.copy(c.sun).lerp(c.warm, env.warm * env.day).lerp(c.moon, env.night).lerp(c.lamp, env.lamps);
-  params.dirIntensity = (0.42 + 1.5 * env.day + 0.25 * env.warm + 1.05 * env.lamps * env.night) * (1 - 0.3 * env.overcast * env.day);
+  // (an empty office has its lights off: only the moon then)
+  const lamps = lampsNow();
+  params.dirColor.copy(c.sun).lerp(c.warm, env.warm * env.day).lerp(c.moon, env.night).lerp(c.lamp, lamps);
+  params.dirIntensity = (0.42 + 1.5 * env.day + 0.25 * env.warm + 1.05 * lamps * env.night) * (1 - 0.3 * env.overcast * env.day);
   params.hemiSky.copy(c.skyNight).lerp(c.skyDay, env.day);
   params.hemiGround.copy(c.groundNight).lerp(c.groundDay, env.day);
   params.hemiIntensity = 0.44 + 0.62 * env.day + 0.1 * env.overcast * env.day;
