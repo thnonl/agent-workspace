@@ -192,6 +192,12 @@
 /* --- picture-in-picture: the office lives in a small floating window --------------------------------------------------- */
 /* (the .cinema class is on as well: no buttons, no pointer; dialogs would only crowd the little window) */
 .app.pip .modal, .app.pip .confirm-backdrop, .app.pip .cinema-hint { display: none; }
+/* --- a room that is still being built (not loaded ahead) ---------------- */
+.room-loading { position: absolute; left: 50%; top: 50%; translate: -50% 120px; z-index: 40; display: grid; gap: 7px; justify-items: center; padding: 9px 16px 11px; border-radius: 14px; background: rgba(30, 24, 60, 0.62); color: #fff; font-weight: 800; font-size: 13px; pointer-events: none; animation: roomLoadingIn 0.3s ease both; }
+.room-loading-bar { width: 150px; height: 4px; border-radius: 4px; background: rgba(255, 255, 255, 0.22); overflow: hidden; }
+.room-loading-bar b { display: block; height: 100%; border-radius: 4px; background: linear-gradient(90deg, #ffb020, #ff6fa5); transition: width 0.25s ease; }
+@keyframes roomLoadingIn { from { opacity: 0; } to { opacity: 1; } }
+
 /* the summary paper does show in the floating window, just smaller (and without "Release room", whose confirmation is not shown there) */
 /* (a definite grid track: with the default auto track the percentage max-height of the paper has nothing to resolve against, the paper grew to the
    height of its text and the part below the window – the end of the text and the "Got it" button – could be neither seen nor scrolled to) */

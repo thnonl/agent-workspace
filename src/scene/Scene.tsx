@@ -13,6 +13,7 @@ import { floatingWindow } from '../pipHost';
 import { lightParams } from './lighting';
 import { roomLit, updateGlow } from './glow';
 import { RoomView, roomOrigin } from './RoomView';
+import { GhostFloor } from './RoomGhost';
 
 const AZIMUTH = 0.72;
 /** when frame.loading was last worked out in full (ms) */
@@ -920,6 +921,41 @@ function Preload({ mount }: { mount: (id: string) => void }) {
   return null;
 }
 
+/** The base and plain floor of a room that is not built (see GhostFloor): what a room that is not loaded ahead shows until it is opened. */
+function RoomBase({ roomId }: { roomId: string }) {
+  const index = useStore((s) => s.rooms[roomId]?.index ?? 0);
+  const seed = useStore((s) => s.rooms[roomId]?.seed ?? 0);
+  const themeIndex = useStore((s) => s.rooms[roomId]?.themeIndex ?? 0);
+  const layout = getLayout(seed, themeIndex);
+  const group = useRef<THREE.Group>(null);
+  // (the same rule as a built room: drawn only while the camera sees it, and during a glide only the two rooms of the glide)
+  useFrame(() => {
+    const g = group.current;
+    if (g) g.visible = frame.visibleRooms.has(roomId);
+  });
+  return (
+    <group ref={group} position={roomOrigin(index)} userData={{ roomBase: roomId }}>
+      <GhostFloor layout={layout} />
+    </group>
+  );
+}
+
+/**
+ * The bases of the rooms that are not built. They are put in only while nothing else asks for the time (the room on screen is built,
+ * the camera is still, nobody in the room walks), one room per frame, so they never take a frame from the room on screen.
+ */
+function RoomBases({ built }: { built: ReadonlySet<string> }) {
+  const roomOrder = useStore((s) => s.visibleOrder);
+  const [placed, setPlaced] = useState<ReadonlySet<string>>(() => new Set());
+  useFrame(() => {
+    const st = useStore.getState();
+    if (st.pip || frame.cameraBusy || !frame.loadOk || (st.activeRoomId && !frame.readyRooms.has(st.activeRoomId))) return;
+    const next = st.visibleOrder.find((id) => !placed.has(id) && !built.has(id) && st.rooms[id]);
+    if (next) setPlaced((v) => new Set(v).add(next));
+  });
+  return <>{roomOrder.map((id) => (placed.has(id) && !built.has(id) ? <RoomBase key={id} roomId={id} /> : null))}</>;
+}
+
 export function Scene() {
   const quality = useStore((s) => s.quality);
   const roomOrder = useStore((s) => s.visibleOrder);
@@ -961,6 +997,7 @@ export function Scene() {
       <CameraRig />
       <Evictor evict={evict} />
       <Preload mount={preload} />
+      <RoomBases built={visited} />
       {roomOrder.map((id) => (visited.has(id) ? <RoomView key={id} roomId={id} active={id === activeRoomId} /> : null))}
     </Canvas>
   );

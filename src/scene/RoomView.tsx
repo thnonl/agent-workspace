@@ -27,6 +27,7 @@ import { MovableProps } from './MovableProps';
 import { LateProps } from './LateProps';
 import { shade } from './kit';
 import { RestroomShell, RestroomWalls } from './restroom';
+import { RoomGhost } from './RoomGhost';
 
 export const ROOM_SPACING_X = 48;
 export const ROOM_SPACING_Z = 42;
@@ -348,8 +349,13 @@ export const RoomView = memo(function RoomView({ roomId, active }: { roomId: str
     return () => {
       frame.mountedRooms.delete(roomId);
       frame.readyRooms.delete(roomId);
+      frame.buildStage.delete(roomId);
     };
   }, [roomId]);
+  // (for the loading note on screen, see ui/RoomLoading.tsx)
+  useEffect(() => {
+    frame.buildStage.set(roomId, { progress: stage / BUILD_STAGES, people: stage >= STAGE.people - 1 });
+  }, [roomId, stage]);
   useFrame(() => {
     const g = group.current;
     if (!g) return;
@@ -368,6 +374,10 @@ export const RoomView = memo(function RoomView({ roomId, active }: { roomId: str
 
   return (
     <group ref={group} position={origin} userData={{ room: roomId }}>
+      {/* a sketch of the room until its floor, walls and desks are in: the camera glides to the shape of the room, not to an empty spot */}
+      {stage < STAGE.desks + DESK_STEPS - 1 ? (
+        <RoomGhost layout={layout} floor={stage < STAGE.floor} back={stage < STAGE.back} left={stage < STAGE.left} desks={stage < STAGE.desks + DESK_STEPS - 1} />
+      ) : null}
       <RoomStatic roomId={roomId} layout={layout} signTitle={signTitle} season={season} stage={stage} />
 
       {/* movable furniture */}

@@ -11,6 +11,7 @@ import { setAtmosphere } from './music';
 import { WeatherLayer } from './ui/WeatherLayer';
 import { SettingsDialog } from './ui/Settings';
 import { ProgressDialog } from './ui/ProgressDialog';
+import { RoomLoading } from './ui/RoomLoading';
 import { useProgress } from './progress';
 import { Toasts } from './ui/Toasts';
 import { takePhoto } from './photo';
@@ -268,6 +269,7 @@ const LAYERS = (
       </Suspense>
     </main>
     <BubbleLayer />
+    <RoomLoading />
     <div className="hud-top">
       <TopBar />
       <RoomHeader />
