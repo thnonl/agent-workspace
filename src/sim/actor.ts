@@ -401,10 +401,65 @@ const polyAt = (pts: V2[], d: number): { x: number; z: number; yaw: number | nul
   return { x: pts[0].x, z: pts[0].z, yaw: null };
 };
 
+/** a frame of a dance move: arms, body and head (the legs add to the steps on the arrows); `oh`: the mouth an "o", `straight`: a straight face */
+type DanceFrame = Partial<Record<'armLx' | 'armLz' | 'armRx' | 'armRz' | 'foreLx' | 'foreRx' | 'lean' | 'roll' | 'twist' | 'headX' | 'headY' | 'headZ' | 'bob' | 'thighLx' | 'thighRx' | 'kneeLx' | 'kneeRx' | 'oh' | 'straight', number>>;
+const DANCE_REST: Required<DanceFrame> = {
+  armLx: -0.4, armLz: 0.3, armRx: -0.4, armRz: 0.3, foreLx: -0.5, foreRx: -0.5, lean: 0, roll: 0, twist: 0, headX: -0.1, headY: 0, headZ: 0, bob: 0,
+  thighLx: 0, thighRx: 0, kneeLx: 0, kneeRx: 0, oh: 0, straight: 0,
+};
+/** seconds one dance move lasts */
+const DANCE_BAR_S = 3.4;
+/** `b`: the beat phase (one step on the arrows per half turn) */
+const steps = (b: number, n: number) => Math.round(Math.sin(b) * n) / n;
+const DANCE_MOVES: ((b: number) => DanceFrame)[] = [
+  // the chicken: hands in the armpits, elbows flapping, pecking with the head
+  (b) => ({
+    armLx: -0.2, armRx: -0.2, armLz: 0.55 + 0.45 * Math.abs(Math.sin(b * 2)), armRz: 0.55 + 0.45 * Math.abs(Math.sin(b * 2)), foreLx: -2.1, foreRx: -2.1,
+    headX: 0.35 * Math.max(0, Math.sin(b * 2)) - 0.1, lean: 0.12, kneeLx: 0.25, kneeRx: 0.25, thighLx: -0.15, thighRx: -0.15, oh: 1,
+  }),
+  // disco: the right hand points up to the ceiling, then down across the body, the other hand on the hip
+  (b) => {
+    const up = Math.sin(b) > 0 ? 1 : 0;
+    return {
+      armRx: up ? -2.7 : -0.6, armRz: up ? 0.55 : -0.45, foreRx: -0.05, armLx: -0.15, armLz: 0.75, foreLx: -1.5,
+      roll: (up ? 1 : -1) * 0.08, headZ: (up ? -1 : 1) * 0.15, headX: up ? -0.35 : 0.2, twist: (up ? -1 : 1) * 0.15,
+    };
+  },
+  // the robot: stiff, jerky, elbows at right angles, a straight face
+  (b) => {
+    const s = steps(b * 0.5, 2);
+    return {
+      armLx: -0.3 + 0.6 * s, armRx: -0.3 - 0.6 * s, armLz: 0.2, armRz: 0.2, foreLx: -1.55, foreRx: -1.55,
+      headY: 0.55 * steps(b * 0.5 + 1.2, 1), twist: 0.3 * s, bob: -0.02, straight: 1,
+    };
+  },
+  // the sprinkler: one hand behind the head, the other arm straight out, the body turning in jerks and swinging back
+  (b) => {
+    const u = ((b / Math.PI) % 4) / 4;
+    const sweep = u < 0.75 ? -0.6 + Math.floor(u * 8) * 0.2 : 0.6 - (u - 0.75) * 4.8;
+    return {
+      armLx: -2.5, armLz: 0.9, foreLx: -2.0, armRx: -1.55, armRz: 0.1, foreRx: -0.05,
+      twist: sweep, headY: sweep * 0.4, headX: -0.05, oh: 1,
+    };
+  },
+  // the floss: straight arms swinging past the hips the other way round to them
+  (b) => ({
+    armLx: 0.45 * Math.sin(b), armRx: -0.45 * Math.sin(b), armLz: 0.25 + 0.35 * Math.sin(b), armRz: 0.25 - 0.35 * Math.sin(b), foreLx: -0.05, foreRx: -0.05,
+    roll: -0.12 * Math.sin(b), twist: 0.2 * Math.sin(b), headZ: 0.1 * Math.sin(b),
+  }),
+  // raise the roof: both hands pushing up at the ceiling, jumping
+  (b) => ({
+    armLx: -2.6 + 0.35 * Math.sin(b * 2), armRx: -2.6 + 0.35 * Math.sin(b * 2), armLz: 0.55, armRz: 0.55, foreLx: -0.9 + 0.5 * Math.sin(b * 2), foreRx: -0.9 + 0.5 * Math.sin(b * 2),
+    headX: -0.3, bob: 0.06 * Math.abs(Math.sin(b)), oh: 1,
+  }),
+];
+
 export class Actor {
   readonly sim: SimState;
   readonly pose: Pose = neutralPose();
   readonly isDirector: boolean;
+  /** the dance move this person starts with on the dance machine (see DANCE_MOVES) */
+  private readonly danceFrom = Math.floor(Math.random() * DANCE_MOVES.length);
 
   /** progress of the laptop: 0 in bag → 1 in hands → 2 on desk */
   lapP = 0;
@@ -2598,20 +2653,38 @@ export class Actor {
         break;
       }
       case 'danceMachine': {
-        // stepping on the arrows, arms swinging, bouncing to the beat
-        const st1 = Math.max(0, Math.sin(c * 7));
-        const st2 = Math.max(0, Math.sin(c * 7 + Math.PI));
-        p.thighLx = mix(-0.6 * st1);
-        p.kneeLx = mix(0.9 * st1);
-        p.thighRx = mix(-0.6 * st2);
-        p.kneeRx = mix(0.9 * st2);
-        p.armLx = mix(-0.6 + Math.sin(c * 7) * 0.5);
-        p.armRx = mix(-0.6 - Math.sin(c * 7) * 0.5);
-        p.armLz = p.armRz = mix(0.35);
-        p.bob = mix(Math.abs(Math.sin(c * 7)) * 0.06);
-        p.happy = mix(0.9);
-        p.headX = mix(-0.1);
-        for (let at = 1; at < d - 1; at += 1.8) this.cue('thud', at);
+        // stepping on the arrows to the beat, and silly moves on top: the chicken, disco, the robot, the sprinkler, the floss, raise the roof
+        // (one per bar, each dancer starting with another one; the last moment of a bar blends into the next move)
+        const b = c * 7;
+        const st1 = Math.max(0, Math.sin(b));
+        const st2 = Math.max(0, Math.sin(b + Math.PI));
+        const bar = t / DANCE_BAR_S + this.danceFrom;
+        const now = DANCE_MOVES[Math.floor(bar) % DANCE_MOVES.length];
+        const next = DANCE_MOVES[(Math.floor(bar) + 1) % DANCE_MOVES.length];
+        const f = now(b);
+        const w = smooth(seg(bar % 1, 0.88, 1));
+        const g = w > 0 ? next(b) : f;
+        const at = (k: keyof DanceFrame) => mix((f[k] ?? DANCE_REST[k]) * (1 - w) + (g[k] ?? DANCE_REST[k]) * w);
+        p.thighLx = mix(-0.6 * st1) + at('thighLx');
+        p.kneeLx = mix(0.9 * st1) + at('kneeLx');
+        p.thighRx = mix(-0.6 * st2) + at('thighRx');
+        p.kneeRx = mix(0.9 * st2) + at('kneeRx');
+        p.armLx = at('armLx');
+        p.armLz = at('armLz');
+        p.armRx = at('armRx');
+        p.armRz = at('armRz');
+        p.foreLx = at('foreLx');
+        p.foreRx = at('foreRx');
+        p.lean = at('lean');
+        p.roll = at('roll');
+        p.twist = at('twist');
+        p.headX = at('headX');
+        p.headY = at('headY');
+        p.headZ = at('headZ');
+        p.bob = mix(Math.abs(Math.sin(b)) * 0.06) + at('bob');
+        p.happy = mix(0.9 * (1 - (f.straight ?? 0) * (1 - w)));
+        if ((f.oh ?? 0) > 0.5 && w < 0.5) p.mouth = 'o';
+        for (let at2 = 1; at2 < d - 1; at2 += 1.8) this.cue('thud', at2);
         break;
       }
       case 'consoleTv': {
