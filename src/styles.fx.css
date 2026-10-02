@@ -193,8 +193,12 @@
 /* (the .cinema class is on as well: no buttons, no pointer; dialogs would only crowd the little window) */
 .app.pip .modal, .app.pip .confirm-backdrop, .app.pip .cinema-hint { display: none; }
 /* the summary paper does show in the floating window, just smaller (and without "Release room", whose confirmation is not shown there) */
-.app.pip .paper-backdrop { backdrop-filter: none; }
-.app.pip .paper { width: calc(100% - 16px); max-height: calc(100% - 16px); transform: none; animation: fadeIn 0.25s both; }
+/* (a definite grid track: with the default auto track the percentage max-height of the paper has nothing to resolve against, the paper grew to the
+   height of its text and the part below the window – the end of the text and the "Got it" button – could be neither seen nor scrolled to) */
+.app.pip .paper-backdrop { backdrop-filter: none; grid-template: minmax(0, 1fr) / minmax(0, 1fr); }
+.app.pip .paper { width: calc(100% - 16px); max-height: calc(100% - 16px); min-height: 0; transform: none; animation: fadeIn 0.25s both; }
+.app.pip .paper-scroll { min-height: 0; overscroll-behavior: contain; scrollbar-width: thin; }
+.app.pip .paper-foot { flex: none; }
 .app.pip .paper-tape { display: none; }
 .app.pip .paper-close { top: 6px; right: 8px; width: 28px; height: 28px; }
 .app.pip .paper-scroll { --m: 14px; padding: 14px 12px 8px 26px; line-height: 1.45; }
@@ -203,6 +207,35 @@
 .app.pip .paper section { margin-top: 10px; }
 .app.pip .paper-foot { padding: 8px 0 10px; }
 .app.pip .paper-foot .btn:not(.btn-big) { display: none; }
+/* the floating window can be made very small: the paper gives up its decoration step by step so that the text and the button keep the room
+   (these media queries are about the size of the floating window itself: the office page is rendered inside it) */
+@media (max-height: 360px) {
+  .app.pip .paper-scroll { padding-top: 10px; }
+  .app.pip .paper-sub, .app.pip .paper-stats { display: none; }
+  .app.pip .paper h2 { font-size: 16px; }
+  .app.pip .paper-kicker { font-size: 10px; }
+  .app.pip .paper section { margin-top: 8px; }
+  .app.pip .paper h3 { font-size: 10px; margin-bottom: 3px; }
+  .app.pip .paper-foot { padding: 5px 0 6px; }
+  .app.pip .paper-foot .btn-big { padding: 6px 20px; font-size: 13px; }
+  .app.pip .paper-end { margin: 10px 0 2px; }
+}
+@media (max-height: 250px) {
+  .app.pip .paper-kicker, .app.pip .paper h3 { display: none; }
+  .app.pip .paper-scroll { padding-top: 8px; padding-bottom: 4px; line-height: 1.35; }
+  .app.pip .paper h2 { font-size: 14px; padding-right: 26px; }
+  .app.pip .paper-sub, .app.pip .paper-text, .app.pip .paper-quote, .app.pip .paper-tasks p { font-size: 11px; }
+  .app.pip .paper-text p { margin-bottom: 5px; }
+  .app.pip .paper-close { top: 3px; right: 5px; width: 22px; height: 22px; }
+  .app.pip .paper-foot { padding: 3px 0 4px; }
+  .app.pip .paper-foot .btn-big { padding: 3px 14px; font-size: 11px; }
+  .app.pip .paper { width: calc(100% - 8px); max-height: calc(100% - 8px); }
+}
+@media (max-width: 400px) {
+  .app.pip .paper-scroll { --m: 10px; padding-left: 20px; padding-right: 8px; }
+  .app.pip .paper-sub, .app.pip .paper-text, .app.pip .paper-quote, .app.pip .paper-tasks p { font-size: 11.5px; }
+  .app.pip .paper-text pre { padding: 6px 8px; }
+}
 .app.pip { cursor: default; }
 .pip-bar { position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 60; display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; pointer-events: none; }
 .pip-ctx { min-width: 0; max-width: calc(100% - 76px); display: flex; align-items: center; gap: 8px; padding: 5px 14px 5px 5px; border-radius: 22px; background: rgba(30, 24, 60, 0.62); color: #fff; font-size: 11px; font-weight: 800; font-variant-numeric: tabular-nums; --ctx: #3ddc97; }

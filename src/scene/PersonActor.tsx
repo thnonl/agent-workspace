@@ -190,6 +190,7 @@ export function PersonActor({ personKey, roomId, layout, frozen: frozenProp = fa
   const settleN = useRef(0);
   /** the person has been animated live (so the rig shows a pose already: stopping them needs no settling) */
   const liveBefore = useRef(false);
+  const enteredOnce = useRef(false);
   /** frames the person has stood stopped, and whether their matrices are no longer worked out (a stopped person has none to change) */
   const stoppedFor = useRef(0);
   const matsOff = useRef(false);
@@ -305,7 +306,13 @@ export function PersonActor({ personKey, roomId, layout, frozen: frozenProp = fa
     // (time stands still in a room that is not the active one, the pose is only settled)
     actor.update(dt, c);
     const sim = actor.sim;
+    // the first time they stand inside the door they count for "in the office" (a person who has been hired may wait outside for a while)
+    if (sim.onStage && !enteredOnce.current) {
+      enteredOnce.current = true;
+      useStore.getState().markInside(personKey);
+    }
     sim.lively = sim.onStage && actor.deskMode !== null;
+    sim.actKind = sim.phase === 'activity' || sim.phase === 'stroll' || sim.phase === 'standing' ? actor.actKind : undefined;
     sim.calm = (sim.phase === 'working' || sim.phase === 'waiting') && !sim.walking && actor.typing < 0.2 && rt.cheerUntil < now;
     calm.current = !!sim.calm;
     // a celebration (run finished, commit, push): arms up, big smile, a little hop

@@ -110,7 +110,36 @@ function Sofa({ p, theme, small }: { p: Prop; theme: RoomTheme; small?: boolean 
   );
 }
 
+/** Four bean bags: the round one, a pear-shaped one with a high back, a square pouf and a long lounger. All of them seat a person at about the same height. */
 function Beanbag({ p }: { p: Prop }) {
+  const model = p.variant % 4;
+  if (model === 1) {
+    return (
+      <group>
+        <Ms geo={G.sphere(0.5, 24, 16)} mat={M(p.color, { rough: 0.9 })} pos={[0, 0.27, 0.05]} scale={[1, 0.58, 1]} />
+        <Ms geo={G.sphere(0.4, 20, 14)} mat={M(shade(p.color, -0.06), { rough: 0.9 })} pos={[0, 0.58, -0.24]} scale={[1.05, 1.1, 0.7]} rot={[-0.25, 0, 0]} />
+        <Ms geo={G.sphere(0.18, 12, 10)} mat={M(p.color2, { rough: 0.9 })} pos={[0.2, 0.62, 0.1]} scale={[1, 0.5, 0.7]} rot={[-0.3, 0.4, 0]} />
+      </group>
+    );
+  }
+  if (model === 2) {
+    return (
+      <group>
+        <RB size={[0.86, 0.5, 0.86]} pos={[0, 0.27, 0]} color={p.color} r={0.18} rough={0.92} />
+        <RB size={[0.88, 0.03, 0.88]} pos={[0, 0.34, 0]} color={shade(p.color, -0.15)} r={0.015} rough={0.9} cast={false} />
+        <RB size={[0.4, 0.14, 0.3]} pos={[0.12, 0.56, -0.2]} color={p.color2} r={0.07} rough={0.9} rot={[-0.35, 0.2, 0.1]} />
+      </group>
+    );
+  }
+  if (model === 3) {
+    return (
+      <group>
+        <Ms geo={G.sphere(0.5, 24, 16)} mat={M(p.color, { rough: 0.9 })} pos={[0, 0.28, 0.2]} scale={[0.95, 0.58, 0.85]} />
+        <Ms geo={G.sphere(0.5, 24, 16)} mat={M(shade(p.color, -0.05), { rough: 0.9 })} pos={[0, 0.4, -0.22]} scale={[0.95, 0.7, 0.75]} rot={[-0.2, 0, 0]} />
+        <Ms geo={G.sphere(0.16, 12, 10)} mat={M(p.color2, { rough: 0.9 })} pos={[-0.22, 0.68, -0.3]} scale={[1.1, 0.6, 0.6]} rot={[-0.5, 0.3, 0]} />
+      </group>
+    );
+  }
   return (
     <group>
       <Ms geo={G.sphere(0.5, 24, 16)} mat={M(p.color, { rough: 0.9 })} pos={[0, 0.3, 0]} scale={[1, 0.62, 1]} />

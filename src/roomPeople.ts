@@ -53,7 +53,7 @@ async function flush(keepalive = false) {
 }
 
 interface Source {
-  getState: () => { rooms: Record<string, { demo: boolean }>; people: Record<string, { sessionId: string; present: boolean }> };
+  getState: () => { rooms: Record<string, { demo: boolean }>; people: Record<string, { sessionId: string; present: boolean; inside?: boolean }>; activeRoomId: string | null };
   subscribe: (listener: (state: ReturnType<Source['getState']>, prev: ReturnType<Source['getState']>) => void) => () => void;
 }
 
@@ -61,9 +61,9 @@ interface Source {
 export function trackRoomPeople(store: Source) {
   if (!available) return;
   const update = () => {
-    const { rooms, people } = store.getState();
+    const { rooms, people, activeRoomId } = store.getState();
     const now = new Map<string, number>();
-    for (const p of Object.values(people)) if (p.present && rooms[p.sessionId] && !rooms[p.sessionId].demo) now.set(p.sessionId, (now.get(p.sessionId) ?? 0) + 1);
+    for (const p of Object.values(people)) if (p.present && (p.inside !== false || p.sessionId !== activeRoomId) && rooms[p.sessionId] && !rooms[p.sessionId].demo) now.set(p.sessionId, (now.get(p.sessionId) ?? 0) + 1);
     const queue = (id: string, n: number | null) => {
       if (n === null ? !sent.has(id) : sent.get(id) === n) return;
       if (n === null) sent.delete(id);

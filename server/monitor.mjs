@@ -12,6 +12,8 @@ import { createOpenCodeSource, defaultOpenCodeDb } from './opencode.mjs';
 import { MIN, MUSINGS, pick, clip, base, toolSummary, cueOf, claudeContext, askOf, cleanPrompt, isInterrupt, resultText, readNewLines, parseJson } from './util.mjs';
 
 const SPAWN_TOOLS = new Set(['Agent', 'Task']);
+/** transcript lines that are the conversation itself (the others – bridge-session, last-prompt, cost-state, … – are housekeeping) */
+const CONVERSATION_TYPES = new Set(['user', 'assistant', 'system', 'attachment', 'queue-operation']);
 /** with a file watcher, a session's sub-agent folder is listed again at most this often unless the watcher fires */
 const SUBDIR_RESCAN_MS = 5000;
 // a silent first load reads at most this much of a transcript tail (a live poll reads far more)
@@ -68,6 +70,10 @@ class Session {
     this.agents = new Map(); // toolUseId -> { id,label,agentType,status,lastSay,asyncId,lastAt }
     this.subFiles = new Map(); // file -> { state, key, metaTried }
     this.lastLineAt = 0;
+    /** when the last line of the conversation was written (not a housekeeping line, see pollMain); 0 = not known */
+    this.lastReal = 0;
+    /** the last read of the transcript found housekeeping lines only */
+    this.metaOnly = false;
     this.lastActivity = 0;
     this.announcedTitle = '';
     this.silent = true;
@@ -378,12 +384,29 @@ export function createMonitor({
       s.state.rest = Buffer.alloc(0);
       lines = readNewLines(s.file, s.state, 24 * 1024 * 1024);
     }
-    if (lines.length) s.lastLineAt = s.silent ? mtimeMs : now;
+    // Claude Code appends housekeeping lines (bridge-session, last-prompt, cost-state, …) to old transcripts when the Claude app starts,
+    // closes or archives a session: they carry no timestamp and are no sign of work. A line of the conversation has one.
+    let real = 0;
+    const claude = s.provider === 'claude';
+    const objs = [];
     for (const l of lines) {
       const o = parseJson(l);
-      if (o) (s.provider === 'codex' ? codexLine : handleMainLine)(s, o);
+      if (!o) continue;
+      objs.push(o);
+      if (claude) {
+        const t = typeof o.timestamp === 'string' ? Date.parse(o.timestamp) : NaN;
+        if (t === t) real = Math.max(real, t);
+        else if (CONVERSATION_TYPES.has(o.type)) real = Math.max(real, mtimeMs); // (a conversation line without a time: the file's age has to do)
+      } else real = mtimeMs;
     }
-    return lines.length > 0;
+    s.metaOnly = lines.length > 0 && real === 0;
+    if (real) {
+      // (a silent load knows only the age of the last line, a live read happens now)
+      s.lastLineAt = s.silent ? Math.min(real, mtimeMs) : now;
+      s.lastReal = s.silent ? Math.max(s.lastReal, s.lastLineAt) : now;
+    }
+    for (const o of objs) (s.provider === 'codex' ? codexLine : handleMainLine)(s, o);
+    return real > 0;
   };
 
   /**
@@ -450,6 +473,7 @@ export function createMonitor({
       if (lines.length) {
         changed = true;
         s.lastLineAt = s.silent ? Math.max(s.lastLineAt, safeMtime(file)) : now;
+        s.lastReal = Math.max(s.lastReal, s.lastLineAt);
       }
       for (const l of lines) {
         const o = parseJson(l);
@@ -533,11 +557,21 @@ export function createMonitor({
 
   /** Catches a session up silently with load(), then announces it exactly like a late-joining browser would see it. */
   const register = (s, mtimeMs, now, load) => {
+    const claude = s.provider === 'claude';
     s.lastActivity = mtimeMs;
-    s.lastLineAt = mtimeMs;
+    s.lastLineAt = claude ? 0 : mtimeMs;
     sessions.set(s.id, s);
     load(s);
-    s.lastLineAt = Math.max(s.lastLineAt, mtimeMs);
+    if (claude) {
+      // the file may be young while the conversation is old (housekeeping lines only, see pollMain); no line with a time: the file's age has to do
+      const at = s.lastReal || mtimeMs;
+      s.lastActivity = at;
+      s.lastLineAt = Math.max(s.lastLineAt, at);
+      if (!s.mainActive && runningAgents(s).length === 0 && now - at > windowMs) {
+        sessions.delete(s.id);
+        return null;
+      }
+    } else s.lastLineAt = Math.max(s.lastLineAt, mtimeMs);
     settle(s, now);
     s.silent = false;
     s.announcedTitle = `${s.title}\u0000${s.root}`;
@@ -670,7 +704,8 @@ export function createMonitor({
         continue;
       }
       ignored.delete(file);
-      openSession(id, file, dirName, st.mtimeMs, now, provider);
+      // (a transcript whose last line of conversation is too old is left alone until it changes again)
+      if (!openSession(id, file, dirName, st.mtimeMs, now, provider)) ignored.set(file, now);
     }
     oc?.scan(now);
   };
@@ -719,9 +754,11 @@ export function createMonitor({
         continue;
       }
       let changed = false;
+      s.metaOnly = false;
       if (st.size !== s.state.offset) changed = pollMain(s, st.mtimeMs, now);
       if (s.provider === 'claude' && pollSubFiles(s, now, subHint ?? false)) changed = true;
-      if (!changed) s.lastActivity = Math.max(s.lastActivity, st.mtimeMs);
+      // (housekeeping lines make the file younger, not the session)
+      if (!changed && !s.metaOnly) s.lastActivity = Math.max(s.lastActivity, st.mtimeMs);
       afterPoll(s, now, changed);
     }
     oc?.poll(now);

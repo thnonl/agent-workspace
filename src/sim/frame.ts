@@ -55,6 +55,8 @@ export const frame = {
   switchAt: 0,
   /** another room is being loaded ahead, or is still waiting to be (the rest of the room list after the active room, see PRELOAD_ROOMS) */
   loading: false,
+  /** when `loading` was last seen true (performance.now ms): the flag flickers between two rooms, so "nothing to load" is only trusted after a pause (see Actor, door gap) */
+  loadingAt: 0,
   /** loading ahead may go on: nobody in the active room is on the move (see FrameSync, and the walking gap in Actor) */
   loadOk: true,
   /** the camera is travelling / zooming on its own */

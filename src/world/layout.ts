@@ -143,7 +143,7 @@ export interface CatWindow {
 }
 
 /** Things people like to do when there is nothing to work on. */
-export type StationKind = 'drink' | 'read' | 'fish' | 'wash' | 'water' | 'cook' | 'box' | 'lift';
+export type StationKind = 'drink' | 'read' | 'fish' | 'wash' | 'water' | 'cook' | 'box' | 'lift' | 'fridge';
 
 /** A spot in front of something (water cooler, bookshelf, fish tank, sink, plant) where a person can spend a moment. */
 export interface Station {
@@ -768,6 +768,30 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
     if (rrCorner === 'backLeft' && z - winW / 2 < -D / 2 + RESTROOM + SINK_SPAN) continue;
     if (r.chance(0.85)) windows.push({ wall: 'left', pos: z, w: winW, h: 1.6, sill: 1.05, curtain: r.chance(0.6), panes: r.pick([2, 4] as const), openSide: sideOf() });
   }
+  // every room has two or three windows: more than three are never kept, and where the usual places gave fewer, other places along the walls are tried
+  // (the same rules: not at the door, not above the cubicle or its sink, not on top of another window; own generator so the rest of the room is unaffected)
+  windows.splice(3);
+  if (windows.length < 2) {
+    const room = new Rng((seed ^ 0x2f6a9c1d) >>> 0);
+    const clear = (wall: 'back' | 'left', pos: number) => windows.every((w) => w.wall !== wall || Math.abs(w.pos - pos) >= winW + 0.7);
+    const spare: { wall: 'back' | 'left'; pos: number }[] = [];
+    for (let x = dirX - 7.4; x <= dirX + 7.4; x += 1.2) {
+      if (Math.abs(x) > W / 2 - 1.6) continue;
+      if (door.wall === 'back' && Math.abs(x - door.pos) < 2.4) continue;
+      if (rrSign * (x - (rrX - rrSign * (RESTROOM / 2 + SINK_SPAN))) + winW / 2 + 0.9 > 0) continue;
+      spare.push({ wall: 'back', pos: x });
+    }
+    for (let z = -D / 2 + 3.4; z <= D / 2 - 1.6; z += 1.2) {
+      if (door.wall === 'left' && Math.abs(z - door.pos) < 2.3) continue;
+      if (rrCorner === 'backLeft' && z - winW / 2 < -D / 2 + RESTROOM + SINK_SPAN) continue;
+      spare.push({ wall: 'left', pos: z });
+    }
+    for (const c of room.shuffle(spare)) {
+      if (windows.length >= 2) break;
+      if (!clear(c.wall, c.pos)) continue;
+      windows.push({ wall: c.wall, pos: c.pos, w: winW, h: 1.6, sill: 1.05, curtain: room.chance(0.6), panes: room.pick([2, 4] as const), openSide: sideOf() });
+    }
+  }
   // a room never has all of its windows open on the same side
   if (windows.length > 1 && windows.every((w) => w.openSide === windows[0].openSide)) {
     windows[windows.length - 1].openSide = (windows[windows.length - 1].openSide * -1) as 1 | -1;
@@ -837,6 +861,14 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
         if (add(k, W / 2 - d / 2 - 0.05, r.range(-D / 2 + w / 2 + 0.4, D / 2 - w / 2 - 0.4), -Math.PI / 2)) return true;
       } else if (add(k, r.range(-W / 2 + w / 2 + 0.5, W / 2 - w / 2 - 0.5), D / 2 - d / 2 - 0.05, Math.PI)) return true;
     }
+    // the random places did not fit: look along the walls for any gap that does (no random numbers: rooms that were furnished before keep their layout)
+    for (const wall of walls) {
+      for (let u = 0; u <= 1.0001; u += 0.025) {
+        if (wall === 'back' && add(k, -W / 2 + w / 2 + 0.3 + u * (W - w - 0.6), -D / 2 + d / 2 + 0.06, 0)) return true;
+        if (wall === 'left' && add(k, -W / 2 + d / 2 + 0.06, -D / 2 + w / 2 + 0.4 + u * (D - w - 0.8), Math.PI / 2)) return true;
+        if (wall === 'right' && add(k, W / 2 - d / 2 - 0.05, -D / 2 + w / 2 + 0.4 + u * (D - w - 0.8), -Math.PI / 2)) return true;
+      }
+    }
     return false;
   };
   /** try to put a prop somewhere on the open floor */
@@ -871,19 +903,21 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
   if (lounge !== 'loungeSet') tryFloor('meetingSet', [0, Math.PI / 4]);
   // the big rooms have room for a second lounge corner
   if (kind.name !== 'cozy' && r.chance(0.4)) tryFloor('loungeSet', [0, Math.PI / 2, -Math.PI / 2]);
+  // the pieces that make an office kitchen and library (they are there from the start) get their place on the walls first
+  const firstWall: PropKind[] = ['coffee', 'bookshelf', 'fridge', ...(r.chance(0.85) ? (['stove'] as PropKind[]) : [])];
+  for (const k of firstWall) tryWall(k);
   const wallWants: PropKind[] = [
-    'coffee', 'copier', 'bookshelf', 'bookshelf', 'fridge', 'cooler', 'fileCabinet', 'fileCabinet', 'fileCabinet',
+    'copier', 'bookshelf', 'cooler', 'fileCabinet', 'fileCabinet', 'fileCabinet',
     ...(r.chance(0.6) ? (['serverRack'] as PropKind[]) : []),
     ...(r.chance(0.55) ? (['vending'] as PropKind[]) : []),
     ...(r.chance(0.5) ? (['credenza'] as PropKind[]) : []),
     ...(r.chance(0.5) ? (['fishtank'] as PropKind[]) : []),
     ...(r.chance(0.5) ? (['recycle'] as PropKind[]) : []),
     ...(r.chance(0.85) ? (['sink'] as PropKind[]) : []),
-    ...(r.chance(0.8) ? (['stove'] as PropKind[]) : []),
     ...(r.chance(0.4) ? (['printer'] as PropKind[]) : []),
   ];
   for (const k of r.shuffle(wallWants)) tryWall(k);
-  const floorWants: PropKind[] = ['whiteboardStand', 'boxes', ...(r.chance(0.6) ? (['boxes'] as PropKind[]) : []), 'trolley', ...(r.chance(0.5) ? (['beanbag'] as PropKind[]) : [])];
+  const floorWants: PropKind[] = ['whiteboardStand', 'boxes', ...(r.chance(0.6) ? (['boxes'] as PropKind[]) : []), 'trolley', 'beanbag', ...(r.chance(0.4) ? (['beanbag'] as PropKind[]) : [])];
   for (const k of floorWants) tryFloor(k);
   const small: PropKind[] = ['tallPlant', 'tallPlant', 'plant', 'plant', 'plant', 'cactus', 'floorLamp', 'floorLamp', 'bin', 'bin', 'bin'];
   for (const k of r.shuffle(small)) {
@@ -1278,7 +1312,7 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
   // ------------- things to do when there is time: get a drink, read a book, watch the fish, wash, water the plants
   const stations: Station[] = [];
   const stationOf: Partial<Record<PropKind, [StationKind, number]>> = {
-    cooler: ['drink', 0.5], coffee: ['drink', 0.5], bookshelf: ['read', 0.5], fishtank: ['fish', 0.55], sink: ['wash', 0.36], stove: ['cook', 0.42], punchDummy: ['box', 0.32], dumbbells: ['lift', 0.4],
+    cooler: ['drink', 0.5], coffee: ['drink', 0.5], fridge: ['fridge', 0.5], bookshelf: ['read', 0.5], fishtank: ['fish', 0.55], sink: ['wash', 0.36], stove: ['cook', 0.42], punchDummy: ['box', 0.32], dumbbells: ['lift', 0.4],
     plant: ['water', 0.5], tallPlant: ['water', 0.55], cactus: ['water', 0.5],
   };
   const perKind = new Map<StationKind, number>();
@@ -1377,7 +1411,8 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
   props.forEach((p, i) => {
     if (p.kind === 'coatRack' || p.kind === 'toilet' || p.kind === 'boxes' || p === restSink) keep.add(i);
   });
-  for (const k of ['fileCabinet', 'bin', 'plant'] as const) {
+  // (the big things that make a room are there from the start as well: a stove, the coffee machine, a fridge, a bookshelf, the sofa and the round table)
+  for (const k of ['fileCabinet', 'bin', 'plant', 'stove', 'coffee', 'fridge', 'bookshelf', 'loungeSet', 'sofa', 'meetingSet'] as const) {
     const i = props.findIndex((p, j) => p.kind === k && !keep.has(j));
     if (i >= 0) keep.add(i);
   }

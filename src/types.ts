@@ -59,6 +59,8 @@ export interface PersonRec {
   seed: number;
   /** should be inside the office (false → packs up, walks out and waits outside) */
   present: boolean;
+  /** false from the moment of the hire until the person has first come through the door (set by their character, see PersonActor); undefined = not tracked (restored people, rooms nobody has looked at) */
+  inside?: boolean;
   /** task being worked on right now (staff only) */
   taskKey: string | null;
   /** desk index in the room layout (staff only, fixed for the whole session) */

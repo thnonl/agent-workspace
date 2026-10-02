@@ -31,8 +31,18 @@ const HELLO_BOSS = ['Hello, boss!', 'Hi boss, I’m in!', 'Good to see you, boss
 /** staff arrives and other staff already sit at their desks */
 const HELLO_BOSS_TEAM = ['Hi boss, hi team!', 'Hey boss, hey team – what did I miss?', 'Hello boss, hello team!', 'Reporting in, boss. Hi, everyone!'];
 
-export function greetingLine(director: boolean, hour: number, colleagues = 0): string {
+/** staff arrives and greets a colleague (by name) instead of the boss */
+const HELLO_MATE: ((name: string) => string)[][] = [
+  [(n) => `Morning, ${n}!`, (n) => `Good morning, ${n}! Coffee yet?`, (n) => `Hey ${n}, morning!`, (n) => `Morning, ${n} – you look awake. Suspicious.`],
+  [(n) => `Afternoon, ${n}!`, (n) => `Hi ${n}! Did I miss anything?`, (n) => `Hey ${n}, good afternoon!`, (n) => `Afternoon, ${n}. How is it going?`],
+  [(n) => `Evening, ${n}!`, (n) => `Hi ${n}, still here? Me too.`, (n) => `Good evening, ${n}! Night shift, huh?`, (n) => `Hey ${n}, late one today.`],
+];
+const HELLO_MATE_ANY: ((name: string) => string)[] = [(n) => `Hi ${n}!`, (n) => `Hey ${n}, I’m in!`, (n) => `Hello, ${n}!`, (n) => `Good to see you, ${n}.`, (n) => `${n}! Save me a seat.`];
+
+/** `mate`: the name of the colleague a member of staff greets instead of the boss (the one who greets is picked at random, see Actor) */
+export function greetingLine(director: boolean, hour: number, colleagues = 0, mate?: string): string {
   const part = hour < 12 ? 0 : hour < 18 ? 1 : 2;
+  if (!director && mate) return pick(Math.random() < 0.7 ? HELLO_MATE[part] : HELLO_MATE_ANY)(mate);
   if (director) {
     if (colleagues > 0) return pick(HELLO_DIRECTOR);
     return pick(Math.random() < 0.7 ? [OPEN_MORNING, OPEN_AFTERNOON, OPEN_EVENING][part] : OPEN_ANY);
@@ -239,7 +249,46 @@ const TABLE_MEAL = [
   'Snack time, table for one (or more)', 'Food always tastes better at a table', 'I brought a bowl to the round table',
 ];
 
+// ------------------------------------------ the box is open: a remark on what was in it
+const UNBOXED_NAME: Record<string, string> = {
+  bookshelf: 'a bookshelf', plant: 'a plant', tallPlant: 'a big plant', cactus: 'a cactus', cooler: 'a water cooler', coffee: 'a coffee machine', sofa: 'a sofa',
+  beanbag: 'a beanbag', floorLamp: 'a floor lamp', printer: 'a printer', bin: 'a bin', fishtank: 'a fish tank', coatRack: 'a coat rack', armchair: 'an armchair',
+  fileCabinet: 'a file cabinet', copier: 'a copier', meetingSet: 'a meeting table', whiteboardStand: 'a whiteboard', boxes: 'more boxes', serverRack: 'a server rack',
+  fridge: 'a fridge', vending: 'a vending machine', trolley: 'a trolley', recycle: 'a recycling bin', loungeSet: 'a lounge set', credenza: 'a sideboard',
+  sink: 'a sink', stove: 'a stove', punchDummy: 'a punching dummy', dumbbells: 'a set of dumbbells', toilet: 'a toilet',
+};
+const UNBOXED = [
+  (n: string) => `Wow, ${n}! The office just got an upgrade`,
+  (n: string) => `So that’s what was in the box: ${n}!`,
+  (n: string) => `${n[0].toUpperCase()}${n.slice(1)}! Exactly what we needed`,
+  (n: string) => `Look at that – ${n}! Who ordered it?`,
+  (n: string) => `Ooh, ${n}. It looks even better than the photo`,
+  (n: string) => `${n[0].toUpperCase()}${n.slice(1)}… and it fits! Amazing`,
+  (n: string) => `I love it, ${n} suits this place`,
+];
+const UNBOXED_ANY = ['Oh nice, it’s something good!', 'Wow, it really came in one piece!', 'That’s lovely – look at it!', 'Best delivery ever'];
+
+const FETCH_COFFEE = [
+  'Fresh coffee, coming right up', 'Let me fill a cup', 'The machine is calling my name', 'One cup, to go', 'Coffee first – and then somewhere comfy',
+  'I’ll take a cup back with me', 'The smell alone is worth the walk',
+];
+const FETCH_MEAL = [
+  'Something from the fridge, then lunch at the table', 'Let me warm up my lunch', 'The fridge has leftovers, I can smell them', 'Microwave time!',
+  'I’m starving – lunch break', 'Who left a container in the fridge? Mine, I hope', 'A bowl from the fridge and a seat at the table',
+];
+const CARRY_TO = {
+  desk: ['Back to my desk with this', 'I’ll drink it at my desk', 'A cup at the desk makes the code run faster'],
+  table: ['The round table is the best place for this', 'Taking this to the table', 'Let me sit down at the round table with it'],
+  sofa: ['The sofa is where this belongs', 'A cup on the sofa – perfect', 'I’ll enjoy this somewhere soft'],
+} as const;
+
 export const thoughts = {
+  fetchCoffee: (): [string, string] => [pick(FETCH_COFFEE), 'coffee'],
+  fetchMeal: (): [string, string] => [pick(FETCH_MEAL), 'eat'],
+  /** with the cup / bowl in the hand: where it goes */
+  carryTo: (to: 'desk' | 'table' | 'sofa', meal: boolean): [string, string] => [pick(CARRY_TO[to]), meal ? 'eat' : 'coffee'],
+  /** after opening a box: what was in it (`kind` is the kind of the prop; unknown: any remark) */
+  unboxed: (kind?: string): [string, string] => [kind && UNBOXED_NAME[kind] ? pick(UNBOXED)(UNBOXED_NAME[kind]) : pick(UNBOXED_ANY), 'parcel'],
   toilet: (mode: 'phone' | 'book' | 'none', hurry: boolean) => pick(hurry ? WC_HURRY : mode === 'phone' ? WC_PHONE : mode === 'book' ? WC_BOOK : Math.random() < 0.5 ? WC_NONE : WC_PLAIN),
   washHands: () => pick(WASH_HANDS),
   tableCoffee: () => pick(TABLE_COFFEE),

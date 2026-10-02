@@ -256,6 +256,7 @@ function FrameSync() {
       loadingAt = tNow;
       frame.loading = !st.pip && !!st.activeRoomId && preloadTargets(st).some((id) => !frame.mountedRooms.has(id));
     }
+    if (frame.loading) frame.loadingAt = tNow;
     frame.dynamic = dynamic;
     frame.busy = dynamic || frame.cameraBusy || st.cinema;
 

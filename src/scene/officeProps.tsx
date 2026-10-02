@@ -186,7 +186,56 @@ export function ServerRack({ p, roomId }: PP) {
   );
 }
 
+/** Four fridges: the classic one with a microwave on top, a two-door one, a rounded retro one and a tall steel one with a display. */
 export function Fridge({ p, theme }: PP) {
+  const model = p.variant % 4;
+  if (model === 1) {
+    // two doors: the freezer on top, the fridge below, in a pastel of the room
+    const c = shade(theme.accent2, 0.25);
+    return (
+      <group>
+        <RB size={[0.7, 1.5, 0.68]} pos={[0, 0.75, 0]} color={c} r={0.06} rough={0.35} />
+        <RB size={[0.66, 0.012, 0.02]} pos={[0, 1.08, 0.345]} color={shade(c, -0.18)} r={0.004} cast={false} />
+        <RB size={[0.03, 0.22, 0.04]} pos={[0.27, 1.28, 0.365]} color="#cfd5e2" r={0.012} metal={0.5} />
+        <RB size={[0.03, 0.4, 0.04]} pos={[0.27, 0.72, 0.365]} color="#cfd5e2" r={0.012} metal={0.5} />
+        {[[-0.12, 0.85, theme.accent, 0.15], [0.08, 0.6, theme.accent3, -0.2], [-0.05, 0.38, '#ffffff', 0.1]].map(([x, y, col, r], i) => (
+          <RB key={i} size={[0.13, 0.13, 0.006]} pos={[x as number, y as number, 0.345]} rot={[0, 0, r as number]} color={col as string} r={0.003} cast={false} />
+        ))}
+        <Ms geo={G.sphere(0.03, 8, 6)} mat={MB('#9fe8c1')} pos={[-0.25, 1.4, 0.345]} cast={false} />
+        <RB size={[0.62, 0.04, 0.5]} pos={[0, 1.52, 0]} color={shade(c, -0.1)} r={0.015} />
+      </group>
+    );
+  }
+  if (model === 2) {
+    // retro: a rounded cabinet with a chrome handle and feet
+    const c = ['#ffd1dc', '#bfe6ff', '#ffe9a8', '#c8f0d4'][(p.variant >> 2) % 4] ?? '#ffd1dc';
+    return (
+      <group>
+        <RB size={[0.7, 1.28, 0.68]} pos={[0, 0.74, 0]} color={c} r={0.16} rough={0.25} metal={0.1} />
+        <RB size={[0.66, 0.015, 0.02]} pos={[0, 0.95, 0.345]} color={shade(c, -0.15)} r={0.004} cast={false} />
+        <RB size={[0.025, 0.28, 0.05]} pos={[0.28, 1.12, 0.37]} color="#e8ecf4" r={0.012} metal={0.8} rough={0.2} />
+        <RB size={[0.025, 0.5, 0.05]} pos={[0.28, 0.62, 0.37]} color="#e8ecf4" r={0.012} metal={0.8} rough={0.2} />
+        <Ms geo={G.box(0.12, 0.04, 0.012)} mat={M('#e8ecf4', { metal: 0.8, rough: 0.2 })} pos={[-0.18, 1.2, 0.35]} cast={false} />
+        {[-1, 1].flatMap((sx) => [-1, 1].map((sz) => <Ms key={sx + ':' + sz} geo={G.cyl(0.035, 0.03, 0.1, 8)} mat={M('#8a8fa0')} pos={[sx * 0.28, 0.05, sz * 0.26]} />))}
+        <Ms geo={G.sphere(0.03, 8, 6)} mat={M('#ff5d73')} pos={[-0.25, 1.32, 0.34]} cast={false} />
+      </group>
+    );
+  }
+  if (model === 3) {
+    // tall steel, two doors side by side, a display on the left one
+    const c = '#c9d0de';
+    return (
+      <group>
+        <RB size={[0.74, 1.55, 0.7]} pos={[0, 0.775, 0]} color={c} r={0.04} rough={0.3} metal={0.35} />
+        <RB size={[0.012, 1.45, 0.02]} pos={[0, 0.78, 0.355]} color={shade(c, -0.25)} r={0.003} cast={false} />
+        <RB size={[0.03, 0.55, 0.05]} pos={[-0.04, 0.95, 0.38]} color="#8e97aa" r={0.012} metal={0.6} />
+        <RB size={[0.03, 0.55, 0.05]} pos={[0.04, 0.95, 0.38]} color="#8e97aa" r={0.012} metal={0.6} />
+        <RB size={[0.16, 0.1, 0.012]} pos={[-0.22, 1.22, 0.358]} color="#1d2233" r={0.006} cast={false} />
+        <Ms geo={G.plane(0.1, 0.05)} mat={MB('#7fe3ff')} pos={[-0.22, 1.22, 0.366]} cast={false} />
+        <Ms geo={G.sphere(0.012, 6, 4)} mat={MB('#5ed3b0')} pos={[-0.3, 1.1, 0.362]} cast={false} />
+      </group>
+    );
+  }
   const c = p.variant % 2 ? '#d9f5e8' : '#f2f4fa';
   return (
     <group>

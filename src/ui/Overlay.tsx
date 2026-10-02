@@ -63,7 +63,8 @@ export function useRoomStatus(): Record<string, RoomStatus> {
       count[id] = 0;
     }
     for (const t of Object.values(s.tasks)) if (t.sessionId in working) working[t.sessionId] = true;
-    for (const p of Object.values(s.people)) if (p.present && p.sessionId in count) count[p.sessionId]++;
+    // (somebody who has been hired and still waits outside the door is not in the office yet; rooms that are not on screen have no door to wait at)
+    for (const p of Object.values(s.people)) if (p.present && (p.inside !== false || p.sessionId !== s.activeRoomId) && p.sessionId in count) count[p.sessionId]++;
     let k = '';
     for (const id of s.visibleOrder) k += `${id}\t${working[id] ? 1 : 0}\t${count[id]}\n`;
     return k;

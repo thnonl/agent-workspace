@@ -1,5 +1,5 @@
 import type { PersonRec, SpeechKind, TaskRec } from '../types';
-import { FOOT, rot2, type RoomLayout, type Spot, type Station, type StationKind } from '../world/layout';
+import { FOOT, rot2, type PropKind, type RoomLayout, type Spot, type Station, type StationKind } from '../world/layout';
 import type { V2 } from '../world/nav';
 import { sfx, type Sfx } from '../audio';
 import { env } from '../env';
@@ -7,7 +7,7 @@ import { frame, SLOW_MAX_DT } from './frame';
 import { CHAT_SCRIPTS, TABLE_LINES, eatLine, goodbyeLine, greetingLine, reportLine, serveLine, thoughts } from './phrases';
 import { kickDummy, takeDumbbells } from './gym';
 import { notePet } from '../progress';
-import { claimLate, commitDelivery, debugFlags, lateAvailable, movedIfAny, movedOf, notifyMoved, dismissIdle, enqueueSpeech, greet, parcelDone, releaseLate, roomRuntime, tickParcel, sims, simsInRoom, spotOwners, type CatSim, type Phase, type RoomRuntime, type SimState } from './registry';
+import { HIRE_GAP_MS, HURRY_QUEUE, claimLate, commitDelivery, debugFlags, lateAvailable, movedIfAny, movedOf, notifyMoved, dismissIdle, enqueueSpeech, greet, parcelDone, releaseLate, roomRuntime, tickParcel, sims, simsInRoom, spotOwners, type CatSim, type Phase, type RoomRuntime, type SimState } from './registry';
 import { commitMove, findTidySpot, standBeside, untidyProps, type Place } from './tidy';
 
 export interface Pose {
@@ -74,7 +74,7 @@ export interface ActorCtx {
 /** what somebody does at the desk when there is no work: listen to music with headphones on, watch a video, type something of their own */
 export type DeskAct = 'music' | 'video' | 'browse' | 'game' | 'call' | 'shop' | 'mail';
 
-type ActivityKind = DeskAct | 'wander' | 'sofa' | 'watch' | 'window' | 'pet' | 'stay' | 'chat' | 'parcel' | 'tidy' | 'sleep' | 'toilet' | 'table' | StationKind;
+type ActivityKind = DeskAct | 'wander' | 'sofa' | 'watch' | 'window' | 'pet' | 'stay' | 'chat' | 'parcel' | 'tidy' | 'sleep' | 'toilet' | 'table' | 'fetch' | StationKind;
 
 /** activities that sit down on a spot (sofa, toilet, chair at the round table) */
 const SEATED = new Set<ActivityKind>(['sofa', 'toilet', 'table']);
@@ -114,6 +114,12 @@ const SMOKE_KEYS: Key[] = [
 ];
 /** at most this many people of a room are away from their desk on a break at the same time */
 const MAX_WALKERS = 2;
+/** ...but this many may walk in through the door together (a room seats at most this many people) */
+const MAX_WALKERS_IN = 7;
+/** while no room is being loaded ahead this many people of a room may be on the move (walking, sitting down, getting up) at the same time, whatever the motion gap says */
+const MAX_MOVES_FREE = 2;
+/** the most that people walk faster than normal in an almost empty room (see Actor.tempo): 0.5 = one and a half times */
+const TEMPO_EXTRA = 0.5;
 /**
  * No movement inside the room (a walk, sitting down, getting up) starts within this many seconds of the last one. Coming in and going out
  * have a gap of their own (ENTRY_GAP_MIN: they are not counted here, and this gap does not hold them back). Rooms are loaded ahead in
@@ -145,6 +151,14 @@ const GREET_MS = 5000;
 /** at least this long (s) between two people coming in or going out of a room, in either direction */
 const ENTRY_GAP_MIN = 15;
 const ENTRY_GAP_SPAN = 8;
+/** ...but once no other room is left to load ahead (see roomsLoading) the next person follows after this much (s), so work that waits is not held up by the door */
+const ENTRY_GAP_FREE_MIN = 0.9;
+const ENTRY_GAP_FREE_SPAN = 0.6;
+/** work is waiting (HURRY_QUEUE): whoever comes in waves while walking (no stop at the door) and the greeting bubble is shorter */
+const GREET_HURRY_MS = 2000;
+/** the loading flag flickers between two rooms: nothing is taken to be left to load until it has been false for this long (ms) */
+const LOAD_PAUSE_MS = 3000;
+const roomsLoading = () => frame.loading || performance.now() - frame.loadingAt < LOAD_PAUSE_MS;
 
 /**
  * What a character thinks the moment it decides on a break – shown at once, while it is still at its
@@ -176,6 +190,7 @@ function thoughtOf(a: Activity, name: string): [string, string] | null {
     case 'box': return [thoughts.box(), 'box'];
     case 'lift': return [thoughts.lift(), 'lift'];
     case 'chat': return [thoughts.chat(name), 'chat'];
+    case 'fetch': return a.fetch?.item === 'meal' ? thoughts.fetchMeal() : thoughts.fetchCoffee();
     case 'toilet': return [thoughts.toilet(a.toiletMode ?? 'none', !!a.hurry), 'toilet'];
     case 'table': return a.meal === 'coffee' ? [thoughts.tableCoffee(), 'coffee'] : [thoughts.tableMeal(), 'eat'];
     default: return null;
@@ -208,6 +223,9 @@ const K_ARMS_DOWN: Key = { t: 0, rx: 0.05, rz: 0.12, fr: -0.3, lx: 0.05, lz: 0.1
 /** seconds per punch / per dumbbell curl */
 const PUNCH_S = 0.5;
 const CURL_S = 2.2;
+/** at the coffee machine / the fridge: how long it takes to fill the cup / to take a bowl out and warm it (s) */
+const FETCH_COFFEE_S = 3.6;
+const FETCH_MEAL_S = 6.6;
 
 /** What somebody does while there is nothing to work on: the director waiting for the team, staff waiting for the next task. */
 interface Activity {
@@ -243,11 +261,19 @@ interface Activity {
   tidyTo?: Place;
   /** tidy: the carton is a parcel – it is carried to `tidyTo` (where this thing of layout.late stands) and opened there; -1 when it was opened */
   openRank?: number;
+  /** a carton was just opened: what was in it (a stay of `admire` seconds follows, with a remark about it) */
+  openedKind?: PropKind;
+  admire?: number;
   /** toilet: what is done in there, and whether it is an emergency (fast walk, short visit) */
   toiletMode?: 'phone' | 'book' | 'none';
   hurry?: boolean;
   /** table: what is on the table in front of the seat */
   meal?: 'coffee' | 'noodles';
+  /** fetch: what is taken from the coffee machine / the fridge and where it goes; `dest` is the activity at the table or on the sofa that follows (its seat is reserved from the start) */
+  fetch?: { item: 'coffee' | 'meal'; to: 'desk' | 'table' | 'sofa' };
+  dest?: Activity;
+  /** sofa: a cup of coffee from the machine is drunk there */
+  drinkCup?: boolean;
 }
 
 /** height of the hip above the floor for an appearance scale of 1 (model hip * rig scale) */
@@ -380,6 +406,12 @@ export class Actor {
   private workTime = 0;
   private drain = 0;
   private waveT = 0;
+  /** where the person looks while remarking on a thing that has just been unpacked (see admireRun) */
+  private admireLook: V2 | null = null;
+  /** on the trip for a parcel (set when the person decides to go, until they sit at the desk again): no waiting for the gap between two movements, see walkSlotOpen */
+  private parcelTrip = false;
+  /** a coffee / bowl brought to the desk: seconds it stays in the hand (see deskSip) */
+  private sipLeft = 0;
   private waveDone = new Set<number>();
   private from: V2 = { x: 0, z: 0 };
   private blinkT = 2;
@@ -552,6 +584,11 @@ export class Actor {
     return this.isDirector ? 0 : ctx.layout.desks[this.sim.desk].rot;
   }
 
+  /** kind of the break the person is on (a break of its own: walking there, doing it, walking back) */
+  get actKind(): string | undefined {
+    return this.act?.kind;
+  }
+
   private setPhase(p: Phase) {
     this.sim.phase = p;
     this.t = 0;
@@ -564,6 +601,8 @@ export class Actor {
     if (p === 'standing') this.standHead = null;
     // back at the desk, reporting or gone: no longer on a break of its own
     if (p === 'working' || p === 'waiting' || p === 'leaving' || p === 'packing' || p === 'toBoss') this.sim.onBreak = false;
+    // the trip for a parcel is over once the person sits at the desk again
+    if (p === 'working' || p === 'waiting' || p === 'leaving') this.parcelTrip = false;
     if (p === 'activity') {
       this.chatLine = -1;
       this.zzzStep = -1;
@@ -642,9 +681,16 @@ export class Actor {
     // the way in and out has its own spacing, see ENTRY_GAP_MIN)
     const quiet = ctx.now - ctx.rt.motionAt >= this.motionGap();
     const goingOn = ctx.rt.motionBy === s.key && ctx.now - ctx.rt.motionAt < MOTION_CONTINUE_S;
-    const spaced = quiet || goingOn || this.atDoor();
-    const open = spaced && walkers < MAX_WALKERS && (priority || !priorityWaits);
-    s.walkWait = open ? 0 : priority ? 2 : 1;
+    const settled = !roomsLoading();
+    // (whoever goes out for the parcel does not wait for the others while no room is being loaded ahead)
+    // (the whole trip: out for the box, in with it, and back to the desk)
+    const fetching = settled && (this.act?.kind === 'parcel' || this.parcelTrip);
+    // (two movements at the same time are fine while no room is being loaded ahead)
+    const spaced = quiet || goingOn || this.atDoor() || fetching || (settled && this.othersMoving(s) < MAX_MOVES_FREE);
+    // (people coming in follow each other at once while no room is being loaded ahead: the limit is for breaks)
+    const limit = fetching || (priority && this.atDoor() && settled) ? MAX_WALKERS_IN : MAX_WALKERS;
+    const open = spaced && walkers < limit && (priority || fetching || !priorityWaits);
+    s.walkWait = open ? 0 : priority || fetching ? 2 : 1;
     return open;
   }
 
@@ -656,13 +702,36 @@ export class Actor {
 
   /** The gap between two movements in the room: short once nothing is left to load ahead. */
   private motionGap(): number {
-    return frame.loading ? MOTION_GAP_S : MOTION_GAP_FREE_S;
+    return roomsLoading() ? MOTION_GAP_S : MOTION_GAP_FREE_S;
   }
 
-  /** May a movement start now? Not within the motion gap of the last one in the room, nor while rooms are being loaded ahead. */
+  /**
+   * The pace of walking, sitting down and getting up: brisker when the room is nearly empty (nobody is in the way) and no room is
+   * being loaded ahead (nothing has to wait for the movement to be over): 1.5 times with two people or fewer on stage, falling to the
+   * normal pace at six.
+   */
+  private tempo(): number {
+    if (roomsLoading()) return 1;
+    let n = 0;
+    for (const o of simsInRoom(this.sim.roomId)) if (o.onStage) n++;
+    return 1 + TEMPO_EXTRA * Math.min(1, Math.max(0, (6 - n) / 4));
+  }
+
+  /** How many others of the room are on the move right now (walking, sitting down, getting up). */
+  private othersMoving(s: SimState): number {
+    let n = 0;
+    for (const o of simsInRoom(s.roomId)) {
+      if (o === s || !o.onStage) continue;
+      if (o.walking || o.phase === 'sitting' || o.phase === 'standing' || (o.sitT > 0.01 && o.sitT < 0.99)) n++;
+    }
+    return n;
+  }
+
+  /** May a movement start now? Not while rooms are being loaded ahead; not within the motion gap of the last one in the room – unless fewer than MAX_MOVES_FREE others are on the move and no room is left to load. */
   private motionOpen(ctx: ActorCtx): boolean {
     if (frame.aheadBuilding > 0 && this.sim.roomId === frame.activeId) return false;
-    return ctx.now - ctx.rt.motionAt >= this.motionGap();
+    if (ctx.now - ctx.rt.motionAt >= this.motionGap()) return true;
+    return !roomsLoading() && this.othersMoving(this.sim) < MAX_MOVES_FREE;
   }
 
   private claimMotion(ctx: ActorCtx) {
@@ -717,7 +786,8 @@ export class Actor {
     const dx = target.x - s.x;
     const dz = target.z - s.z;
     const dist = Math.hypot(dx, dz);
-    const step = WALK_SPEED * speedMul * dt;
+    const pace = speedMul * this.tempo();
+    const step = WALK_SPEED * pace * dt;
     s.walking = true;
     if (dist <= step) {
       s.x = target.x;
@@ -730,7 +800,7 @@ export class Actor {
     this.avoid(dt, ctx);
     const heading = Math.atan2(dx, dz);
     s.yaw += angleDiff(s.yaw, heading) * Math.min(1, dt * 11);
-    this.walkPhase += dt * WALK_SPEED * speedMul * 4.6;
+    this.walkPhase += dt * WALK_SPEED * pace * 4.6;
     if (this.pi >= this.path.length) {
       s.walking = false;
       return true;
@@ -780,7 +850,8 @@ export class Actor {
   update(dt: number, ctx: ActorCtx) {
     dt = Math.min(dt, SLOW_MAX_DT); // (callers already cap the active room at ACTIVE_MAX_DT; slow rooms hand in one long step)
     this.clock += dt;
-    this.t += dt;
+    // (getting up and sitting down go at the pace of walking)
+    this.t += this.sim.phase === 'sitting' || this.sim.phase === 'standing' ? dt * this.tempo() : dt;
     this.ctxNow = ctx;
     const s = this.sim;
     const { person, layout, rt } = ctx;
@@ -836,10 +907,15 @@ export class Actor {
           this.setPhase('working');
           break;
         }
-        if (dt <= 0 || ctx.now < rt.doorFreeAt) break;
+        // (a long gap set while rooms were being loaded does not hold anybody up once the loading is over)
+        const doorWait = rt.doorFreeAt - ctx.now;
+        if (dt <= 0 || (doorWait > 0 && (roomsLoading() || doorWait <= ENTRY_GAP_FREE_MIN + ENTRY_GAP_FREE_SPAN))) break;
+        // a staff member comes in at least HIRE_GAP_MS after the previous one (new hires and people who come back from home alike: they do not pour in together)
+        if (!this.isDirector && Date.now() - rt.lastNewcomer < HIRE_GAP_MS) break;
         // (the way in is a priority walk: it waits for a free slot, and idle walks give way to it meanwhile)
         if (!this.takeWalkSlot(ctx, dt, true)) break;
-        rt.doorFreeAt = ctx.now + ENTRY_GAP_MIN + Math.random() * ENTRY_GAP_SPAN;
+        if (!this.isDirector) rt.lastNewcomer = Date.now();
+        rt.doorFreeAt = ctx.now + (roomsLoading() ? ENTRY_GAP_MIN + Math.random() * ENTRY_GAP_SPAN : ENTRY_GAP_FREE_MIN + Math.random() * ENTRY_GAP_FREE_SPAN);
         this.startPath(this.routeIn(ctx, this.approachOf(ctx)));
         this.waveDone.clear();
         this.resume = false;
@@ -852,7 +928,11 @@ export class Actor {
         this.deskPetT = -1;
         this.nextIdleAt = debugFlags.activity ? 1.5 : 12 + Math.random() * 8;
         // at the door: a greeting first, the job they came for follows five seconds later
-        greet(s.key, greetingLine(this.isDirector, Math.floor(env.hour), this.colleaguesHere(ctx)), 'wave', GREET_MS);
+        // (a member of staff greets somebody who is inside, picked at random: the boss or a colleague)
+        const inside = this.isDirector ? [] : simsInRoom(s.roomId).filter((o) => o !== s && o.onStage);
+        const greeted = inside.length ? inside[Math.floor(Math.random() * inside.length)] : null;
+        const mate = greeted && !greeted.key.endsWith('::director') ? ctx.nameOf(greeted.key) : undefined;
+        greet(s.key, greetingLine(this.isDirector, Math.floor(env.hour), this.colleaguesHere(ctx), mate), 'wave', rt.queued >= HURRY_QUEUE ? GREET_HURRY_MS : GREET_MS);
         sfx('door', s.roomId);
         s.onStage = true;
         s.yaw = Math.atan2(layout.door.dir.x, layout.door.dir.z);
@@ -861,13 +941,18 @@ export class Actor {
       }
 
       case 'entering': {
-        this.stepWave(dt, 1, true);
-        if (this.waveT <= 0 && this.walk(dt, ctx)) {
+        // work is waiting: no stop at the door, the greeting is waved on the way in
+        const hurry = rt.queued >= HURRY_QUEUE;
+        this.stepWave(dt, 1, true, hurry);
+        if ((hurry || this.waveT <= 0) && this.walk(dt, ctx)) {
           this.from = { x: s.x, z: s.z };
           this.setPhase('sitting');
         }
         this.walkPose(pose, 1);
-        if (this.waveT > 0) this.wavePose(pose);
+        if (this.waveT > 0) {
+          if (hurry) this.waveArm(pose);
+          else this.wavePose(pose);
+        }
         break;
       }
 
@@ -1018,6 +1103,12 @@ export class Actor {
           this.workPose(pose, ctx);
           this.idleBehaviour(dt, ctx);
         } else if (task) {
+          if (this.sipLeft > 0) {
+            // (work comes first: the cup is put down)
+            this.sipLeft = 0;
+            if (this.held === 'cup' || this.held === 'bowl') this.held = 'none';
+            this.heldTilt = 0;
+          }
           if (task.key !== this.curTask) {
             // a new task: start the clock, the previous one is forgotten
             this.curTask = task.key;
@@ -1045,6 +1136,7 @@ export class Actor {
           // nothing to do until the next task comes round: sit tight, or take a little break
           this.curTask = '';
           this.workPose(pose, ctx);
+          if (this.sipLeft > 0) this.deskSip(pose, dt);
           if (s.chatBy) {
             // a colleague is chatting with them: nod along
             pose.headX = Math.sin(this.clock * 3.1) * 0.07;
@@ -1135,6 +1227,7 @@ export class Actor {
         if (!this.act?.outdoor && this.awayWork(dt, ctx, pose)) break;
         const hurry = !!this.act?.hurry;
         this.walkPose(pose, hurry ? 1.25 : 1);
+        this.carryPose(pose);
         s.y = 0;
         if (this.shouldReturn(ctx)) this.goHome(ctx);
         else if (this.walk(dt, ctx, hurry ? 1.55 : 1)) {
@@ -1152,6 +1245,7 @@ export class Actor {
 
       case 'returning': {
         this.walkPose(pose, 1);
+        this.carryPose(pose);
         s.y = 0;
         if (this.walk(dt, ctx)) {
           this.from = { x: s.x, z: s.z };
@@ -1334,9 +1428,15 @@ export class Actor {
     }
     this.restT += dt;
     // the doorbell rang: whoever sits at the desk without work goes for the parcel soon
-    if (ctx.rt.parcel === 'waiting' && !ctx.rt.parcelBy && this.nextIdleAt > this.restT + 6) this.nextIdleAt = this.restT + 2 + Math.random() * 4;
+    // (a moment to react when no room is being loaded ahead, a few seconds otherwise)
+    if (ctx.rt.parcel === 'waiting' && !ctx.rt.parcelBy) {
+      const react = roomsLoading() ? 6 : 1.5;
+      if (this.nextIdleAt > this.restT + react) this.nextIdleAt = this.restT + (roomsLoading() ? 2 + Math.random() * 4 : 0.4 + Math.random() * 0.8);
+    }
     if (this.restT < this.nextIdleAt) return;
-    if (!this.motionOpen(ctx)) return; // (somebody else is on the move, or was a moment ago)
+    // (the parcel is fetched at once when no room is being loaded ahead)
+    const parcelCall = ctx.rt.parcel === 'waiting' && !ctx.rt.parcelBy && !roomsLoading();
+    if (!parcelCall && !this.motionOpen(ctx)) return; // (somebody else is on the move, or was a moment ago)
     const a = this.pickActivity(ctx);
     if (!a) {
       this.nextIdleAt = this.restT + 3 + Math.random() * 3;
@@ -1349,6 +1449,7 @@ export class Actor {
       return;
     }
     this.act = a;
+    this.parcelTrip = a.kind === 'parcel';
     // the thought appears right away – the character is still in the chair
     this.announce(ctx, thoughtOf(a, a.detail ?? ''));
     if (a.atDesk) {
@@ -1556,7 +1657,7 @@ export class Actor {
     const from = { x: s.x, z: s.z };
     const free = (p: V2) => !layout.nav.isBlocked(p.x, p.z);
     const pick = <T,>(arr: readonly T[]) => arr[Math.floor(Math.random() * arr.length)];
-    const seats = layout.spots.map((sp, i) => ({ sp, i })).filter(({ sp, i }) => (sp.kind === 'sofa' || sp.kind === 'armchair') && !sp.off && !spotOwners.has(`${s.roomId}#${i}`));
+    const seats = layout.spots.map((sp, i) => ({ sp, i })).filter(({ sp, i }) => (sp.kind === 'sofa' || sp.kind === 'armchair' || sp.kind === 'beanbag') && !sp.off && !spotOwners.has(`${s.roomId}#${i}`));
     // a cat asleep on the director's desk can only be reached from the director's chair
     const petCats = cats.filter((c) => c.onStage && c.still && c.petUntil < ctx.now && (this.isDirector || layout.spots[c.spot]?.kind !== 'desk'));
     const watchable = workers.filter((w) => w.desk >= 0 && w.busy && w.key !== s.key);
@@ -1572,9 +1673,18 @@ export class Actor {
     /** people already sitting at round table `ti` (a table with company is more inviting) */
     const seated = (ti: number) => layout.tables[ti].seats.filter((i) => spotOwners.has(`${s.roomId}#${i}`)).length;
     const stationsOf = (k: StationKind) => layout.stations.map((st, i) => ({ st, i })).filter(({ st, i }) => st.kind === k && !st.off && !spotOwners.has(`${s.roomId}@${i}`));
+    // (one person at a window: with every window taken nobody else decides to look out)
+    const windowsFree = layout.catWindows.map((cw, i) => ({ cw, i })).filter(({ i }) => {
+      const by = spotOwners.get(`${s.roomId}~w${i}`);
+      return !by || !sims.get(by)?.onStage; // (an owner who has left the scene does not keep it)
+    });
+    // (something to drink from the coffee machine, or a bowl from the fridge, is brought to a seat)
+    const coffeeSt = stationsOf('drink').filter(({ st }) => st.prop === 'coffee');
+    const fridgeSt = stationsOf('fridge');
+    const canFetch = coffeeSt.length > 0 || (fridgeSt.length > 0 && chairsFree.length > 0);
     const options: [ActivityKind, number][] = [
       ['wander', staff ? 0.4 : 0.9], ['sofa', seats.length ? (staff ? 4 : 3) : 0], ['watch', watchable.length ? (staff ? 1.5 : 4) : 0],
-      ['window', layout.catWindows.length ? (staff ? 1.5 : 2.5) : 0], ['pet', petCats.length ? (staff ? 4.5 : 5) : 0], ['stay', staff ? 5 : 0],
+      ['fetch', canFetch ? (staff ? 3.5 : 2.5) : 0], ['window', windowsFree.length ? (staff ? 1.5 : 2.5) : 0], ['pet', petCats.length ? (staff ? 4.5 : 5) : 0], ['stay', staff ? 5 : 0],
       ['drink', stationsOf('drink').length ? 4 : 0], ['read', stationsOf('read').length ? 3.5 : 0], ['fish', stationsOf('fish').length ? 3.5 : 0],
       ['wash', stationsOf('wash').length ? 2.5 : 0], ['water', stationsOf('water').length ? 3.5 : 0],
       ['cook', stationsOf('cook').length ? 3.5 : 0],
@@ -1617,6 +1727,31 @@ export class Actor {
         spotOwners.set(stationKey, s.key);
         const dur = kind === 'drink' ? 15 : kind === 'read' ? 26 + Math.random() * 10 : kind === 'fish' ? 22 + Math.random() * 10 : kind === 'wash' ? 14 : kind === 'cook' ? 34 + Math.random() * 6 : kind === 'box' ? 18 + Math.random() * 10 : kind === 'lift' ? 20 + Math.random() * 10 : 20 + Math.random() * 6;
         return { kind, target: st.stand, yaw: st.yaw, dur, station: st, stationKey, detail: kind === 'read' ? pickOne(BOOKS) : undefined };
+      }
+      case 'fetch': {
+        let item: 'coffee' | 'meal' = 'coffee';
+        let src = coffeeSt.length ? pick(coffeeSt) : null;
+        if (fridgeSt.length && chairsFree.length && (!src || Math.random() < 0.45)) {
+          item = 'meal';
+          src = pick(fridgeSt);
+        }
+        if (!src) return null;
+        // a bowl is eaten at the round table; a coffee is drunk at the desk, at the table or on the sofa / bean bag
+        const places: ('desk' | 'table' | 'sofa')[] = item === 'meal' ? ['table'] : ['desk', ...(chairsFree.length ? (['table'] as const) : []), ...(seats.length ? (['sofa'] as const) : [])];
+        const to = pick(places);
+        let dest: Activity | undefined;
+        if (to === 'table') {
+          const weighted = chairsFree.flatMap((c) => Array.from({ length: 1 + 2 * seated(c.sp.table ?? 0) }, () => c));
+          const { sp, i } = pick(weighted);
+          dest = { kind: 'table', target: sp.approach, yaw: sp.yaw, dur: item === 'coffee' ? 30 + Math.random() * 16 : 36 + Math.random() * 14, spot: i, meal: item === 'coffee' ? 'coffee' : 'noodles' };
+        } else if (to === 'sofa') {
+          const { sp, i } = pick(seats);
+          dest = { kind: 'sofa', target: sp.approach, yaw: sp.yaw, dur: 24 + Math.random() * 24, spot: i, drinkCup: true };
+        }
+        if (dest) spotOwners.set(`${s.roomId}#${dest.spot}`, s.key);
+        const stationKey = `${s.roomId}@${src.i}`;
+        spotOwners.set(stationKey, s.key);
+        return { kind, target: src.st.stand, yaw: src.st.yaw, dur: 0, station: src.st, stationKey, spot: dest?.spot, fetch: { item, to }, dest };
       }
       case 'toilet': {
         // a quick dash or a long sit; phone, book or nothing at all
@@ -1667,10 +1802,12 @@ export class Actor {
         return null;
       }
       case 'window': {
-        const cw = pick(layout.catWindows);
+        const { cw, i } = pick(windowsFree);
+        const stationKey = `${s.roomId}~w${i}`;
+        spotOwners.set(stationKey, s.key);
         // about a third of them smoke while they look out (two drags instead of a long look)
         const smoke = Math.random() < 0.35;
-        return { kind, target: cw.land, yaw: cw.yaw + Math.PI, dur: smoke ? 20 + Math.random() * 6 : 15 + Math.random() * 13, smoke };
+        return { kind, target: cw.land, yaw: cw.yaw + Math.PI, dur: smoke ? 20 + Math.random() * 6 : 15 + Math.random() * 13, smoke, stationKey };
       }
       case 'tidy': {
         // a plant or carton that stands in the middle of the room goes to a tidier place along a wall
@@ -1811,7 +1948,8 @@ export class Actor {
           // walk up to the spot opposite the seat, turn round on the spot, then back down onto the cushion
           const pts = route(this.from);
           const len = polyLen(pts);
-          const walkT = Math.max(0.3, len / (WALK_SPEED * 0.8));
+          const tp = this.tempo();
+          const walkT = Math.max(0.3 / tp, len / (WALK_SPEED * 0.8 * tp));
           const turnEnd = walkT + SOFA_TURN_S2;
           s.y = 0;
           if (t < walkT) {
@@ -1821,8 +1959,9 @@ export class Actor {
             s.z = p.z;
             s.sitT = 0;
             if (p.yaw !== null) this.faceYaw(p.yaw, dt, 11);
-            this.walkPhase += dt * WALK_SPEED * 0.8 * 4.6;
+            this.walkPhase += dt * WALK_SPEED * 0.8 * tp * 4.6;
             this.walkPose(pose, 0.8);
+            this.carryPose(pose);
           } else if (t < turnEnd) {
             if (this.turnFrom === null) {
               this.turnFrom = s.yaw;
@@ -1866,6 +2005,8 @@ export class Actor {
           else if (a.sleep) {
             this.sleepPose(pose, true);
             this.zzz(ctx, t);
+          } else if (a.drinkCup) {
+            this.cupSeat(pose, t);
           } else if (a.phone) {
             this.held = 'phone';
             this.phonePose(pose, t);
@@ -1897,7 +2038,8 @@ export class Actor {
           } else {
             const pts = route(spot.approach).reverse();
             const len = polyLen(pts);
-            const walkT = Math.max(0.25, len / (WALK_SPEED * 0.8));
+            const tp = this.tempo();
+            const walkT = Math.max(0.25 / tp, len / (WALK_SPEED * 0.8 * tp));
             const u = Math.min(1, (t - riseEnd) / walkT);
             const p = polyAt(pts, len * u);
             s.x = p.x;
@@ -1905,7 +2047,7 @@ export class Actor {
             s.y = 0;
             s.sitT = 0;
             if (p.yaw !== null) this.faceYaw(p.yaw, dt, 11);
-            this.walkPhase += dt * WALK_SPEED * 0.8 * 4.6;
+            this.walkPhase += dt * WALK_SPEED * 0.8 * tp * 4.6;
             this.walkPose(pose, 0.8);
             if (u >= 1) this.leaveSeat(ctx, a, back);
           }
@@ -1954,6 +2096,14 @@ export class Actor {
         this.petPose(pose);
         this.cue('meow', 1.4);
         if (back || t > a.dur || !cat || !cat.onStage || !cat.still) this.goHome(ctx);
+        break;
+      }
+      case 'fetch': {
+        this.faceYaw(a.yaw, dt, 7);
+        this.idlePose(pose);
+        this.fetchPose(a, pose, ctx);
+        if (back) this.goHome(ctx);
+        else if (t >= (a.fetch?.item === 'meal' ? FETCH_MEAL_S : FETCH_COFFEE_S)) this.finishFetch(ctx, a);
         break;
       }
       case 'drink':
@@ -2098,6 +2248,107 @@ export class Actor {
       p.headX += Math.sin(c * 3.1) * 0.04;
       p.happy = Math.max(p.happy, 0.45);
     }
+  }
+
+  /** the cup / bowl in the right hand while walking: held up in front of the chest */
+  private carryPose(p: Pose) {
+    if (this.held !== 'cup' && this.held !== 'bowl') return;
+    p.armRx = -0.95;
+    p.armRz = -0.12;
+    p.foreRx = -1.15;
+    p.lean = Math.min(p.lean, 0.02);
+    this.heldTilt = 0;
+  }
+
+  /** drinking a coffee on the sofa / bean bag: the cup rests at the chest and goes up to the mouth now and then */
+  private cupSeat(p: Pose, t: number) {
+    this.held = 'cup';
+    const cyc = t > 1.5 ? (t - 1.5) / 7 : -1;
+    const u = cyc >= 0 ? cyc % 1 : 0;
+    const raise = cyc >= 0 ? seg(u, 0, 0.16) * (1 - seg(u, 0.4, 0.58)) : 0;
+    if (cyc >= 0 && u > 0.28 && Math.floor(cyc) >= this.bites) {
+      this.bites = Math.floor(cyc) + 1;
+      sfx('sip', this.sim.roomId);
+    }
+    this.sofaPose(p);
+    p.armRx = lerp(-0.75, -0.85, raise);
+    p.armRz = lerp(-0.1, -0.55, raise);
+    p.foreRx = lerp(-1.25, -2.05, raise);
+    this.heldTilt = -0.55 * raise;
+    p.headX = -0.02 - 0.16 * raise;
+    p.happy = 0.3 + 0.5 * raise;
+  }
+
+  /** at the coffee machine (fill a cup) or at the fridge (take a bowl out, warm it): the item is in the hand at the end */
+  private fetchPose(a: Activity, pose: Pose, ctx: ActorCtx) {
+    const t = this.t;
+    const meal = a.fetch?.item === 'meal';
+    this.held = 'none';
+    this.heldTilt = 0;
+    if (!meal) {
+      this.keyed(pose, [
+        { t: 0 }, { t: 0.7, rx: -0.5, rz: -0.05, fr: -0.2 },
+        { t: 1.3, rx: -1.25, rz: -0.05, fr: -0.45, lean: 0.08 }, { t: 2.5, rx: -1.25, rz: -0.05, fr: -0.45, lean: 0.08, hx: 0.12 },
+        { t: 3.2, rx: -0.95, rz: -0.12, fr: -1.15 }, { t: FETCH_COFFEE_S, rx: -0.95, rz: -0.12, fr: -1.15 },
+      ], t);
+      if (t > 0.8) this.held = 'cup';
+      this.cue('pour', 1.4);
+      this.cue('clink', 2.7);
+      if (t > 3.0) pose.happy = 0.8;
+    } else {
+      this.keyed(pose, [
+        { t: 0 }, { t: 0.7, rx: -1.2, rz: -0.1, fr: -0.4, lean: 0.12, hx: 0.1 },
+        { t: 1.8, rx: -1.2, rz: -0.1, fr: -0.4, lean: 0.14, hx: 0.12 }, { t: 2.5, rx: -0.95, rz: -0.12, fr: -1.15, lean: 0.04 },
+        { t: 5.0, rx: -0.95, rz: -0.12, fr: -1.15, lean: 0.02 }, { t: FETCH_MEAL_S, rx: -0.95, rz: -0.12, fr: -1.15 },
+      ], t);
+      if (t > 1.9) this.held = 'bowl';
+      this.cue('paper', 0.7);
+      this.cue('clink', 2.0);
+      this.cue('ding', 5.2);
+      if (t > 3.0 && t < 5.0) pose.headY = Math.sin(this.clock * 0.9) * 0.25;
+      if (t > 5.2) pose.happy = 0.8;
+    }
+    void ctx;
+  }
+
+  /** the cup / bowl is ready: it goes to the seat that was reserved (round table, sofa / bean bag), or back to the desk */
+  private finishFetch(ctx: ActorCtx, a: Activity) {
+    const s = this.sim;
+    const f = a.fetch!;
+    const keep: HeldKind = f.item === 'coffee' ? 'cup' : 'bowl';
+    // the machine / the fridge is free for the next one
+    if (a.stationKey && spotOwners.get(a.stationKey) === s.key) spotOwners.delete(a.stationKey);
+    if (f.to === 'desk' || !a.dest) {
+      this.goHome(ctx); // (the seat in the chair is next; the cup stays in the hand for a while, see deskSip)
+      this.held = keep;
+      this.sipLeft = 22 + Math.random() * 14;
+      this.announce(ctx, thoughts.carryTo('desk', f.item === 'meal'));
+      return;
+    }
+    const dest = a.dest;
+    this.act = dest;
+    this.held = keep;
+    this.announce(ctx, thoughts.carryTo(f.to, f.item === 'meal'));
+    this.startPath(ctx.layout.nav.findPath({ x: s.x, z: s.z }, dest.target) ?? [dest.target]);
+    this.setPhase('stroll');
+  }
+
+  /** the coffee at the desk: the cup goes up to the mouth every few seconds while the other hand goes on typing */
+  private deskSip(p: Pose, dt: number) {
+    this.sipLeft -= dt;
+    if (this.sipLeft <= 0) {
+      this.held = 'none';
+      this.heldTilt = 0;
+      return;
+    }
+    const cyc = this.clock / 8;
+    const u = cyc % 1;
+    const raise = seg(u, 0, 0.16) * (1 - seg(u, 0.4, 0.58));
+    p.armRx = lerp(p.armRx, -0.85, raise);
+    p.armRz = lerp(p.armRz, -0.55, raise);
+    p.foreRx = lerp(p.foreRx, -2.05, raise);
+    this.heldTilt = -0.55 * raise;
+    p.headX = p.headX - 0.12 * raise;
   }
 
   /** the seat is free again; after the toilet one goes and washes their hands, anything else goes home */
@@ -2622,6 +2873,11 @@ export class Actor {
     const t = this.t;
     const c = this.clock;
     const L = ctx.layout;
+    // (the box is open: a short stay to remark on what was in it)
+    if (this.actStage === 3) {
+      this.admireRun(dt, ctx, pose, a, back || !!ctx.task);
+      return;
+    }
     if (back || rt.parcelBy !== s.key || ctx.task) {
       // (a box that is already inside is opened where it is rather than carried out again)
       if (this.actStage === 2) this.openParcel(ctx);
@@ -2676,9 +2932,40 @@ export class Actor {
       this.cue('paper', 1.4);
       if (t >= 3.3) {
         // opened: the thing stands there now
+        const kind = rt.parcelRank >= 0 ? L.props[L.late[rt.parcelRank]].kind : undefined;
+        const look = this.deliverTo;
         this.openParcel(ctx);
-        this.goHome(ctx);
+        this.startAdmire(ctx, a, kind, look);
       }
+    }
+  }
+
+  /** A carton has just been opened: the person stays 2-4 seconds (stage 3 of the delivery and of the carton run) and remarks on what was in it. */
+  private startAdmire(ctx: ActorCtx, a: Activity, kind: PropKind | undefined, look: V2 | null) {
+    a.openedKind = kind;
+    a.admire = 2 + Math.random() * 2;
+    this.admireLook = look;
+    this.actStage = 3;
+    this.setPhase('activity');
+    this.announce(ctx, thoughts.unboxed(kind));
+  }
+
+  private admireRun(dt: number, ctx: ActorCtx, pose: Pose, a: Activity, stop: boolean) {
+    const s = this.sim;
+    const t = this.t;
+    if (this.admireLook) this.faceYaw(Math.atan2(this.admireLook.x - s.x, this.admireLook.z - s.z), dt, 6);
+    this.idlePose(pose);
+    // hands on the hips, a little hop of joy at the start, a big smile
+    pose.armLx = pose.armRx = 0.25;
+    pose.armLz = pose.armRz = 0.55;
+    pose.foreLx = pose.foreRx = -1.1;
+    pose.happy = 1;
+    pose.mouth = t < 1.2 ? 'o' : 'smile';
+    pose.bob = Math.abs(Math.sin(t * 9)) * 0.06 * (1 - seg(t, 0.2, 0.9));
+    pose.headY = Math.sin(this.clock * 1.2) * 0.2;
+    if (stop || t >= (a.admire ?? 3)) {
+      this.admireLook = null;
+      this.goHome(ctx);
     }
   }
 
@@ -2712,6 +2999,11 @@ export class Actor {
   private tidyRun(dt: number, ctx: ActorCtx, pose: Pose, a: Activity, back: boolean) {
     const s = this.sim;
     const t = this.t;
+    // (the carton is open: a short stay to remark on what was in it)
+    if (this.actStage === 3) {
+      this.admireRun(dt, ctx, pose, a, back);
+      return;
+    }
     const items = movedOf(s.roomId, ctx.layout);
     const it = items[a.tidy ?? -1];
     const to = a.tidyTo;
@@ -2776,8 +3068,10 @@ export class Actor {
           it.by = null;
           it.to = null;
           notifyMoved(s.roomId);
+          const kindIn = ctx.layout.props[ctx.layout.late[a.openRank!]]?.kind;
           commitDelivery(s.roomId, ctx.layout, a.openRank!);
           a.openRank = undefined;
+          this.startAdmire(ctx, a, kindIn, to);
         }
       } else {
         pose.armLx = pose.armRx = 0.1;
@@ -2926,11 +3220,11 @@ export class Actor {
     p.lean = 0.06;
   }
 
-  private stepWave(dt: number, index: number, greet: boolean) {
-    // wave once when reaching the door line (hello when entering, bye when leaving)
+  private stepWave(dt: number, index: number, greet: boolean, walkOn = false) {
+    // wave once when reaching the door line (hello when entering, bye when leaving); `walkOn`: keep walking while waving
     if (this.waveT > 0) {
       this.waveT -= dt;
-      this.sim.walking = false;
+      if (!walkOn) this.sim.walking = false;
       return;
     }
     const trigger = greet ? 1 : this.path.length - 1; // just past the threshold (enter) / at the threshold (leave)
@@ -2953,6 +3247,15 @@ export class Actor {
     p.lean = 0;
     p.roll = 0;
     p.twist = 0;
+  }
+
+  /** the waving arm only (the legs go on walking) */
+  private waveArm(p: Pose) {
+    p.armRx = -2.7;
+    p.armRz = 0.35 + Math.sin(this.clock * 14) * 0.35;
+    p.foreRx = -0.3;
+    p.happy = 1;
+    p.headZ = Math.sin(this.clock * 3) * 0.08;
   }
 
   private idlePose(p: Pose) {
