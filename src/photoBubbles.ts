@@ -207,7 +207,30 @@ function drawShape(g: CanvasRenderingContext2D, bubble: HTMLElement, scale: numb
   g.restore();
 }
 
-/** Draws every visible bubble onto `g`. `gl` is the canvas the picture is made from (its screen position and pixel size give the scale). */
+/** the pill of a name tag: white, a soft shadow and a ring of the character's colour along the inside */
+function drawTag(g: CanvasRenderingContext2D, tag: HTMLElement, scale: number) {
+  const r = tag.getBoundingClientRect();
+  const cs = getComputedStyle(tag);
+  const radius = Math.min(px(cs.borderTopLeftRadius), r.height / 2);
+  g.save();
+  g.shadowColor = 'rgba(70, 50, 110, 0.2)';
+  g.shadowBlur = 8 * scale;
+  g.shadowOffsetY = 3 * scale;
+  g.fillStyle = cs.backgroundColor;
+  rrect(g, r.left, r.top, r.width, r.height, radius);
+  g.fill();
+  g.restore();
+  g.save();
+  rrect(g, r.left, r.top, r.width, r.height, radius);
+  g.clip();
+  g.strokeStyle = cs.getPropertyValue('--accent').trim() || '#b9a8e8';
+  g.lineWidth = 4;
+  rrect(g, r.left, r.top, r.width, r.height, radius);
+  g.stroke();
+  g.restore();
+}
+
+/** Draws every visible bubble and name tag onto `g`. `gl` is the canvas the picture is made from (its screen position and pixel size give the scale). */
 export function drawBubbles(g: CanvasRenderingContext2D, gl: HTMLCanvasElement) {
   const at = gl.getBoundingClientRect();
   if (!at.width || !at.height) return;
@@ -217,21 +240,25 @@ export function drawBubbles(g: CanvasRenderingContext2D, gl: HTMLCanvasElement) 
     .map((p) => ({ p, z: parseInt(p.style.zIndex || '0', 10) || 0 }))
     .sort((a, b) => a.z - b.z);
   for (const { p } of list) {
+    // a bubble, or the name tag of somebody who says nothing
     const bubble = p.querySelector<HTMLElement>('.bubble');
-    if (!bubble) continue; // (a name tag: not part of the talk)
+    const tag = bubble ? null : p.querySelector<HTMLElement>('.nametag');
+    const el = bubble ?? tag;
+    if (!el) continue;
     // the entrance animation, the tilt of a note and the hop of a question would put the text rectangles somewhere else than the outline:
     // the bubble is measured standing still (all in one task, nothing is painted in between)
-    bubble.style.setProperty('animation', 'none', 'important');
-    bubble.style.setProperty('transform', 'none', 'important');
+    el.style.setProperty('animation', 'none', 'important');
+    el.style.setProperty('transform', 'none', 'important');
     g.save();
     g.setTransform(scale, 0, 0, scale, -at.left * scale, -at.top * scale);
     try {
-      drawShape(g, bubble, scale);
-      walk(g, bubble, [], 1);
+      if (bubble) drawShape(g, bubble, scale);
+      else drawTag(g, el, scale);
+      walk(g, el, [], 1);
     } finally {
       g.restore();
-      bubble.style.removeProperty('animation');
-      bubble.style.removeProperty('transform');
+      el.style.removeProperty('animation');
+      el.style.removeProperty('transform');
     }
   }
 }
