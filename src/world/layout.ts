@@ -1252,41 +1252,6 @@ function buildLayoutTry(seed: number, themeIndex: number, attempt: number): Room
     }
     return null;
   };
-  /**
-   * A gaming corner of its own (when no sofa has room for the console in front of it): the TV with the console against a wall, a sofa
-   * facing it. Returns whether it found a place.
-   */
-  const gamingCorner = (rng: Rng): boolean => {
-    const [cw, cd] = FOOT.psConsole;
-    const [sw, sd] = FOOT.sofa;
-    const inside = (q: OR) => corners(q).every((c) => c.x > -W / 2 + 0.05 && c.x < W / 2 - 0.05 && c.z > -D / 2 + 0.05 && c.z < D / 2 - 0.05);
-    const look = () => ({ variant: rng.int(0, 3), color: rng.pick(colorsAll), color2: rng.pick(colorsAll) });
-    for (let t = 0; t < 240; t++) {
-      // (roomy first; later tries make do with the sofa nearer the TV and less floor round it)
-      const tight = t >= 120;
-      const gap = tight ? COUCH_GAPS[2] : COUCH_GAPS[3];
-      const side = rng.int(0, 3);
-      let x: number, z: number, rot: number;
-      if (side === 0) { x = rng.range(-W / 2 + 1.6, W / 2 - 1.6); z = -D / 2 + cd / 2 + 0.06; rot = 0; }
-      else if (side === 1) { x = -W / 2 + cd / 2 + 0.06; z = rng.range(-D / 2 + 1.6, D / 2 - 1.6); rot = Math.PI / 2; }
-      else if (side === 2) { x = W / 2 - cd / 2 - 0.05; z = rng.range(-D / 2 + 1.6, D / 2 - 1.6); rot = -Math.PI / 2; }
-      else { x = rng.range(-W / 2 + 1.6, W / 2 - 1.6); z = D / 2 - cd / 2 - 0.05; rot = Math.PI; }
-      const tv: OR = { x, z, w: cw, d: cd, rot };
-      const so = rot2(0, cd / 2 + gap + sd / 2, rot);
-      const sofa: OR = { x: x + so.x, z: z + so.z, w: sw, d: sd, rot: rot + Math.PI };
-      const mo = rot2(0, cd / 2 + gap / 2, rot);
-      const between: OR = { x: x + mo.x, z: z + mo.z, w: sw, d: gap, rot };
-      // (the seats are walked up to from the front of the sofa, and round it one walks past)
-      const around: OR = { ...sofa, w: sw + (tight ? 0.6 : 1.2), d: sd + (tight ? 0.6 : 1.2) };
-      if (!inside(tv) || !inside(sofa) || !inside(between)) continue;
-      if (windows.some((wn) => (rot === 0 && wn.wall === 'back' && Math.abs(wn.pos - x) < wn.w / 2 + cw / 2 + 0.3) || (rot === Math.PI / 2 && wn.wall === 'left' && Math.abs(wn.pos - z) < wn.w / 2 + cw / 2 + 0.3))) continue;
-      if ([tv, sofa, between, around].some((q) => reserved.some((r2) => overlapOR(q, r2)) || placed.some((r2) => overlapOR(q, r2, 0.05)))) continue;
-      placed.push(tv, sofa, between);
-      props.push({ kind: 'psConsole', x, z, rot, ...look() }, { kind: 'sofa', x: sofa.x, z: sofa.z, rot: sofa.rot, ...look() });
-      return true;
-    }
-    return false;
-  };
   // --------------------------------------------- a game machine (one per room)
   // own generator; placed right after the lounge corner, before the meeting table and the furniture along the walls take the room it needs
   {
@@ -1345,9 +1310,8 @@ function buildLayoutTry(seed: number, themeIndex: number, attempt: number): Room
     }
   }
 
-  // (no machine found a place: a gaming corner with the console and a sofa of its own)
-  if (!props.some((p) => GAMES[p.kind])) gamingCorner(new Rng((seed ^ 0x1f83d9ab) >>> 0));
-  // (still none – a small room: the lounge corner moves to another free spot, where the console fits in front of it)
+  // (no machine found a place – a small room: the lounge corner moves to another free spot, where the console fits in front of it;
+  // the console always goes with a sofa that is there anyway, never with one of its own)
   for (let k = 0; k < 12 && !props.some((p) => GAMES[p.kind]); k++) {
     const li = props.findIndex((p) => p.kind === 'loungeSet');
     if (li < 0) break;
@@ -1688,33 +1652,39 @@ function buildLayoutTry(seed: number, themeIndex: number, attempt: number): Room
     const look = () => ({ variant: lateRng.int(0, 3), color: lateRng.pick(colorsAll), color2: lateRng.pick(colorsAll) });
     const rect = couchFit(couches);
     let done = !!rect && tryAdd([{ kind: rect.kind, x: rect.x, z: rect.z, rot: rect.rot, ...look() }], [rect]);
-    // a corner of its own (the ways must stay open); in a small, full room the meeting table makes way for it
-    const corner = (): boolean => {
-      const np = props.length;
-      const nq = placed.length;
-      if (!gamingCorner(lateRng)) return false;
-      nav = buildNav(props);
-      if (reachable(nav)) return true;
-      props.length = np;
-      placed.length = nq;
-      nav = buildNav(props);
+    // in front of a sofa that is there anyway, small things (a plant, a bin, boxes…) make way for it; in a small, full room the meeting table too
+    const CLEARABLE = new Set<PropKind>(['bin', 'plant', 'cactus', 'boxes', 'trolley', 'beanbag', 'floorLamp', 'tallPlant', 'recycle', 'printer', 'whiteboardStand', 'fileCabinet', 'credenza']);
+    const same = (a: OR, b: OR) => a.x === b.x && a.z === b.z && a.w === b.w && a.d === b.d && a.rot === b.rot;
+    const clearFor = (meetingToo: boolean): boolean => {
+      for (const cp of couches) {
+        for (const gap of COUCH_GAPS) {
+          const cr = couchSpot(cp, gap);
+          if (!corners(cr).every((c) => c.x > -W / 2 + 0.3 && c.x < W / 2 - 0.3 && c.z > -D / 2 + 0.3 && c.z < D / 2 - 0.3)) continue;
+          if (reserved.some((q) => overlapOR(cr, q))) continue;
+          const drop = props.filter((q) => q !== cp && overlapOR(cr, propRect(q), 0.1));
+          if (drop.some((q) => !CLEARABLE.has(q.kind) && !(meetingToo && q.kind === 'meetingSet'))) continue;
+          const dropRects = drop.map(propRect);
+          // (whatever else is in the way – desks, the director's corner, the cubicle – stays)
+          if (placed.some((q) => !dropRects.some((dr) => same(dr, q)) && overlapOR(cr, q, 0.1))) continue;
+          const kept = props.filter((q) => !drop.includes(q));
+          const trial = [...kept, { kind: 'psConsole' as const, x: cr.x, z: cr.z, rot: cr.rot, ...look() }];
+          const nv = buildNav(trial);
+          if (!reachable(nv)) continue;
+          for (const dr of dropRects) {
+            const at = placed.findIndex((q) => same(dr, q));
+            if (at >= 0) placed.splice(at, 1);
+          }
+          placed.push(cr);
+          props.length = 0;
+          props.push(...trial);
+          nav = nv;
+          return true;
+        }
+      }
       return false;
     };
-    if (!done) done = corner();
-    const mi = props.findIndex((p) => p.kind === 'meetingSet');
-    if (!done && mi >= 0) {
-      const meeting = props[mi];
-      const mr = propRect(meeting);
-      const qi = placed.findIndex((q) => q.x === mr.x && q.z === mr.z && q.w === mr.w && q.d === mr.d);
-      props.splice(mi, 1);
-      if (qi >= 0) placed.splice(qi, 1);
-      done = corner();
-      if (!done) {
-        props.splice(mi, 0, meeting);
-        if (qi >= 0) placed.push(mr);
-      }
-      nav = buildNav(props);
-    }
+    if (!done) done = clearFor(false);
+    if (!done) clearFor(true);
   }
 
   // ------------------------------------------------ exercise corner (punching dummy, dumbbells)
