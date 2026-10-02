@@ -32,6 +32,16 @@ function Segmented<T extends string>({ value, options, label, onChange }: { valu
   );
 }
 
+/** "on" or "off", always as wide as the wider of the two: a button that grows when it is switched could wrap the row and make the dialog jump. */
+function OnOff({ on }: { on: boolean }) {
+  return (
+    <span className="onoff">
+      <span className={on ? '' : 'onoff-hide'}>on</span>
+      <span className={on ? 'onoff-hide' : ''}>off</span>
+    </span>
+  );
+}
+
 export function SettingsDialog() {
   const show = useStore((s) => s.showSettings);
   const setShow = useStore((s) => s.setShowSettings);
@@ -74,10 +84,10 @@ export function SettingsDialog() {
       <h3>Sound</h3>
       <div className="set-row">
         <button type="button" className={`btn${muted ? '' : ' btn-on'}`} aria-pressed={!muted} onClick={() => { setMuted(!muted); if (muted) window.setTimeout(() => sfx('ding'), 60); }}>
-          <Icon name={muted ? 'volume-x' : 'volume'} size={16} /> Sound effects {muted ? 'off' : 'on'}
+          <Icon name={muted ? 'volume-x' : 'volume'} size={16} /> Sound effects <OnOff on={!muted} />
         </button>
         <button type="button" className={`btn${musicOn ? ' btn-on' : ''}`} aria-pressed={musicOn} onClick={() => setMusicOn(!musicOn)}>
-          <Icon name="music" size={16} /> Lo-fi music {musicOn ? 'on' : 'off'}
+          <Icon name="music" size={16} /> Lo-fi music <OnOff on={musicOn} />
         </button>
       </div>
       <p className="muted">The music is made up on the fly and follows the time of day and the weather. It plays for as long as the page is open (K toggles it).</p>
