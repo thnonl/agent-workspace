@@ -15,6 +15,7 @@ import { floatingWindow } from '../pipHost';
 import { contextShare } from '../context';
 import { LevelChip } from './ProgressDialog';
 import { Dialog } from './Dialog';
+import { onPhone } from './ConnectPhone';
 import { Icon, type IconName } from './Icon';
 import { PROVIDER_NAME, ProviderLogo, watchedSources } from './ProviderLogo';
 
@@ -920,29 +921,31 @@ export function Help() {
     <Dialog backdrop="modal" card="modal-card modal-help" label="How the office works" onClose={close}>
       <button className="panel-close" onClick={close} aria-label="Close" title="Close (Esc)"><Icon name="x" size={16} /></button>
       <h2>How the office works</h2>
-      <h3>Controls</h3>
-      <ul className="keys">
-        <li><kbd>←</kbd> <kbd>→</kbd> or <kbd>1</kbd>–<kbd>9</kbd> switch room</li>
-        <li>Drag = rotate · Wheel = zoom · <kbd>R</kbd> = reset camera</li>
-        <li>Click a character to follow it and see its log · <kbd>Esc</kbd> to close</li>
-        <li><kbd>N</kbd> previews day / dusk / night · <kbd>W</kbd> changes the weather · <kbd>M</kbd> mutes sound · <kbd>K</kbd> lo-fi music · <kbd>?</kbd> opens this help</li>
-        <li><kbd>P</kbd> saves a photo · <kbd>C</kbd> screensaver mode (<kbd>Esc</kbd> or a click leaves it) · <kbd>L</kbd> levels and achievements · <kbd>I</kbd> floating window (picture-in-picture)</li>
-      </ul>
+      {/* keyboard and mouse: nothing a phone has */}
+      {onPhone ? null : (
+        <>
+          <h3>Controls</h3>
+          <ul className="keys">
+            <li><kbd>←</kbd> <kbd>→</kbd> / <kbd>1</kbd>–<kbd>9</kbd> switch room · drag rotate · wheel zoom · <kbd>R</kbd> reset camera</li>
+            <li>Click a character to follow it · <kbd>Esc</kbd> to let go</li>
+            <li><kbd>N</kbd> time of day · <kbd>W</kbd> weather · <kbd>M</kbd> mute · <kbd>K</kbd> music · <kbd>P</kbd> photo · <kbd>C</kbd> screensaver · <kbd>L</kbd> levels · <kbd>I</kbd> floating window · <kbd>?</kbd> help</li>
+          </ul>
+        </>
+      )}
       <h3>The office</h3>
       <ul className="help-list">
-        <li><Icon name="building" size={16} /><span>Every <b>session</b> of Claude Code, Codex or OpenCode gets its own <b>room</b>; the round logo on its button says which one.</span></li>
-        <li><Icon name="crown" size={16} /><span>The <b>director</b> voices the main agent (prompt, thoughts, delegating) and walks out last, when everything is finished.</span></li>
-        <li><Icon name="list-checks" size={16} /><span>Every <b>task</b> is done by one <b>staff member</b> – a sub-agent run, or one tool call. Staff walk in, unpack their laptop, type, and show what they are doing in speech bubbles; the staff take turns.</span></li>
-        <li><Icon name="coffee" size={16} /><span>Whoever has nothing to do takes a break – a stroll, the sofa, a book, a drink, noodles, the punching dummy, the round table, the toilet (and then the sink), a cat… A new task never sends anybody back to their desk: they work on it where they are.</span></li>
-        <li><Icon name="cat" size={16} /><span>Every room has 1–2 cats that hop in through the windows, wander, nap and leave when they like.</span></li>
-        <li><Icon name="moon" size={16} /><span>Light follows your system clock: the sky darkens in the evening and every room switches its lights on.</span></li>
+        <li><Icon name="building" size={16} /><span>One <b>room</b> per Claude Code, Codex or OpenCode session.</span></li>
+        <li><Icon name="crown" size={16} /><span>The <b>director</b> is the main agent.</span></li>
+        <li><Icon name="list-checks" size={16} /><span>Each <b>staff member</b> does one task: a sub-agent or a tool call.</span></li>
+        <li><Icon name="coffee" size={16} /><span>No work? They take a break: a drink, the sofa, a book, a cat…</span></li>
+        <li><Icon name="moon" size={16} /><span>Day and night follow your clock.</span></li>
       </ul>
-      <h3>Sessions and summaries</h3>
+      <h3>Sessions</h3>
       <ul className="help-list">
-        <li><Icon name="archive" size={16} /><span>The green <b>Live</b> pill in the top bar shows or hides the session list. The room buttons keep the order in which the sessions showed up, but rooms that wait for you (a question, an unread summary) come first and idle rooms always sit behind the working ones: a moment after a session starts or stops working (or you have read its summary) the list sorts itself and the buttons glide to their new places. A room stays until you <b>release</b> it (Release room on the summary paper, or Release idle rooms under the list) or until its session has stood still for an hour. Releasing only takes it off the list – continue the session in its agent and it comes back.</span></li>
-        <li><i className="help-dot" aria-hidden="true" /><span>When a session is done the director announces it and a blue dot blinks on its button until you have read the summary. Stepping into a finished room lays its summary on the screen as a sheet of paper; <b>Summary</b> in the header brings it back.</span></li>
-        <li><Icon name="help" size={16} /><span>When the agent waits for your answer, its room shows an amber badge and the director waves a question bubble.</span></li>
-        <li><Icon name="users" size={16} /><span><b>Names</b> gives the director and the staff real names (saved in this browser). Sound effects only play for the room on screen; the browser allows them after your first click.</span></li>
+        <li><Icon name="archive" size={16} /><span><b>Live</b> shows the room list. Rooms that need you come first.</span></li>
+        <li><Icon name="help" size={16} /><span>Amber badge: the agent waits for your answer.</span></li>
+        <li><i className="help-dot" aria-hidden="true" /><span>Blue dot: the session is done – open the room to read its <b>Summary</b>.</span></li>
+        <li><Icon name="x-circle" size={16} /><span><b>Release</b> a room to drop it; idle rooms leave by themselves after an hour.</span></li>
       </ul>
     </Dialog>
   );
