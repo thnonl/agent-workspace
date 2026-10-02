@@ -330,6 +330,34 @@ function TaskList({ roomId }: { roomId: string }) {
 /** the little window has room for a few words of the session title only */
 const PIP_DESC_MAX = 36;
 
+type RoomNeed = 'ask' | 'unseen' | null;
+
+/** what waits in the room `dir` steps away (the one an arrow button leads to): a question, or a summary not read yet */
+function useNeighbourNeed(dir: number): RoomNeed {
+  return useStore((s) => {
+    const order = orderedRooms(s);
+    // two rooms: both arrows lead to the same room, only the next one carries the badge
+    if (order.length < 2 || (order.length === 2 && dir < 0)) return null;
+    const at = Math.max(0, order.indexOf(s.activeRoomId ?? ''));
+    const id = order[(at + dir + order.length) % order.length];
+    return s.asks[id] ? 'ask' : s.unseen[id] ? 'unseen' : null;
+  });
+}
+
+const NEED_TEXT = { ask: 'needs your input', unseen: 'has a summary waiting' } as const;
+
+/** round arrow button of the floating window; a badge and a wiggle say that the room behind it waits for the user */
+function PipNav({ dir, need, onClick }: { dir: -1 | 1; need: RoomNeed; onClick: () => void }) {
+  const name = dir < 0 ? 'Previous room' : 'Next room';
+  const text = need ? `${name} ${NEED_TEXT[need]}` : name;
+  return (
+    <button type="button" className={`pip-btn pip-nav ${dir < 0 ? 'pip-prev' : 'pip-next'}${need ? ` need-${need}` : ''}`} aria-label={text} title={text} onClick={onClick}>
+      <Icon name={dir < 0 ? 'chevron-left' : 'chevron-right'} size={18} />
+      {need ? <span className="pip-badge" aria-hidden="true"><Icon name={need === 'ask' ? 'help' : 'file-text'} size={10} /></span> : null}
+    </button>
+  );
+}
+
 /** the floating window has no header: a bar along its bottom shows the session on view (who, state, context use) and holds the sound and music buttons */
 export function PipContext() {
   const room = useStore((s) => (s.activeRoomId ? s.rooms[s.activeRoomId] : null));
@@ -340,6 +368,11 @@ export function PipContext() {
   const setMuted = useStore((s) => s.setMuted);
   const musicOn = useStore((s) => s.musicOn);
   const setMusicOn = useStore((s) => s.setMusicOn);
+  const stepRoom = useStore((s) => s.stepRoom);
+  const roomCount = useStore((s) => s.visibleOrder.length);
+  // what waits in the neighbour rooms (the ones the arrows lead to): a question, or a summary not read yet
+  const prevNeed = useNeighbourNeed(-1);
+  const nextNeed = useNeighbourNeed(1);
   const status = useRoomStatus();
   const ctx = contextShare(room?.context, ctxPref);
   // React listens for clicks on the page's root element, and the office has left it: a portal makes React listen on the office itself (inside the floating window)
@@ -350,6 +383,13 @@ export function PipContext() {
   const desc = full.length > PIP_DESC_MAX ? `${full.slice(0, PIP_DESC_MAX - 1).trimEnd()}…` : full;
   if (!target) return null;
   return createPortal(
+    <>
+    {roomCount > 1 ? (
+      <>
+        <PipNav dir={-1} need={prevNeed} onClick={() => stepRoom(-1)} />
+        <PipNav dir={1} need={nextNeed} onClick={() => stepRoom(1)} />
+      </>
+    ) : null}
     <div className="pip-bar">
       {room ? (
         <div className={`pip-ctx${ctx ? ` ctx-${ctx.level}` : ''}`} title={`${room.title} · ${PROVIDER_NAME[room.provider]}${ctx ? ` · ${ctx.title}` : ''}`} role="status">
@@ -377,7 +417,8 @@ export function PipContext() {
           <Icon name="music" size={15} />
         </button>
       </div>
-    </div>,
+    </div>
+    </>,
     target,
   );
 }

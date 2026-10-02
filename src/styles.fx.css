@@ -213,5 +213,27 @@
 .pip-btn:hover { background: rgba(30, 24, 60, 0.85); color: #fff; }
 .pip-btn.on:hover { background: #3ddc97; color: #14301f; }
 .pip-btn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.pip-nav { position: absolute; top: 50%; z-index: 60; width: 32px; height: 32px; margin-top: -16px; pointer-events: auto; color: #fff; }
+.pip-prev { left: 8px; }
+.pip-next { right: 8px; }
+/* the room behind the arrow waits for the user: a question (amber) or a summary (blue) */
+.pip-nav.need-ask { background: rgba(255, 176, 32, 0.95); color: #3a2600; animation: pipNudgePrev 1.4s ease-in-out infinite; }
+.pip-nav.need-unseen { background: rgba(47, 128, 255, 0.95); color: #fff; animation: pipNudgePrev 1.4s ease-in-out infinite; }
+.pip-next.need-ask, .pip-next.need-unseen { animation-name: pipNudgeNext; }
+.pip-nav.need-ask::after, .pip-nav.need-unseen::after { content: ''; position: absolute; inset: -2px; border-radius: 50%; border: 2px solid currentColor; opacity: 0; pointer-events: none; animation: pipRipple 1.4s ease-out infinite; }
+.pip-nav.need-ask:hover { background: #ffb020; }
+.pip-nav.need-unseen:hover { background: #2f80ff; }
+.pip-badge { position: absolute; top: -5px; width: 16px; height: 16px; display: grid; place-items: center; border-radius: 50%; border: 2px solid #fff; background: #ff5d73; color: #fff; animation: alertBlink 1s ease-in-out infinite; pointer-events: none; }
+.pip-prev .pip-badge { left: -5px; }
+.pip-next .pip-badge { right: -5px; }
+.pip-nav.need-ask .pip-badge { background: #e8590c; }
+.pip-nav.need-unseen .pip-badge { background: #1c5fd1; }
+@keyframes pipNudgePrev { 0%, 55%, 100% { transform: translateX(0); } 20% { transform: translateX(-4px); } 38% { transform: translateX(2px); } }
+@keyframes pipNudgeNext { 0%, 55%, 100% { transform: translateX(0); } 20% { transform: translateX(4px); } 38% { transform: translateX(-2px); } }
+@keyframes pipRipple { 0% { transform: scale(1); opacity: 0.8; } 70%, 100% { transform: scale(1.7); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .pip-nav, .pip-badge { animation: none !important; }
+  .pip-nav::after { animation: none !important; opacity: 0; }
+}
 .pip-placeholder { height: 100%; display: grid; place-content: center; justify-items: center; gap: 14px; text-align: center; padding: 24px; background: linear-gradient(160deg, var(--sky1, #ffe9f0), var(--sky2, #ffd0b5)); color: var(--ink); font-weight: 800; }
 .pip-placeholder p { margin: 0; font-size: 16px; }

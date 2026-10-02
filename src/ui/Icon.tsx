@@ -28,6 +28,7 @@ const ICONS = {
   scroll: <>{P('M8 21h12a2 2 0 0 0 2-2v-2H10v2a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v3h4')}{P('M19 17V5a2 2 0 0 0-2-2H4')}{P('M15 8h-5M15 12h-5')}</>,
   archive: <><rect x="2" y="3" width="20" height="5" rx="1" />{P('M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4')}</>,
   'chevron-down': P('m6 9 6 6 6-6'),
+  'chevron-left': P('m15 18-6-6 6-6'),
   'chevron-right': P('m9 18 6-6-6-6'),
   'chevron-up': P('m18 15-6-6-6 6'),
   x: P('M18 6 6 18M6 6l12 12'),
