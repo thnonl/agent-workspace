@@ -53,14 +53,14 @@ Your browser opens on <http://localhost:4173> and every running session shows up
 
 The app reads what your agents already write, so there is nothing to set up:
 
-* **Claude Code** – tails `~/.claude/projects/**.jsonl`, sub-agents included.
+* **Claude Code** – tails `~/.claude/projects/**.jsonl`, sub-agents and background commands (`run_in_background`, Monitor) included.
 * **Codex** – tails `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`.
 * **OpenCode 2.x** – reads `~/.local/share/opencode/opencode.db` read-only (needs Node 22.5+).
 
 Every session gets its own **room**. The characters are not the agents but the staff of the office, and they play out the work:
 
 * The **director** voices the main agent: your prompt 📥, its thinking 💭 and messages 💬.
-* Every **task** – a sub-agent run or a single tool call – is done by a **staff member** at their own desk, who hands the report to the director when a sub-agent finishes. The staff take turns, so nobody does everything (3 people, up to 6 when all are busy).
+* Every **task** – a sub-agent run or a single tool call – is done by a **staff member** at their own desk, who hands the report to the director when a sub-agent finishes. A command that runs in the background keeps its staff member at the desk (and the office open) until it reports back, is stopped, or its Claude Code process ends. The staff take turns, so nobody does everything (3 people, up to 6 when all are busy).
 * With nothing to do, people take **breaks**: a drink, a book, the fish tank, noodles, a chat, the sofa, a cat. When the session has no work left everybody **goes home** and a **summary** paper opens (the 📜 Summary button brings it back).
 * When the agent **asks you something**, the director shows a pulsing ❓ bubble until you answer (Codex does not report questions).
 * A room stays in the list until you **release** it, or until it has been idle for an hour; continuing the session brings it back.

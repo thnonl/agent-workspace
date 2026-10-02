@@ -1082,7 +1082,7 @@ function handleEvent(get: Get, set: SetFn, ev: MonitorEvent, demo: boolean) {
       ensureDirector(get, set, roomId);
       createTask(get, set, roomId, 'sub', ev.agentId, key, ev.label || 'Sub agent', ev.agentType ?? '');
       dispatchRoom(get, set, roomId);
-      logActivity(get, set, roomId, { kind: 'task', who: nameOfPerson(get, get().tasks[key]?.assignee) || 'Office', ctx: ev.agentType || undefined, text: `Sub-agent started: ${ev.label || 'Sub agent'}` });
+      logActivity(get, set, roomId, { kind: 'task', who: nameOfPerson(get, get().tasks[key]?.assignee) || 'Office', ctx: ev.agentType || undefined, text: `${ev.agentType === 'background' ? 'Running in the background' : 'Sub-agent started'}: ${ev.label || 'Sub agent'}` });
       return;
     }
     case 'agent_say': {

@@ -12,6 +12,10 @@ import { createOpenCodeSource, defaultOpenCodeDb } from './opencode.mjs';
 import { MIN, MUSINGS, pick, clip, base, toolSummary, cueOf, claudeContext, askOf, cleanPrompt, isInterrupt, resultText, readNewLines, parseJson } from './util.mjs';
 
 const SPAWN_TOOLS = new Set(['Agent', 'Task']);
+/** tools whose call can go on in the background (run_in_background, or moved there later): the result names a task id, a <task-notification> ends it */
+const BACKGROUND_TOOLS = new Set(['Bash', 'PowerShell', 'Monitor']);
+/** tools that stop a background task (no <task-notification> follows) */
+const STOP_TOOLS = new Set(['TaskStop', 'KillShell', 'KillBash']);
 /** transcript lines that are the conversation itself (the others – bridge-session, last-prompt, cost-state, … – are housekeeping) */
 const CONVERSATION_TYPES = new Set(['user', 'assistant', 'system', 'attachment', 'queue-operation']);
 /** with a file watcher, a session's sub-agent folder is listed again at most this often unless the watcher fires */
@@ -26,6 +30,8 @@ const TURN_STALE_MS = 5 * MIN;
 const BUSY_TRUST_MS = 60 * MIN;
 /** the process says "idle" and nothing is pending: the turn is over, the grace covers the status file lagging behind a fresh prompt */
 const IDLE_GRACE_MS = 30_000;
+/** a background command of a live process is trusted this long without any transcript line (dev servers run for hours; a recycled pid must not keep one forever) */
+const BACKGROUND_TRUST_MS = 12 * 60 * MIN;
 const LIVE_REFRESH_MS = 1000;
 /** pictures from tool results kept for the page (see handleImages): at most this many, this many bytes in all, none bigger than IMAGE_MAX_BYTES */
 const IMAGE_KEEP = 60;
@@ -73,9 +79,11 @@ class Session {
     this.toolCalls = 0;
     /** tool-use id -> tool name of the latest calls (names the pictures a result brings back) */
     this.toolNames = new Map();
+    /** tool-use id -> what a shell / Monitor call of the main agent does (names the task if the command goes on in the background) */
+    this.shellLabels = new Map();
     /** the main agent waits for the user: { id of the interactive tool call, text, full } */
     this.ask = null;
-    this.agents = new Map(); // toolUseId -> { id,label,agentType,status,lastSay,asyncId,lastAt }
+    this.agents = new Map(); // toolUseId -> { id,label,agentType,status,lastSay,asyncId,lastAt,background }
     this.subFiles = new Map(); // file -> { state, key, metaTried }
     this.lastLineAt = 0;
     /** when the last line of the conversation was written (not a housekeeping line, see pollMain); 0 = not known */
@@ -297,21 +305,54 @@ export function createMonitor({
         || (result.match(/\(task ([0-9a-z]{8,})\)/) || [])[1];
       if (!id) continue;
       const ag = s.agents.has(id) ? s.agents.get(id) : [...s.agents.values()].find((a) => a.asyncId === id);
+      // a Monitor reports each line it caught ("Monitor event", no status) and goes on watching – until it expires
+      const event = (body.match(/<event>([\s\S]*?)<\/event>/) || [])[1]?.trim() || '';
+      if (ag?.background && !/<status>/.test(body) && !/Monitor expired/.test(event)) {
+        if (event && ag.status === 'running') say(s, ag.id, 'text', event);
+        continue;
+      }
       if (ag) finishAgent(s, ag.id, status === 'stopped' ? 'Stopped before it finished' : result, status !== 'completed');
     }
     return any;
   };
 
-  const handleToolResult = (s, block, toolUseResult) => {
+  /** The task id of a shell / Monitor call that goes on in the background, else ''. */
+  const backgroundIdOf = (s, id, text, tur) => {
+    const name = s.toolNames.get(id) || '';
+    if (!BACKGROUND_TOOLS.has(name)) return '';
+    if (typeof tur?.backgroundTaskId === 'string' && tur.backgroundTaskId) return tur.backgroundTaskId;
+    if (name === 'Monitor' && typeof tur?.taskId === 'string' && tur.taskId) return tur.taskId;
+    return (text.match(/^Command running in background with ID: ([\w-]+)/) || [])[1] || '';
+  };
+
+  const handleToolResult = (s, block, toolUseResult, ownerKey = 'main') => {
     const id = block.tool_use_id;
     askEnd(s, id);
     const ag = s.agents.get(id);
-    if (!ag) {
-      s.pendingTools.delete(id);
-      return;
-    }
     const text = resultText(block.content);
     const tur = toolUseResult && typeof toolUseResult === 'object' ? toolUseResult : null;
+    if (!ag) {
+      s.pendingTools.delete(id);
+      const label = s.shellLabels.get(id);
+      s.shellLabels.delete(id);
+      if (block.is_error === true) return;
+      // stopping a background task (TaskStop, older KillShell) brings no notice of its own
+      const stopped = STOP_TOOLS.has(s.toolNames.get(id) || '') ? String(tur?.task_id || tur?.shell_id || '') : '';
+      if (stopped) {
+        const victim = [...s.agents.values()].find((a) => a.asyncId === stopped || a.id === stopped);
+        if (victim) finishAgent(s, victim.id, 'Stopped before it finished', true);
+        return;
+      }
+      // the command goes on in the background: a task of its own until its <task-notification> (or the end of the process, see settle).
+      // (a sub-agent's background command reports to the sub-agent, whose transcript is not read for notices: left out)
+      const taskId = ownerKey === 'main' ? backgroundIdOf(s, id, text, tur) : '';
+      if (taskId) {
+        const bg = spawnAgent(s, id, label || 'Background command', 'background');
+        bg.asyncId = taskId;
+        bg.background = true;
+      }
+      return;
+    }
     if (tur?.isAsync || tur?.status === 'async_launched' || /^Async agent launched/i.test(text)) {
       if (tur?.agentId) ag.asyncId = tur.agentId;
       return; // real completion arrives as a <task-notification>
@@ -337,6 +378,10 @@ export function createMonitor({
           spawnAgent(s, b.id, b.input?.description || b.input?.subagent_type, b.input?.subagent_type);
         } else if (ownerKey === 'main') {
           s.pendingTools.add(b.id);
+          if (BACKGROUND_TOOLS.has(b.name)) {
+            s.shellLabels.set(b.id, clip(b.input?.description || b.input?.command || b.name, 70));
+            if (s.shellLabels.size > 200) s.shellLabels.delete(s.shellLabels.keys().next().value);
+          }
         }
         say(s, ownerKey, 'tool', toolSummary(b.name, b.input), b.name, cueOf(b.name, b.input));
         if (ownerKey === 'main') askStart(s, b.id, askOf(b.name, b.input));
@@ -421,7 +466,7 @@ export function createMonitor({
     } else if (o.type === 'user' && Array.isArray(o.message?.content)) {
       for (const b of o.message.content) {
         if (b?.type !== 'tool_result') continue;
-        handleToolResult(s, b, o.toolUseResult);
+        handleToolResult(s, b, o.toolUseResult, key);
         handleImages(s, key, b);
       }
     }
@@ -585,7 +630,8 @@ export function createMonitor({
         } catch (err) {
           alive = err?.code === 'EPERM';
         }
-        next.set(o.sessionId, { status: o.status, alive });
+        // (a resumed session can leave the file of its old, dead process behind: the live one wins)
+        if (!next.get(o.sessionId)?.alive) next.set(o.sessionId, { status: o.status, alive });
       }
       live = next;
     }
@@ -612,11 +658,23 @@ export function createMonitor({
     return quiet > (waiting ? TURN_STALE_MS : IDLE_GRACE_MS);
   };
 
+  /** Background commands die with their Claude Code process; without a status file to ask, an hour of silence has to do. */
+  const backgroundGone = (s, now) => {
+    const quiet = now - s.lastLineAt;
+    const info = s.provider === 'claude' ? liveInfo(s.id, now) : null;
+    if (!info) return quiet > BUSY_TRUST_MS;
+    return !info.alive || quiet > BACKGROUND_TRUST_MS;
+  };
+
   const settle = (s, now) => {
     // stale checks – a crashed or killed session must not keep its director at the desk forever.
     // An open turn ends by itself (end_turn, turn_duration, Esc): the model may think for minutes without writing a line.
     if (s.mainActive && turnStale(s, now)) mainEnd(s);
     for (const ag of runningAgents(s)) {
+      if (ag.background) {
+        if (backgroundGone(s, now)) finishAgent(s, ag.id, 'Stopped: the session is no longer running', true);
+        continue;
+      }
       // (an agent whose own transcript is followed is judged by its own silence: a busy main agent must not keep a dead one alive)
       const last = ag.followed ? ag.lastAt : Math.max(ag.lastAt, s.lastLineAt - 1);
       if (now - last > 10 * MIN) finishAgent(s, ag.id, 'Timed out', false);
@@ -805,7 +863,8 @@ export function createMonitor({
     const now = Date.now();
     for (const s of [...sessions.values()]) {
       if (s.oc) continue; // OpenCode sessions live in a database: oc.poll() below
-      const hot = s.mainActive || s.pendingTools.size > 0 || now - s.lastActivity < hotWindowMs || runningAgents(s).length > 0;
+      // (a background command alone does not make a session hot: its notice is a transcript line like any other)
+      const hot = s.mainActive || s.pendingTools.size > 0 || now - s.lastActivity < hotWindowMs || runningAgents(s).some((a) => !a.background);
       const touched = dirty.has(s.id);
       if (!hot && !touched && now < (nextPoll.get(s.id) ?? 0)) continue;
       dirty.delete(s.id);
