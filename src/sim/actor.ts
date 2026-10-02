@@ -300,6 +300,12 @@ const THIGH_R = 0.098 / 0.47;
 const SOFA_FWD = 0.14;
 /** knee bend on a sofa relative to a chair: the lower legs point forward and down over the front edge */
 const SOFA_KNEE = 0.4;
+/**
+ * on the toilet the person sits further forward than on a sofa (over the bowl, not on the back of the ring), and the lower legs point forward
+ * and down: hanging straight down from the knees (short legs, a high seat) they went through the front of the bowl
+ */
+const TOILET_FWD = 0.19;
+const TOILET_KNEE = 0.5;
 /** where the person stands in front of the sofa seat while turning round (distance from the seat; clear of the sofa and of a coffee table) */
 const SOFA_STAND = 0.6;
 /** seconds: turning on the spot in front of the sofa, lowering onto the cushion */
@@ -2005,12 +2011,12 @@ export class Actor {
       case 'table': {
         const spot = ctx.layout.spots[a.spot!];
         const chair = spot.kind === 'chair';
-        // (a sofa is deep and low: the shins stick out forward; on a chair or a toilet they hang straight down)
-        const knee = a.kind === 'sofa' ? SOFA_KNEE : 1;
+        // (a sofa is deep and low: the shins stick out forward; on a chair they hang straight down, on a toilet they clear the bowl)
+        const knee = a.kind === 'sofa' ? SOFA_KNEE : a.kind === 'toilet' ? TOILET_KNEE : 1;
         // the thighs lie on the cushion (not in it) and the knees hang over the front edge
         const yOn = spot.y - this.hip + this.hip * THIGH_R;
         const k = this.hip / HIP;
-        const fwdOff = chair ? CHAIR_FWD : SOFA_FWD;
+        const fwdOff = chair ? CHAIR_FWD : a.kind === 'toilet' ? TOILET_FWD : SOFA_FWD;
         const seatX = spot.x + Math.sin(spot.yaw) * fwdOff * k;
         const seatZ = spot.z + Math.cos(spot.yaw) * fwdOff * k;
         // the sofa's front is +spot.yaw; the person sits facing the same way, with the back to the cushion
@@ -2245,7 +2251,7 @@ export class Actor {
     const mode = a.toiletMode ?? 'none';
     if (mode === 'phone') {
       this.held = 'phone';
-      this.phonePose(p, t, 1);
+      this.phonePose(p, t, TOILET_KNEE);
       if (this.ctxNow) this.scrollThought(this.ctxNow, PHONE_THINK_FIRST_S);
       for (let at = 3; at < a.dur - 2; at += PHONE_SWIPE_S) this.cue('swipe', at);
     } else if (mode === 'book') {
