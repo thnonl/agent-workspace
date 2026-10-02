@@ -1,5 +1,7 @@
 # 🏢 Agent Workspace
 
+> **Work with fun. Costs zero tokens.** 🎉
+
 A cute, isometric 3D office that shows your **Claude Code**, **Codex** and **OpenCode** sessions at work, in real time.
 
 ## ⚡ Install in one line
@@ -11,6 +13,8 @@ npx @thnonline/agent-workspace@latest
 ```
 
 Your browser opens on <http://localhost:4173> and every running session shows up as a room. Stop it with <kbd>Ctrl</kbd>+<kbd>C</kbd>. Nothing to configure. Other ways to run it, and how to update: [Run](#run).
+
+**Contents:** [Highlights](#highlights) · [How it works](#how-it-works) · [Life in the office](#life-in-the-office) · [Controls](#controls) · [Run](#run) · [Environment variables](#environment-variables) · [Development](#development) · [License](#license)
 
 ![Agent Workspace tour: rooms for every session, coffee breaks, cats, a commit party, day and night, weather and seasons](https://raw.githubusercontent.com/thnonl/agent-workspace/main/docs/demo.gif)
 
