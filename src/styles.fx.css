@@ -151,12 +151,16 @@
 }
 .pill-dot, .pill-caret { flex: none; }
 
-/* a phone held sideways (or any window that is very short): the header and the bar share one row, the session strip shrinks */
-@media (max-height: 480px) {
+/* a phone held sideways (or any window that is very short): the header and the bar share one row, the session strip shrinks.
+   (only when the window is also wide: a phone in split screen is short AND narrow, and the two did not fit side by side –
+   the buttons ran off the right edge and the room name broke over two lines; there the phone layout stays, made tighter below) */
+@media (max-height: 480px) and (min-width: 561px) {
   .hud-top { flex-direction: row-reverse; align-items: flex-start; gap: 8px; }
   .hud-top .topbar { flex: 1 1 auto; width: auto; min-width: 0; }
-  .hud-top .brand { display: none; }
   .hud-top .room-header { flex: 0 1 300px; min-width: 0; }
+}
+@media (max-height: 480px) {
+  .hud-top .brand { display: none; }
   .room-card-text small.room-card-name { display: none; }
   .room-card { width: 168px; padding-top: 4px; padding-bottom: 4px; }
   .room-card-logo { width: 30px; height: 30px; min-width: 30px; }
@@ -212,6 +216,23 @@
 }
 @media (max-width: 560px) {
   .has-rooms .panel, .has-rooms .toasts { bottom: calc(10px + var(--switcher-h, 0px) + 8px); }
+}
+/* (120 px below the middle is on the strip in a window this short) */
+@media (max-height: 480px) {
+  .room-loading { translate: -50% 0; }
+}
+/* a short window: the room header is a slim pill (a long project name ends in "…"); the details it opens are smaller too */
+@media (max-height: 480px) {
+  .hud-top .room-header { padding: 4px 6px 4px 11px; border-radius: 18px; }
+  .hud-top .room-header.folded { padding-bottom: 4px; }
+  .room-header-title { gap: 7px; font-size: 14px; }
+  .room-header-title b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .room-header-dot { flex: none; width: 9px; height: 9px; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+  .room-header-fold { flex: none; width: 24px; height: 24px; }
+  .room-header-sub { margin-top: 1px; font-size: 11.5px; }
+  .room-header-stats { gap: 4px; margin-top: 5px; }
+  .room-header.folded .room-header-stats { margin-top: 4px; }
+  .room-header-stats span, .room-header-stats .stat-btn { font-size: 11px; padding: 2px 7px; }
 }
 
 /* the name tag takes the place of a bubble (and the other way round) at once: fading it in from nothing left the spot over the head
