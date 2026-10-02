@@ -37,6 +37,10 @@
 .app .modal-card .seg button:hover { background: #ece4fb; }
 .app .modal-card .seg button.on { background: linear-gradient(135deg, #7a5cf0, #b25ad8); border-color: #fff; color: #fff; box-shadow: 0 4px 12px rgba(122, 92, 240, 0.35); }
 .set-row { display: flex; flex-wrap: wrap; gap: 8px; }
+/* both words in one grid cell, the unused one invisible: the button keeps its width when it is switched */
+.onoff { display: inline-grid; justify-items: start; }
+.onoff > span { grid-area: 1 / 1; }
+.onoff-hide { visibility: hidden; }
 .app .modal-card .btn.btn-on { background: linear-gradient(135deg, #7a5cf0, #b25ad8); color: #fff; border-color: #fff; }
 
 /* --- toasts --------------------------------------------------------------- */
@@ -212,7 +216,7 @@
    height of its text and the part below the window – the end of the text and the "Got it" button – could be neither seen nor scrolled to) */
 .app.pip .paper-backdrop { backdrop-filter: none; grid-template: minmax(0, 1fr) / minmax(0, 1fr); }
 .app.pip .paper { width: calc(100% - 16px); max-height: calc(100% - 16px); min-height: 0; transform: none; animation: fadeIn 0.25s both; }
-.app.pip .paper-scroll { min-height: 0; overscroll-behavior: contain; scrollbar-width: thin; }
+.app.pip .paper-scroll { min-height: 0; overscroll-behavior: contain; }
 .app.pip .paper-foot { flex: none; }
 .app.pip .paper-tape { display: none; }
 .app.pip .paper-close { top: 6px; right: 8px; width: 28px; height: 28px; }

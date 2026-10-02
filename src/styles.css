@@ -158,7 +158,7 @@ button.pill:hover { background: #fff; }
 }
 .switcher-list {
   display: flex; flex-direction: column; gap: 8px; padding: 8px; max-height: 100%; min-height: 0; overflow-y: auto; pointer-events: auto;
-  scrollbar-width: thin; scrollbar-color: rgba(120, 90, 160, 0.35) transparent;
+  --sb-inset: 18px;
   background: var(--glass); border-radius: 26px; border: 2px solid #fff; box-shadow: 0 10px 28px rgba(120, 90, 160, 0.18);
 }
 .room-card {
@@ -473,6 +473,9 @@ kbd { font-family: 'JetBrains Mono Variable', monospace; font-size: 12px; paddin
 .app.is-night .switcher-list,
 .app.is-night .panel { border-color: rgba(255, 255, 255, 0.16); }
 .app.is-night .btn:hover, .app.is-night button.pill:hover { background: rgba(70, 62, 130, 0.95); }
+/* ...but not in the white dialogs, where it gave dark text on a dark button */
+.app.is-night :is(.confirm-card, .modal-card, .paper) .btn:not(.btn-big, .btn-on) { border-color: #d9cfee; }
+.app.is-night :is(.confirm-card, .modal-card, .paper) .btn:not(.btn-big, .btn-on):hover { background: #e7defa; }
 .app.is-night .room-card { background: rgba(255, 255, 255, 0.08); }
 .app.is-night .room-card:hover, .app.is-night .room-card.active { background: rgba(255, 255, 255, 0.18); }
 .app.is-night .room-header-stats span, .app.is-night .log, .app.is-night .chip, .app.is-night .stat-btn { background: rgba(255, 255, 255, 0.1); box-shadow: none; }
@@ -506,6 +509,10 @@ kbd { font-family: 'JetBrains Mono Variable', monospace; font-size: 12px; paddin
   .btn, .room-card, .stat-btn { transition: none; }
   .btn:hover, .room-card:hover, .stat-btn:hover { transform: none; }
 }
+/* a touch screen keeps :hover on the last button tapped: no lift there, or the button stays bigger than the others */
+@media (hover: none) {
+  .btn:hover { transform: none; }
+}
 
 /* --- svg icons of the HUD (they take the colour of the text next to them) ------------------------------ */
 .ico { flex: none; display: inline-block; vertical-align: -0.18em; }
@@ -531,3 +538,29 @@ kbd { font-family: 'JetBrains Mono Variable', monospace; font-size: 12px; paddin
 .help-list li > .ico { margin-top: 3px; color: #7a6fa0; }
 .help-dot { flex: none; width: 12px; height: 12px; margin: 5px 2px 0 2px; border-radius: 50%; background: #2f80ff; }
 .room-header-stats span.on .ico { color: inherit; }
+
+/* --- scrollbars ---------------------------------------------------------- */
+/* a soft lavender pill that floats in a clear track, like the glass cards; it turns towards the colour of the room (--accent) under the pointer.
+   --sb-inset keeps the thumb off the rounded corners of its box. (Chromium ignores the ::-webkit-scrollbar rules of a box that sets
+   scrollbar-width or scrollbar-color, so those two are only for the browsers without the pseudo-elements, i.e. Firefox.) */
+:root { --sb-thumb: rgba(120, 90, 160, 0.3); --sb-hover-base: rgba(120, 90, 160, 0.5); --sb-inset: 6px; }
+.app.is-night { --sb-thumb: rgba(225, 215, 255, 0.26); --sb-hover-base: rgba(240, 235, 255, 0.55); }
+/* the white dialogs and the paper keep their own colours by night too (--sb-hover: a fixed hover colour, without the room tint) */
+.confirm-card, .modal-card { --sb-thumb: rgba(120, 90, 160, 0.28); --sb-hover: rgba(120, 90, 160, 0.5); --sb-inset: 20px; }
+/* the summary paper: a pencil-brown thumb on the notebook page */
+.paper { --sb-thumb: rgba(160, 128, 64, 0.32); --sb-hover: rgba(160, 128, 64, 0.55); --sb-inset: 10px; }
+.paper-text pre { --sb-inset: 8px; }
+.tasklist-body { --sb-inset: 12px; }
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-track { margin: var(--sb-inset); }
+::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+::-webkit-scrollbar-thumb { min-height: 32px; min-width: 32px; border: 3.5px solid transparent; border-radius: 99px; background: var(--sb-thumb) padding-box; }
+/* (the mix is written here and not in :root, so --accent is the one of the scrolling box: a var() in a custom property resolves where it is declared) */
+::-webkit-scrollbar-thumb:hover, ::-webkit-scrollbar-thumb:active { border-width: 2.5px; background-color: var(--sb-hover, color-mix(in srgb, var(--accent, var(--sb-hover-base)) 60%, var(--sb-hover-base))); }
+::-webkit-scrollbar-thumb:active { border-width: 2px; }
+.app.pip ::-webkit-scrollbar { width: 9px; height: 9px; }
+.app.pip ::-webkit-scrollbar-thumb { border-width: 2.5px; }
+@supports not selector(::-webkit-scrollbar) {
+  * { scrollbar-width: thin; scrollbar-color: var(--sb-thumb) transparent; }
+}
