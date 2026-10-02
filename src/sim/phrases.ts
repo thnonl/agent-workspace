@@ -185,6 +185,34 @@ const LOUNGE = [
   'Best seat in the office: the bean bag', 'Bean bag under the back, eyes on the ceiling',
 ];
 
+// ------------------------------------- a game at the game machine
+const PLAY: Record<string, string[]> = {
+  arcade: ['One more round of Space Blasters!', 'High score, here I come', 'Insert coin… ready, player one', 'Just one quick game, honest', 'Those aliens won’t blast themselves'],
+  arcadeDuo: ['Anyone up for a duel?', 'Player one, ready!', 'One round of the old fighting game', 'Time to defend my high score'],
+  pinball: ['Pinball time – watch those flippers', 'Multiball, please!', 'Tilt? Never.', 'One ball, three lives, no mercy'],
+  clawMachine: ['That plush bunny is mine', 'This time the claw grabs it', 'Just one try, I can feel it', 'The claw owes me a toy'],
+  airHockey: ['Air hockey, who dares?', 'A quick match of air hockey', 'Fastest puck in the office'],
+  foosball: ['Foosball break!', 'Spin those little players', 'Goalkeeper, don’t fail me now'],
+  danceMachine: ['Dance break!', 'Time to show my moves', 'Arrow storm, let’s go', 'My legs need this'],
+  consoleTv: ['A quick round on the console', 'One match, then back to work', 'Controller in hand, worries gone', 'Who wants a round of kart racing?'],
+  racingSim: ['Vroom vroom – lap time', 'Let me beat my best lap', 'Pole position, here I come', 'Seat belt on, brain off'],
+  vrStation: ['Off to another world for a bit', 'VR goggles on!', 'Let’s fight some virtual robots', 'Don’t mind me waving at nothing'],
+  pingPong: ['Ping-pong, anyone?', 'Time for a quick rally', 'My backhand needs practice'],
+  hoops: ['Shooting some hoops', 'Three-pointer time', 'Nothing but net', 'Let’s break the basket record'],
+};
+const PLAY_BOSS = ['Even the boss needs a break', 'This is research. Serious research.', 'Team building, technically', 'The boss is allowed one game. Or two.'];
+const PLAY_JOIN: ((n: string) => string)[] = [(n) => `Mind if I join, ${n}?`, (n) => `${n}, prepare to lose!`, (n) => `Room for one more, ${n}?`, (n) => `Rematch, ${n}!`, (n) => `Two players, ${n}? Let’s go!`];
+const PLAY_VERSUS = ['Goal!', 'No way!', 'Gotcha!', 'Lucky shot…', 'Best of three?', 'You’re going down!', 'That doesn’t count!', 'Ha! Too slow!', 'Okay, okay, you’re good'];
+const PLAY_END_WIN = ['New high score!', 'Got it! Look at this!', 'Still the champion', 'Yes! Did you see that?'];
+const PLAY_END_LOSE = ['So close…', 'Argh, one more time later', 'The machine cheats, I swear', 'Next time. Definitely next time.'];
+export const playLines = {
+  /** deciding to play: `partner` = the colleague already at the machine (joining them), `boss`: the director */
+  start: (machine: string, partner?: string, boss = false): [string, string] =>
+    [partner ? pick(PLAY_JOIN)(partner) : boss && Math.random() < 0.4 ? pick(PLAY_BOSS) : pick(PLAY[machine] ?? PLAY.arcade), 'game'],
+  versus: (): [string, string] => [pick(PLAY_VERSUS), 'game'],
+  end: (won: boolean): [string, string] => [pick(won ? PLAY_END_WIN : PLAY_END_LOSE), 'game'],
+};
+
 // ------------------------------------- grumbles at the computer while there is no task
 const TIRED = [
   'So tired today… *yawn*', 'My eyes hurt from this screen', 'I need a holiday. A long one.', 'Is it home time yet?', 'My back is killing me',
@@ -279,6 +307,9 @@ const UNBOXED_NAME: Record<string, string> = {
   fileCabinet: 'a file cabinet', copier: 'a copier', meetingSet: 'a meeting table', whiteboardStand: 'a whiteboard', boxes: 'more boxes', serverRack: 'a server rack',
   fridge: 'a fridge', vending: 'a vending machine', trolley: 'a trolley', recycle: 'a recycling bin', loungeSet: 'a lounge set', credenza: 'a sideboard',
   sink: 'a sink', stove: 'a stove', punchDummy: 'a punching dummy', dumbbells: 'a set of dumbbells', toilet: 'a toilet',
+  arcade: 'an arcade machine', arcadeDuo: 'a two-player arcade', pinball: 'a pinball machine', clawMachine: 'a claw machine', airHockey: 'an air hockey table',
+  foosball: 'a foosball table', danceMachine: 'a dance machine', consoleTv: 'a game console', racingSim: 'a racing simulator', vrStation: 'a VR station',
+  pingPong: 'a ping-pong table', hoops: 'a basketball arcade',
 };
 const UNBOXED = [
   (n: string) => `Wow, ${n}! The office just got an upgrade`,

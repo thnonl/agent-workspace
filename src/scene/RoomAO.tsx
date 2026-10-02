@@ -8,7 +8,7 @@ import { FX, initFx } from './fx';
 /** props that are too low to cast a visible shadow */
 const NO_AO = new Set<PropKind>(['dumbbells']);
 /** big sets stand on legs: only the middle of their footprint is dark */
-const SHRINK: Partial<Record<PropKind, number>> = { meetingSet: 0.62, loungeSet: 0.7, sofa: 0.96, credenza: 0.98 };
+const SHRINK: Partial<Record<PropKind, number>> = { meetingSet: 0.62, loungeSet: 0.7, sofa: 0.96, credenza: 0.98, airHockey: 0.85, foosball: 0.85, pingPong: 0.8, pinball: 0.8 };
 const US = [0, 0.4, 0.6, 1];
 
 interface Rect {

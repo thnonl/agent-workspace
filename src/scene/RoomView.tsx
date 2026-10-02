@@ -354,7 +354,8 @@ export const RoomView = memo(function RoomView({ roomId, active }: { roomId: str
   }, [roomId]);
   // (for the loading note on screen, see ui/RoomLoading.tsx)
   useEffect(() => {
-    frame.buildStage.set(roomId, { progress: stage / BUILD_STAGES, people: stage >= STAGE.people - 1 });
+    // (how far the room itself is built – walls, furniture, the things in it, the lights; the people and cats walk in afterwards)
+    frame.buildStage.set(roomId, { progress: Math.min(1, stage / STAGE.people) });
   }, [roomId, stage]);
   useFrame(() => {
     const g = group.current;

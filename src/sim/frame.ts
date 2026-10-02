@@ -31,8 +31,8 @@ export const frame = {
   mountedRooms: new Set<string>(),
   /** rooms that finished loading (static bake done and two frames drawn), see RoomView / the staging in Scene */
   readyRooms: new Set<string>(),
-  /** how far each mounted room is built (0..1), and whether its people are coming in already (the loading note on screen reads it) */
-  buildStage: new Map<string, { progress: number; people: boolean }>(),
+  /** how far each mounted room itself is built (0..1: walls, furniture, things, lights; not its people): the loading note on screen reads it */
+  buildStage: new Map<string, { progress: number }>(),
   /** somebody (a person or an awake cat) moves in a visible room */
   dynamic: false,
   /** somebody in the active room is on the move: walking, sitting down or getting up (cats do not count) */

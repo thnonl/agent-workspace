@@ -4,7 +4,7 @@ import type { V2 } from '../world/nav';
 import { sfx, type Sfx } from '../audio';
 import { env } from '../env';
 import { frame, SLOW_MAX_DT } from './frame';
-import { CHAT_SCRIPTS, TABLE_LINES, eatLine, goodbyeLine, greetingLine, grumbleLine, reportLine, serveLine, thoughts } from './phrases';
+import { CHAT_SCRIPTS, TABLE_LINES, eatLine, goodbyeLine, greetingLine, grumbleLine, playLines, reportLine, serveLine, thoughts } from './phrases';
 import { kickDummy, takeDumbbells } from './gym';
 import { notePet } from '../progress';
 import { HIRE_GAP_MS, HURRY_QUEUE, claimLate, commitDelivery, debugFlags, lateAvailable, movedIfAny, movedOf, notifyMoved, dismissIdle, enqueueSpeech, greet, parcelDone, releaseLate, roomRuntime, tickParcel, sims, simsInRoom, spotOwners, type CatSim, type Phase, type RoomRuntime, type SimState } from './registry';
@@ -194,6 +194,7 @@ function thoughtOf(a: Activity, name: string): [string, string] | null {
     case 'read': return [thoughts.read(a.detail ?? pickOne(BOOKS)), 'read'];
     case 'fish': return [thoughts.fish(), 'fish'];
     case 'wash': return [thoughts.wash(), 'wash'];
+    case 'play': return playLines.start(a.station?.prop ?? 'arcade', a.detail || undefined, !!a.boss);
     case 'water': return [thoughts.plants(), 'water'];
     case 'cook': return [thoughts.cook(), 'cook'];
     case 'box': return [thoughts.box(), 'box'];
@@ -249,6 +250,8 @@ interface Activity {
   /** get a drink / read / watch the fish / wash / water the plants */
   station?: Station;
   stationKey?: string;
+  /** a game: the director plays (another line of thought) */
+  boss?: boolean;
   /** book title, name of the colleague being watched… (for the speech bubble) */
   detail?: string;
   /** petting a cat that sleeps on the desk – the director stays in the chair */
@@ -1716,7 +1719,12 @@ export class Actor {
     const fridgeSt = stationsOf('fridge');
     const canFetch = coffeeSt.length > 0 || (fridgeSt.length > 0 && chairsFree.length > 0);
     const beanbags = seats.filter(({ sp }) => sp.kind === 'beanbag');
+    // a game machine: free places, and whether somebody already plays there (one joins them gladly)
+    const playFree = stationsOf('play');
+    const playMate = (st: Station) => layout.stations.some((o, j) => o !== st && o.kind === 'play' && o.propIdx === st.propIdx && sims.get(spotOwners.get(`${s.roomId}@${j}`) ?? '')?.onStage);
+    const playJoin = playFree.some(({ st }) => playMate(st));
     const options: [ActivityKind, number][] = [
+      ['play', playFree.length ? (staff ? 3 : 10) * (playJoin ? 3 : 1) : 0],
       ['wander', staff ? 0.4 : 0.9], ['sofa', seats.length ? (staff ? 4 : 3) : 0], ['lounge', beanbags.length ? (staff ? 7 : 3) : 0], ['watch', watchable.length ? (staff ? 1.5 : 4) : 0],
       ['fetch', canFetch ? (staff ? 3.5 : 2.5) : 0], ['window', windowsFree.length ? (staff ? 1.5 : 2.5) : 0], ['pet', petCats.length ? (staff ? 4.5 : 5) : 0], ['stay', staff ? 5 : 0],
       ['drink', stationsOf('drink').length ? 4 : 0], ['read', stationsOf('read').length ? 3.5 : 0], ['fish', stationsOf('fish').length ? 3.5 : 0],
@@ -1763,6 +1771,21 @@ export class Actor {
         spotOwners.set(stationKey, s.key);
         const dur = kind === 'drink' ? 15 : kind === 'read' ? 26 + Math.random() * 10 : kind === 'fish' ? 22 + Math.random() * 10 : kind === 'wash' ? 14 : kind === 'cook' ? 34 + Math.random() * 6 : kind === 'box' ? 18 + Math.random() * 10 : kind === 'lift' ? 20 + Math.random() * 10 : 20 + Math.random() * 6;
         return { kind, target: st.stand, yaw: st.yaw, dur, station: st, stationKey, detail: kind === 'read' ? pickOne(BOOKS) : undefined };
+      }
+      case 'play': {
+        // join a colleague at a two-player machine first, else any free place
+        const withMate = playFree.filter(({ st }) => playMate(st));
+        const { st, i } = pick(withMate.length ? withMate : playFree);
+        const stationKey = `${s.roomId}@${i}`;
+        spotOwners.set(stationKey, s.key);
+        let mate = '';
+        layout.stations.forEach((o, j) => {
+          if (o !== st && o.kind === 'play' && o.propIdx === st.propIdx) {
+            const who = spotOwners.get(`${s.roomId}@${j}`);
+            if (who && sims.get(who)?.onStage) mate = ctx.nameOf(who);
+          }
+        });
+        return { kind, target: st.stand, yaw: st.yaw, dur: 22 + Math.random() * 14, station: st, stationKey, detail: mate, boss: this.isDirector };
       }
       case 'fetch': {
         let item: 'coffee' | 'meal' = 'coffee';
@@ -2164,6 +2187,7 @@ export class Actor {
       case 'water':
       case 'box':
       case 'lift':
+      case 'play':
       case 'cook': {
         this.faceYaw(a.yaw, dt, 7);
         this.idlePose(pose);
@@ -2462,6 +2486,194 @@ export class Actor {
     return false;
   }
 
+  /**
+   * Playing at a game machine: a pose for every kind of machine. Two players at one machine tease each other once in the middle; one
+   * alone cheers or groans at the end.
+   */
+  private playPose(a: Activity, p: Pose, ctx: ActorCtx, t: number, d: number, c: number) {
+    const s = this.sim;
+    this.held = 'none';
+    this.pour = 0;
+    this.tapFlow = 0;
+    this.heldTilt = 0;
+    this.bookOpen = 0;
+    this.steam = 0;
+    this.steamAt = null;
+    const st = a.station;
+    if (!st) return;
+    const into = seg(t, 0, 0.8) * (1 - seg(t, d - 0.8, d));
+    const mix = (v: number) => v * into;
+    const won = (this.clock * 7.3) % 1 < 0.5;
+    switch (st.prop) {
+      case 'arcade':
+      case 'arcadeDuo': {
+        // stick in the left hand, buttons under the right
+        p.armLx = mix(-0.85 + Math.sin(c * 9) * 0.06);
+        p.armLz = mix(-0.2 + Math.sin(c * 13) * 0.12);
+        p.foreLx = mix(-0.9);
+        p.armRx = mix(-0.8);
+        p.armRz = mix(-0.25);
+        p.foreRx = mix(-0.95 + Math.max(0, Math.sin(c * 17)) * 0.18);
+        p.lean = mix(0.12);
+        p.headX = mix(0.08);
+        for (let at = 2; at < d - 2; at += 2.7) this.cue('blip', at);
+        break;
+      }
+      case 'pinball': {
+        // both hands on the flipper buttons at the sides, bent over the glass
+        const l = Math.max(0, Math.sin(c * 8));
+        const r = Math.max(0, Math.sin(c * 8 + 2.2));
+        p.armLx = mix(-0.55);
+        p.armRx = mix(-0.55);
+        p.armLz = mix(0.32 + l * 0.08);
+        p.armRz = mix(0.32 + r * 0.08);
+        p.foreLx = mix(-0.55 - l * 0.2);
+        p.foreRx = mix(-0.55 - r * 0.2);
+        p.lean = mix(0.28);
+        p.headX = mix(0.3);
+        for (let at = 1.5; at < d - 1.5; at += 1.9) this.cue('blip', at);
+        break;
+      }
+      case 'clawMachine': {
+        // steer the claw, look up at it, then down when it drops
+        const drop = seg(t, d - 6, d - 4.5);
+        p.armRx = mix(-0.9);
+        p.armRz = mix(-0.15 + Math.sin(c * 2.2) * 0.15 * (1 - drop));
+        p.foreRx = mix(-0.55);
+        p.headX = mix(-0.25 + drop * 0.5);
+        p.headY = mix(Math.sin(c * 1.1) * 0.2 * (1 - drop));
+        p.lean = mix(0.08);
+        break;
+      }
+      case 'airHockey': {
+        // bent over the table, the mallet hand sweeping from side to side
+        p.lean = mix(0.4);
+        p.armRx = mix(-0.95);
+        p.armRz = mix(-0.1 + Math.sin(c * 6) * 0.35);
+        p.foreRx = mix(-0.35);
+        p.armLx = mix(-0.3);
+        p.armLz = mix(0.25);
+        p.headX = mix(0.25);
+        p.headY = mix(Math.sin(c * 6 - 0.6) * 0.3);
+        for (let at = 1.2; at < d - 1.5; at += 1.6) this.cue('blip', at);
+        break;
+      }
+      case 'foosball': {
+        // both hands on the rods, twisting them
+        const tw = Math.sin(c * 9);
+        p.armLx = p.armRx = mix(-0.95);
+        p.armLz = mix(-0.15 + tw * 0.15);
+        p.armRz = mix(-0.15 - tw * 0.15);
+        p.foreLx = p.foreRx = mix(-0.45);
+        p.lean = mix(0.2);
+        p.headX = mix(0.3);
+        p.roll = mix(Math.sin(c * 3) * 0.05);
+        break;
+      }
+      case 'danceMachine': {
+        // stepping on the arrows, arms swinging, bouncing to the beat
+        const st1 = Math.max(0, Math.sin(c * 7));
+        const st2 = Math.max(0, Math.sin(c * 7 + Math.PI));
+        p.thighLx = mix(-0.6 * st1);
+        p.kneeLx = mix(0.9 * st1);
+        p.thighRx = mix(-0.6 * st2);
+        p.kneeRx = mix(0.9 * st2);
+        p.armLx = mix(-0.6 + Math.sin(c * 7) * 0.5);
+        p.armRx = mix(-0.6 - Math.sin(c * 7) * 0.5);
+        p.armLz = p.armRz = mix(0.35);
+        p.bob = mix(Math.abs(Math.sin(c * 7)) * 0.06);
+        p.happy = mix(0.9);
+        p.headX = mix(-0.1);
+        for (let at = 1; at < d - 1; at += 1.8) this.cue('thud', at);
+        break;
+      }
+      case 'consoleTv': {
+        // the controller held in front of the chest, thumbs busy, leaning into the curves
+        p.armLx = p.armRx = mix(-0.95);
+        p.armLz = p.armRz = mix(-0.32);
+        p.foreLx = mix(-1.55 + Math.sin(c * 15) * 0.05);
+        p.foreRx = mix(-1.55 + Math.sin(c * 13 + 1) * 0.05);
+        p.roll = mix(Math.sin(c * 1.3) * 0.1);
+        p.headX = mix(0.05);
+        if (Math.sin(c * 0.7) > 0.9) p.mouth = 'o';
+        break;
+      }
+      case 'racingSim': {
+        // in the bucket seat, both hands on the wheel
+        s.sitT = 1;
+        this.seatedPose(p, 1);
+        const steer = Math.sin(c * 1.7) * 0.25 + Math.sin(c * 4.1) * 0.08;
+        p.armLx = p.armRx = mix(-1.2);
+        p.armLz = mix(-0.25 + steer);
+        p.armRz = mix(-0.25 - steer);
+        p.foreLx = p.foreRx = mix(-0.45);
+        p.roll = mix(steer * 0.25);
+        p.lean = mix(-0.05);
+        p.headX = mix(0.05);
+        break;
+      }
+      case 'vrStation': {
+        // goggles on (looking about blindly), swiping at things nobody else can see
+        p.armRx = mix(-1.3 + Math.sin(c * 2.3) * 0.6);
+        p.armRz = mix(-0.2 + Math.sin(c * 1.7) * 0.4);
+        p.armLx = mix(-1.0 + Math.cos(c * 1.9) * 0.6);
+        p.armLz = mix(0.2 + Math.cos(c * 2.6) * 0.3);
+        p.foreRx = p.foreLx = mix(-0.4);
+        p.headY = mix(Math.sin(c * 0.9) * 0.7);
+        p.headX = mix(-0.15 + Math.sin(c * 1.3) * 0.15);
+        const duck = Math.max(0, Math.sin(c * 0.6)) ** 6;
+        p.thighLx = p.thighRx = mix(-0.4 * duck);
+        p.kneeLx = p.kneeRx = mix(0.8 * duck);
+        p.bob = mix(-0.08 * duck);
+        p.mouth = Math.sin(c * 0.8) > 0.6 ? 'o' : 'smile';
+        break;
+      }
+      case 'pingPong': {
+        // the paddle hand swinging forehand, light on the feet
+        const sw = Math.sin(c * 4.5);
+        p.armRx = mix(-0.7 + sw * 0.45);
+        p.armRz = mix(-0.35 + sw * 0.35);
+        p.foreRx = mix(-0.7);
+        p.armLx = mix(-0.4);
+        p.armLz = mix(0.2);
+        p.lean = mix(0.18);
+        p.bob = mix(Math.abs(Math.sin(c * 4.5)) * 0.03);
+        p.headY = mix(sw * 0.2);
+        for (let at = 1; at < d - 1; at += 1.4) this.cue('blip', at);
+        break;
+      }
+      case 'hoops': {
+        // a throw every 1.6 seconds: ball up to the chest, both arms up, release, look at the hoop
+        const u = (t % 1.6) / 1.6;
+        const up = seg(u, 0.1, 0.45) * (1 - seg(u, 0.6, 0.95));
+        p.armLx = p.armRx = mix(-0.7 - 1.9 * up);
+        p.armLz = mix(0.2);
+        p.armRz = mix(-0.2);
+        p.foreLx = p.foreRx = mix(-1.2 + 0.9 * up);
+        p.headX = mix(-0.3);
+        p.thighLx = p.thighRx = mix(-0.25 * (1 - up));
+        p.kneeLx = p.kneeRx = mix(0.45 * (1 - up));
+        p.bob = mix(0.05 * up);
+        break;
+      }
+      default:
+        this.idlePose(p);
+    }
+    // two at one machine: one bit of banter in the middle; alone: a cheer or a groan at the end
+    const mate = ctx.layout.stations.some((o, j) => o !== st && o.kind === 'play' && o.propIdx === st.propIdx && sims.get(spotOwners.get(`${s.roomId}@${j}`) ?? '')?.onStage);
+    if (mate && this.chatLine < 0 && t > d * 0.45) {
+      this.chatLine = 0;
+      this.announce(ctx, playLines.versus());
+    } else if (!mate && this.chatLine < 0 && t > d - 2.2) {
+      this.chatLine = 0;
+      this.announce(ctx, playLines.end(won));
+    }
+    if (t > d - 2.2) {
+      p.happy = Math.max(p.happy, won ? 1 : 0);
+      if (!won && !mate) p.mouth = 'sad';
+    }
+  }
+
   /** the seat is free again; after the toilet one goes and washes their hands, anything else goes home */
   private leaveSeat(ctx: ActorCtx, a: Activity, back: boolean) {
     if (a.kind === 'toilet' && !back) {
@@ -2658,6 +2870,10 @@ export class Actor {
     const t = this.t;
     const d = a.dur;
     const c = this.clock;
+    if (a.kind === 'play') {
+      this.playPose(a, pose, ctx, t, d, c);
+      return;
+    }
     this.held = 'none';
     this.pour = 0;
     this.tapFlow = 0;

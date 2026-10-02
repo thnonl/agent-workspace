@@ -6,7 +6,9 @@ export type PropKind =
   | 'bookshelf' | 'plant' | 'tallPlant' | 'cactus' | 'cooler' | 'coffee' | 'sofa' | 'beanbag' | 'floorLamp'
   | 'printer' | 'bin' | 'fishtank' | 'coatRack' | 'armchair'
   | 'fileCabinet' | 'copier' | 'meetingSet' | 'whiteboardStand' | 'boxes' | 'serverRack' | 'fridge' | 'vending'
-  | 'trolley' | 'recycle' | 'loungeSet' | 'credenza' | 'sink' | 'stove' | 'punchDummy' | 'dumbbells' | 'toilet';
+  | 'trolley' | 'recycle' | 'loungeSet' | 'credenza' | 'sink' | 'stove' | 'punchDummy' | 'dumbbells' | 'toilet'
+  // game machines (a room has at most one, see GAMES)
+  | 'arcade' | 'arcadeDuo' | 'pinball' | 'clawMachine' | 'airHockey' | 'foosball' | 'danceMachine' | 'consoleTv' | 'racingSim' | 'vrStation' | 'pingPong' | 'hoops';
 
 export interface Prop {
   kind: PropKind;
@@ -154,12 +156,14 @@ export interface CatWindow {
 }
 
 /** Things people like to do when there is nothing to work on. */
-export type StationKind = 'drink' | 'read' | 'fish' | 'wash' | 'water' | 'cook' | 'box' | 'lift' | 'fridge';
+export type StationKind = 'drink' | 'read' | 'fish' | 'wash' | 'water' | 'cook' | 'box' | 'lift' | 'fridge' | 'play';
 
 /** A spot in front of something (water cooler, bookshelf, fish tank, sink, plant) where a person can spend a moment. */
 export interface Station {
   kind: StationKind;
   prop: PropKind;
+  /** a place at a game machine: which player (0, 1) and whether one sits there (the racing seat) */
+  game?: { slot: number; seated: boolean };
   /** index into `props` of the thing it is at; `off` while that thing has not been delivered yet (see RoomLayout.late) */
   propIdx: number;
   off?: boolean;
@@ -378,7 +382,46 @@ export const FOOT: Record<PropKind, [number, number, number]> = {
   punchDummy: [0.62, 0.62, 1.7],
   dumbbells: [0.9, 0.5, 0.3],
   toilet: [0.62, 0.8, 0.8],
+  arcade: [0.8, 0.75, 1.85],
+  arcadeDuo: [1.3, 0.8, 1.85],
+  pinball: [0.75, 1.4, 1.6],
+  clawMachine: [0.9, 0.9, 1.95],
+  airHockey: [1.1, 2.0, 0.85],
+  foosball: [1.4, 0.8, 0.95],
+  danceMachine: [1.6, 0.6, 2.1],
+  consoleTv: [1.5, 0.5, 1.4],
+  racingSim: [0.9, 0.7, 1.2],
+  vrStation: [0.7, 0.5, 1.6],
+  pingPong: [1.5, 2.6, 0.8],
+  hoops: [1.0, 2.2, 2.4],
 };
+
+/**
+ * The game machines. `players`: where each player stands (machine-local x, z: +z is the front) and the way they look (local yaw);
+ * `wall`: it stands with its back to a wall (else anywhere on the open floor); `front`: floor in front of the footprint that belongs to it
+ * (the dance pads, the racing seat, the room to move in); `seated`: one sits to play.
+ */
+export interface GameSpec {
+  players: [number, number, number][];
+  wall: boolean;
+  front: number;
+  seated?: boolean;
+}
+export const GAMES: Partial<Record<PropKind, GameSpec>> = {
+  arcade: { players: [[0, 0.8, Math.PI]], wall: true, front: 0.9 },
+  arcadeDuo: { players: [[-0.33, 0.82, Math.PI], [0.33, 0.82, Math.PI]], wall: true, front: 0.9 },
+  pinball: { players: [[0, 1.05, Math.PI]], wall: true, front: 0.8 },
+  clawMachine: { players: [[0, 0.85, Math.PI]], wall: true, front: 0.9 },
+  airHockey: { players: [[0, 1.35, Math.PI], [0, -1.35, 0]], wall: false, front: 0 },
+  foosball: { players: [[0, 0.78, Math.PI], [0, -0.78, 0]], wall: false, front: 0 },
+  danceMachine: { players: [[-0.42, 0.88, Math.PI], [0.42, 0.88, Math.PI]], wall: true, front: 1.4 },
+  consoleTv: { players: [[-0.45, 1.65, Math.PI], [0.45, 1.65, Math.PI]], wall: true, front: 1.9 },
+  racingSim: { players: [[0, 0.92, Math.PI]], wall: true, front: 1.2, seated: true },
+  vrStation: { players: [[0, 1.25, Math.PI]], wall: true, front: 1.7 },
+  pingPong: { players: [[0, 1.75, Math.PI], [0, -1.75, 0]], wall: false, front: 0 },
+  hoops: { players: [[0, 1.5, Math.PI]], wall: true, front: 0.9 },
+};
+const GAME_KINDS = Object.keys(GAMES) as PropKind[];
 
 /** width of a narrow window with a single sash (a two-sash one is 2.3) */
 const WIN_W1 = 1.25;
@@ -1160,6 +1203,49 @@ function buildLayoutTry(seed: number, themeIndex: number, attempt: number): Room
   if (lounge !== 'loungeSet') tryFloor('meetingSet', [0, Math.PI / 4]);
   // the big rooms have room for a second lounge corner
   if (kind.name !== 'cozy' && r.chance(0.4)) tryFloor('loungeSet', [0, Math.PI / 2, -Math.PI / 2]);
+  // --------------------------------------------- a game machine (or none): at most one per room
+  // own generator; placed right after the big lounge pieces, before the furniture along the walls takes the room it needs
+  {
+    const gameRng = new Rng((seed ^ 0x2545f491) >>> 0);
+    if (gameRng.chance(0.65)) {
+      const gk = gameRng.pick(GAME_KINDS);
+      const spec = GAMES[gk]!;
+      const [gw, gd, gh] = FOOT[gk];
+      const inside = (q: OR, m: number) => corners(q).every((c) => c.x > -W / 2 + m && c.x < W / 2 - m && c.z > -D / 2 + m && c.z < D / 2 - m);
+      for (let t = 0; t < 160; t++) {
+        let gx: number, gz: number, grot: number;
+        if (spec.wall) {
+          // (a tall cabinet against the back or the left wall: its players and its screen face the camera's way; a low one anywhere)
+          const side = gh > TALL_PROP && t < 100 ? gameRng.int(0, 1) : gameRng.int(0, 3);
+          if (side === 0) { gx = gameRng.range(-W / 2 + gw / 2 + 0.3, W / 2 - gw / 2 - 0.3); gz = -D / 2 + gd / 2 + 0.06; grot = 0; }
+          else if (side === 1) { gx = -W / 2 + gd / 2 + 0.06; gz = gameRng.range(-D / 2 + gw / 2 + 0.4, D / 2 - gw / 2 - 0.4); grot = Math.PI / 2; }
+          else if (side === 2) { gx = W / 2 - gd / 2 - 0.05; gz = gameRng.range(-D / 2 + gw / 2 + 0.4, D / 2 - gw / 2 - 0.4); grot = -Math.PI / 2; }
+          else { gx = gameRng.range(-W / 2 + gw / 2 + 0.5, W / 2 - gw / 2 - 0.5); gz = D / 2 - gd / 2 - 0.05; grot = Math.PI; }
+        } else {
+          gx = gameRng.range(-W / 2 + 1.8, W / 2 - 1.8);
+          gz = gameRng.range(-D / 2 + 1.8, D / 2 - 1.8);
+          grot = gameRng.pick([0, Math.PI / 2]);
+        }
+        const rect: OR = { x: gx, z: gz, w: gw, d: gd, rot: grot };
+        // (a cabinet against the back or the left wall stands clear of its windows, frame and curtains included)
+        if (spec.wall && (grot === 0 || grot === Math.PI / 2)) {
+          const wall = grot === 0 ? 'back' : 'left';
+          const pos = grot === 0 ? gx : gz;
+          if (windows.some((wn) => wn.wall === wall && Math.abs(wn.pos - pos) < wn.w / 2 + gw / 2 + 0.45)) continue;
+        }
+        // the floor that belongs to it: in front (pads, seat, room to move), and round every player
+        const keepFree: OR[] = spec.players.map(([lx, lz]) => { const o = rot2(lx, lz, grot); return { x: gx + o.x, z: gz + o.z, w: 0.95, d: 0.95, rot: grot }; });
+        if (spec.front > 0) { const o = rot2(0, gd / 2 + spec.front / 2, grot); keepFree.push({ x: gx + o.x, z: gz + o.z, w: gw + 0.2, d: spec.front, rot: grot }); }
+        if (!inside(rect, 0.05) || !keepFree.every((q) => inside(q, 0.3))) continue;
+        if (reserved.some((q) => overlapOR(rect, q) || keepFree.some((k) => overlapOR(k, q)))) continue;
+        if (placed.some((q) => overlapOR(rect, q, 0.25) || keepFree.some((k) => overlapOR(k, q)))) continue;
+        placed.push(rect, ...keepFree);
+        props.push({ kind: gk, x: gx, z: gz, rot: grot, variant: gameRng.int(0, 3), color: gameRng.pick(colorsAll), color2: gameRng.pick(colorsAll) });
+        break;
+      }
+    }
+  }
+
   // the pieces that make an office kitchen and library (they are there from the start) get their place on the walls first
   const firstWall: PropKind[] = ['coffee', 'bookshelf', 'fridge', ...(r.chance(0.85) ? (['stove'] as PropKind[]) : [])];
   for (const k of firstWall) tryWall(k);
@@ -1196,7 +1282,8 @@ function buildLayoutTry(seed: number, themeIndex: number, attempt: number): Room
   if (door.wall === 'back' || door.wall === 'left') busy[door.wall].push([door.pos - doorWidth / 2 - 0.4, door.pos + doorWidth / 2 + 0.4]);
   for (const wall of ['back', 'left'] as const) for (const [a, b] of rrWall[wall]) busy[wall].push([a - WALL_CLEAR, b + WALL_CLEAR]);
   for (const p of props) {
-    if (!BLOCKS_WALL.has(p.kind)) continue;
+    // (and a game machine against a wall: nothing hangs behind it)
+    if (!BLOCKS_WALL.has(p.kind) && !GAMES[p.kind]?.wall) continue;
     const cs = corners(propRect(p));
     const xs = cs.map((c) => c.x);
     const zs = cs.map((c) => c.z);
@@ -1334,6 +1421,14 @@ function buildLayoutTry(seed: number, themeIndex: number, attempt: number): Room
   let nav = buildNav(props);
   const targets = [...desks.map((d) => d.approach), director.approach, ...director.visitors, ...director.waiting];
   const reachable = (n: NavGrid) => targets.every((t) => n.findPath(door.inside, t));
+  // (a game machine that shuts off a way goes first: it is a bonus, the rest of the room is not)
+  if (!reachable(nav)) {
+    const gi = props.findIndex((p) => GAMES[p.kind]);
+    if (gi >= 0) {
+      props.splice(gi, 1);
+      nav = buildNav(props);
+    }
+  }
   while (!reachable(nav) && props.length) {
     props.pop();
     nav = buildNav(props);
@@ -1595,6 +1690,16 @@ function buildLayoutTry(seed: number, themeIndex: number, attempt: number): Room
   };
   const perKind = new Map<StationKind, number>();
   for (const pr of props) {
+    const game = GAMES[pr.kind];
+    if (game) {
+      game.players.forEach(([lx, lz, ly], slot) => {
+        const o = rot2(lx, lz, pr.rot);
+        const stand = { x: pr.x + o.x, z: pr.z + o.z };
+        if (Math.abs(stand.x) > W / 2 - 0.4 || Math.abs(stand.z) > D / 2 - 0.4 || nav.isBlocked(stand.x, stand.z) || !nav.findPath(door.inside, stand)) return;
+        stations.push({ kind: 'play', prop: pr.kind, propIdx: props.indexOf(pr), stand, target: { x: pr.x, z: pr.z }, yaw: pr.rot + ly, game: { slot, seated: !!game.seated } });
+      });
+      continue;
+    }
     const info = stationOf[pr.kind];
     if (!info) continue;
     const [kindSt, gap] = info;
@@ -1687,7 +1792,7 @@ function buildLayoutTry(seed: number, themeIndex: number, attempt: number): Room
   // start, everything else arrives by delivery (the cartons are parcels people open when they carry them to their place) (own generator: the rest of the room is unaffected)
   const keep = new Set<number>();
   props.forEach((p, i) => {
-    if (p.kind === 'coatRack' || p.kind === 'toilet' || p.kind === 'boxes' || p === restSink) keep.add(i);
+    if (p.kind === 'coatRack' || p.kind === 'toilet' || p.kind === 'boxes' || p === restSink || GAMES[p.kind]) keep.add(i);
   });
   // (the big things that make a room are there from the start as well: a stove, the coffee machine, a fridge, a bookshelf, the sofa and the round table)
   for (const k of ['fileCabinet', 'bin', 'plant', 'stove', 'coffee', 'fridge', 'bookshelf', 'loungeSet', 'sofa', 'meetingSet'] as const) {

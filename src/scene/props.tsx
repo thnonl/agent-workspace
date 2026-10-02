@@ -1,7 +1,7 @@
 import { useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
-import type { Prop } from '../world/layout';
+import { GAMES, type Prop } from '../world/layout';
 import type { RoomTheme } from '../world/palettes';
 import { Rng } from '../util/rng';
 import { frame } from '../sim/frame';
@@ -12,6 +12,7 @@ import { useBaked } from './bake';
 import { PunchDummy, Dumbbells } from './gymProps';
 import { FloorPlant, TallPlant, CactusProp } from './plants';
 import { Toilet } from './restroom';
+import { GameMachine } from './gameMachines';
 import { FileCabinet, Copier, MeetingSet, WhiteboardStand, Boxes, ServerRack, Fridge, Vending, Trolley, Recycle, Credenza } from './officeProps';
 
 // ------------------------------------------------------------------------ props
@@ -373,7 +374,7 @@ export function PropView({ p, theme, roomId }: { p: Prop; theme: RoomTheme; room
     case 'punchDummy': body = <PunchDummy p={p} theme={theme} roomId={roomId} />; break;
     case 'toilet': body = <Toilet p={p} theme={theme} />; break;
     case 'dumbbells': body = <Dumbbells p={p} theme={theme} roomId={roomId} />; break;
-    default: body = null;
+    default: body = GAMES[p.kind] ? <GameMachine p={p} theme={theme} /> : null;
   }
   return (
     <group position={[p.x, 0, p.z]} rotation={[0, p.rot, 0]}>
