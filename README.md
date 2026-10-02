@@ -30,7 +30,7 @@ A cute, isometric 3D office that shows your **Claude Code**, **Codex** and **Ope
 Needs [Node.js](https://nodejs.org) 20 or newer. Start a Claude Code (or Codex / OpenCode) session anywhere, then run:
 
 ```bash
-npx @thnonline/agent-workspace
+npx @thnonline/agent-workspace@latest
 ```
 
 Your browser opens on <http://localhost:4173> and every running session shows up as a room. Stop it with <kbd>Ctrl</kbd>+<kbd>C</kbd>. Nothing has to be configured.
@@ -44,10 +44,9 @@ npm i -g @thnonline/agent-workspace
 agent-workspace                    # from then on, in any terminal
 ```
 
-**Updating:** `npx` keeps a copy in its cache after the first run and does not always fetch a newer release. To be sure you run the newest version, add the `@latest` tag:
+**Updating:** the command above ends in `@latest` on purpose: `npx` keeps a copy in its cache after the first run and, without that tag, does not always fetch a newer release. With it you always run the newest version. For the other ways to run it:
 
 ```bash
-npx @thnonline/agent-workspace@latest          # always the newest release
 npm update -g @thnonline/agent-workspace       # update a global install
 npx clear-npx-cache                            # if npx still starts an old version
 ```
