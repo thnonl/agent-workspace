@@ -317,6 +317,9 @@ const DESK_D = 1.0;
 const RR_SIZES: readonly [number, number][] = [[1.75, 1.75], [2.2, 1.75], [1.75, 2.2], [2.4, 2.0]];
 /** ...and behind the wall (an alcove): a long box reaching far out, or a wide one along the wall */
 const ALCOVE_SIZES: readonly [number, number][] = [[1.8, 2.9], [1.75, 3.4], [3.0, 1.8], [3.4, 2.0], [2.4, 2.4]];
+/** an L-shaped room is this much wider (x) and deeper (z) than the rectangle of its size kind, before its corner is cut away */
+const L_GROW_W = 4;
+const L_GROW_D = 3.5;
 /** an alcove cubicle stands this far in from the corner of the room */
 const ALCOVE_IN = 0.6;
 /** the wall next to the cubicle that is kept free of windows for the sink (metres) */
@@ -476,14 +479,16 @@ function buildLayoutTry(seed: number, themeIndex: number, attempt: number): Room
   const theme = themeFor(themeIndex);
   const kind = r.weighted(KINDS.map((k) => [k, k.weight] as const));
   const seating: 'fan' | 'bench' = r.chance(0.55) ? 'fan' : 'bench';
-  const W = kind.w;
-  const D = kind.d;
   const wallHeight = 3.1;
   // the shape of the room: own generator, so the rest of the room keeps its randomness
   // (another attempt, see MIN_DESKS: other choices for the shape, the door and the director)
   const roomRng = new Rng((seed ^ 0x6a09e667 ^ Math.imul(attempt, 0x9e3779b9)) >>> 0);
-  // an L (V) shaped room: the front right corner (nearest to the camera) is cut away – not in the small rooms
-  const notch = kind.name !== 'cozy' && roomRng.chance(0.3) && attempt < 2 ? { w: Math.round(W * 0.36 * 2) / 2, d: Math.round(D * 0.36 * 2) / 2 } : null;
+  // an L (V) shaped room: the front right corner (nearest to the camera) is cut away – not in the small rooms. Its sides reach further
+  // (L_GROW_W / L_GROW_D), so the two wings are roomy: the room is bigger than its rectangle, not smaller
+  const isL = kind.name !== 'cozy' && roomRng.chance(0.3) && attempt < 2;
+  const W = kind.w + (isL ? L_GROW_W : 0);
+  const D = kind.d + (isL ? L_GROW_D : 0);
+  const notch = isL ? { w: Math.round(W * 0.36 * 2) / 2, d: Math.round(D * 0.36 * 2) / 2 } : null;
   const notchOR: OR | null = notch ? { x: W / 2 - notch.w / 2, z: D / 2 - notch.d / 2, w: notch.w, d: notch.d, rot: 0 } : null;
   // half of the rooms have the toilet cubicle sticking out behind the back wall instead of standing in a corner of the room
   const alcove = roomRng.chance(0.5);
