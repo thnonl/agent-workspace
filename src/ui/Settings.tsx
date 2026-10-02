@@ -9,6 +9,7 @@ import { CONTEXT_WINDOWS, type ContextWindowPref } from '../context';
 import { useProgress } from '../progress';
 import { Dialog } from './Dialog';
 import { Icon } from './Icon';
+import { ConnectPhone, onPhone } from './ConnectPhone';
 
 const QUALITY_TEXT: Record<Quality, string> = {
   low: 'Plain and light: no glow, dust, rain or snow. Best for old laptops.',
@@ -113,6 +114,13 @@ export function SettingsDialog() {
           <Icon name="crosshair" size={16} /> Reset camera (R)
         </button>
       </div>
+
+      {onPhone ? null : (
+        <>
+          <h3>Connect a phone</h3>
+          <ConnectPhone />
+        </>
+      )}
     </Dialog>
   );
 }

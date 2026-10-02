@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg">
+
+    <WebView
+        android:id="@+id/web"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone" />
+
+    <ScrollView
+        android:id="@+id/panel"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:id="@+id/form"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:orientation="vertical"
+            android:padding="24dp">
+
+            <ImageView
+                android:layout_width="96dp"
+                android:layout_height="96dp"
+                android:layout_gravity="center_horizontal"
+                android:contentDescription="@null"
+                android:src="@mipmap/ic_launcher" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:gravity="center"
+                android:text="@string/connect_title"
+                android:textColor="@color/ink"
+                android:textSize="22sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:gravity="center"
+                android:text="@string/connect_hint"
+                android:textColor="@color/ink_soft"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/error"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:background="@color/card"
+                android:padding="12dp"
+                android:textColor="@color/error"
+                android:textSize="14sp"
+                android:visibility="gone" />
+
+            <Button
+                android:id="@+id/scan"
+                style="@style/ActionButton"
+                android:layout_marginTop="20dp"
+                android:text="@string/scan_qr" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="18dp"
+                android:gravity="center"
+                android:text="@string/or_manual"
+                android:textColor="@color/ink_soft"
+                android:textSize="13sp" />
+
+            <TextView
+                style="@style/Label"
+                android:labelFor="@+id/host"
+                android:text="@string/host_label" />
+
+            <EditText
+                android:id="@+id/host"
+                style="@style/Field"
+                android:hint="@string/host_hint"
+                android:importantForAutofill="no"
+                android:inputType="textUri" />
+
+            <TextView
+                style="@style/Label"
+                android:labelFor="@+id/port"
+                android:text="@string/port_label" />
+
+            <EditText
+                android:id="@+id/port"
+                style="@style/Field"
+                android:hint="4173"
+                android:importantForAutofill="no"
+                android:inputType="number"
+                android:maxLength="5" />
+
+            <TextView
+                style="@style/Label"
+                android:labelFor="@+id/token"
+                android:text="@string/token_label" />
+
+            <EditText
+                android:id="@+id/token"
+                style="@style/Field"
+                android:hint="@string/token_hint"
+                android:imeOptions="actionGo"
+                android:importantForAutofill="no"
+                android:inputType="textNoSuggestions|textVisiblePassword" />
+
+            <Button
+                android:id="@+id/connect"
+                style="@style/ActionButton"
+                android:layout_marginTop="20dp"
+                android:text="@string/connect" />
+
+            <TextView
+                android:id="@+id/version"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:gravity="center"
+                android:textColor="@color/ink_soft"
+                android:textSize="12sp" />
+        </LinearLayout>
+    </ScrollView>
+</FrameLayout>

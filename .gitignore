@@ -5,3 +5,4 @@ assets-src/
 *.log
 .vite
 .codegraph/
+keys/

@@ -23,6 +23,7 @@ Your browser opens on <http://localhost:4173> and every running session shows up
 - [Controls](#controls)
 - [Run](#run)
   - [Environment variables](#environment-variables)
+- [📱 On your phone](#-on-your-phone)
 - [Development](#development)
 - [License](#license)
 
@@ -109,10 +110,11 @@ agent-workspace                    # from then on, in any terminal
 | --- | --- |
 | `-p, --port <n>` | Port to listen on (default `4173`, or `$PORT`) |
 | `--host <ip>` | Address to listen on (default `127.0.0.1`: this machine only; `0.0.0.0` makes it reachable from your network) |
+| `--token <t>` | Access token other machines (phones) must bring – default: a random one saved in `~/.agent-workspace/token` |
 | `--no-open` | Do not open the browser |
 | `-h, --help` | Show the options |
 
-The page is only reachable from your own machine unless you pass `--host` – it shows what your agents are doing, so share it deliberately.
+The page is only reachable from your own machine unless you pass `--host` – it shows what your agents are doing, so share it deliberately. With `--host`, every other machine needs the **access token** (your own machine never does): the QR code in *Settings → Connect a phone* carries it, or open `http://<ip>:<port>/?token=<token>` once – the server keeps it in a cookie. A request that a proxy or tunnel on your machine forwards with an `X-Forwarded-For` or `Forwarded` header counts as another machine.
 
 **Updating:** keep the `@latest` in the `npx` command: without it `npx` can reuse an older copy from its cache. `npm update -g @thnonline/agent-workspace` updates a global install, `npx clear-npx-cache` helps if `npx` still starts an old version, and `npm rm -g @thnonline/agent-workspace` removes the global install. A copy inside a project's `node_modules` is used as it is.
 
@@ -128,7 +130,42 @@ The page is only reachable from your own machine unless you pass `--host` – it
 | `SESSION_WINDOW_MIN` | `30` | A session gets a room while it was active within this many minutes |
 | `PORT` | `4173` | Port of the web page (same as `--port`) |
 | `CONTEXT_WINDOW_TOKENS` | *(from the model list)* | Forces the context window of sessions without a reported size, e.g. `1m` or `200k` |
+| `AGENT_WORKSPACE_TOKEN` | *(random, saved)* | Access token for other machines (same as `--token`) |
 | `AGENT_WORKSPACE_DB` | `~/.agent-workspace/settings.db` | SQLite file with your settings (names, progress, mute, music). Needs Node 22.5+; on older Node the settings stay in the browser |
+
+## 📱 On your phone
+
+The Android app shows the office of a computer on the same network. It is a thin WebView: the page comes from your computer, so a new web version never needs a new app.
+
+1. On the computer, start the server for your network: `npx @thnonline/agent-workspace@latest --host 0.0.0.0` (allow the port, `4173`, in the firewall when asked).
+2. Open **Settings → Connect a phone**. It shows the IP, the port and the access token, and **Show QR code** draws the QR code. (On a phone this part of the settings is hidden.)
+3. Scan the code with the phone's camera:
+   * **app installed** – the app opens and connects right away;
+   * **no app yet** – the phone downloads the newest APK from the [latest GitHub release](https://github.com/thnonl/agent-workspace/releases/latest) (allow your browser to *install unknown apps*). Install it and scan again.
+
+In the app you can also tap **Scan QR code**, or type the IP, port and token yourself. It remembers the last computer and connects to it on the next start; press back twice to pick another. While it is open, the app checks the latest GitHub release and offers **Download** when there is a newer version.
+
+The QR code opens `http://<ip>:<port>/m?t=<token>`: a small page on your computer that hands the address to the app (`agentworkspace://connect?h=…&p=…&t=…`), or offers the APK and the browser version. Anyone holding the code can watch your sessions; run with a new `--token` (or delete `~/.agent-workspace/token`) to lock out every phone.
+
+### Building the app
+
+The project is in [`android/`](android) (Kotlin, no framework; Gradle wrapper included). Needs Android Studio, or a JDK 17+ plus the Android SDK.
+
+```bash
+npm run apk                  # android/app/build/outputs/apk/debug/app-debug.apk
+npm run apk -- release       # release build, signed with the key below (or the debug key when it is not set)
+```
+
+The app's version is the `version` in `package.json`.
+
+**Releases:** pushing a version tag (`npm version minor && git push --follow-tags`) runs [.github/workflows/android.yml](.github/workflows/android.yml). It builds the signed APK and attaches it as `agent-workspace.apk` to the GitHub release of that tag, creating the release when there is none. (Run it by hand from the Actions tab for an existing tag.) The QR page and the update check both use that file, so every release needs it. The workflow needs one signing key, kept for good – an app signed with another key cannot update the installed one:
+
+```bash
+keytool -genkeypair -v -keystore release.jks -alias agent-workspace -keyalg RSA -keysize 2048 -validity 10000
+base64 -w0 release.jks       # (macOS: base64 -i release.jks)
+```
+
+Add the repository secrets `ANDROID_KEYSTORE_BASE64` (that base64 text), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` (`agent-workspace`) and `ANDROID_KEY_PASSWORD`. Keep `release.jks` out of git and back it up. For a local release build, set `AW_KEYSTORE_FILE`, `AW_KEYSTORE_PASSWORD`, `AW_KEY_ALIAS` and `AW_KEY_PASSWORD`.
 
 ## Development
 
@@ -136,7 +173,8 @@ The page is only reachable from your own machine unless you pass `--host` – it
 npm install
 npm run dev                  # http://localhost:5173  (Vite + transcript monitor, hot reload)
 npm run build && npm start   # production build on http://localhost:4173
-npm test                     # monitor unit tests
+npm test                     # monitor and server unit tests
+npm run apk                  # Android app (see On your phone)
 ```
 
 `npm run dev` starts a **demo** with three scripted sessions when no session is running. Force it with `?demo`, disable it with `?nodemo`, or press `D`; a production build never starts it by itself. Dev only: `?perf` adds a small statistics panel (fps, CPU and GPU ms per frame, draw calls, programs, long tasks, heap). In any build, `?catlab` and `?wardrobe` open turntables for the cats and the characters.

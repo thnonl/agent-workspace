@@ -3,6 +3,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createApi } from './api.mjs';
+import { createGuard, loadToken } from './mobile.mjs';
 
 const types = {
   '.html': 'text/html; charset=utf-8',
@@ -52,10 +53,12 @@ function encoded(file, accept) {
   return null;
 }
 
-export function createAppServer({ root, monitor }) {
+/** `token`: what other machines must bring (see mobile.mjs); by default the saved / generated one. */
+export function createAppServer({ root, monitor, token = loadToken() }) {
   const api = createApi(monitor);
+  const guard = createGuard({ token });
   return http.createServer((req, res) => {
-    api(req, res, () => {
+    guard(req, res, () => api(req, res, () => {
       let pathname;
       try {
         pathname = decodeURIComponent(new URL(req.url || '/', 'http://x').pathname);
@@ -83,6 +86,6 @@ export function createAppServer({ root, monitor }) {
         res.writeHead(200, headers);
         stream.pipe(res);
       });
-    });
+    }));
   });
 }

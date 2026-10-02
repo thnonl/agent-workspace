@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Agent Workspace</string>
+    <string name="connect_title">Connect to your office</string>
+    <string name="connect_hint">On the computer, start Agent Workspace with --host 0.0.0.0 and open Settings → Connect a phone.</string>
+    <string name="scan_qr">Scan QR code</string>
+    <string name="or_manual">or enter it yourself</string>
+    <string name="host_label">IP address</string>
+    <string name="host_hint">192.168.1.10</string>
+    <string name="port_label">Port</string>
+    <string name="token_label">Token</string>
+    <string name="token_hint">Shown under Settings → Connect a phone</string>
+    <string name="connect">Connect</string>
+    <string name="scan_prompt">Scan the QR code from Settings → Connect a phone</string>
+    <string name="err_bad_qr">This QR code is not an Agent Workspace code.</string>
+    <string name="err_input">Enter the IP address and a port between 1 and 65535.</string>
+    <string name="err_unreachable">Cannot reach %1$s (%2$s). Is the computer on the same Wi-Fi, started with --host 0.0.0.0, and is the port open in its firewall?</string>
+    <string name="err_token">The server refused the token. Scan the QR code again or copy the token from Settings → Connect a phone.</string>
+    <string name="back_again">Press back again to change the server</string>
+    <string name="version">App version %1$s</string>
+    <string name="update_title">Update available</string>
+    <string name="update_message">Agent Workspace %1$s is out (you have %2$s). Download the new APK and open it to install the update.</string>
+    <string name="update_download">Download</string>
+    <string name="update_later">Later</string>
+</resources>

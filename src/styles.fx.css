@@ -23,6 +23,15 @@
 /* --- settings dialog ---------------------------------------------------- */
 .modal-settings h3 { margin: 18px 0 8px; font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-soft); }
 .modal-settings .muted { margin: 8px 0 0; font-size: 13px; line-height: 1.45; }
+.modal-settings code { font-family: 'JetBrains Mono Variable', ui-monospace, monospace; font-size: 12px; background: rgba(120, 90, 160, 0.1); padding: 1px 6px; border-radius: 6px; }
+.connect-grid { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; align-items: center; margin-bottom: 10px; font-size: 13px; font-weight: 800; }
+.connect-grid > span { color: var(--ink-soft); }
+.connect-grid > code { justify-self: start; }
+.connect-grid select { justify-self: start; max-width: 100%; font: inherit; font-family: 'JetBrains Mono Variable', ui-monospace, monospace; font-size: 12px; padding: 4px 8px; border-radius: 8px; border: 2px solid rgba(120, 90, 160, 0.25); background: #fff; color: inherit; }
+.connect-token { user-select: all; word-break: break-all; }
+.modal-settings a.btn { text-decoration: none; color: var(--ink); }
+.connect-qr { width: 220px; max-width: 100%; margin: 12px auto 0; padding: 8px; border-radius: 14px; background: #fff; }
+.connect-qr svg { display: block; width: 100%; height: auto; }
 .seg { display: flex; flex-wrap: wrap; gap: 6px; }
 .app .modal-card .seg button { padding: 6px 13px; border-radius: 999px; border: 1.5px solid #d9cfee; background: #f7f3fd; color: var(--ink); font: inherit; font-size: 13px; font-weight: 800; cursor: pointer; }
 .app .modal-card .seg button:hover { background: #ece4fb; }

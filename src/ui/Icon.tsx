@@ -63,6 +63,9 @@ const ICONS = {
   'cloud-rain': <>{P('M4 14.9A7 7 0 1 1 15.7 8h1.8a4.5 4.5 0 0 1 2.5 8.2')}{P('M16 14v6M8 14v6M12 16v6')}</>,
   sparkles: <>{P('M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z')}{P('M19 3v4M17 5h4')}</>,
   pip: <><rect x="2" y="4" width="20" height="16" rx="2" /><rect x="12" y="12" width="8" height="6" rx="1" /></>,
+  smartphone: <><rect x="6" y="2" width="12" height="20" rx="2" />{P('M11 18h2')}</>,
+  qr: <><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" />{P('M14 14h3v3M21 14v.01M14 21h3M21 18v3h-1M17 17v.01')}</>,
+  download: <>{P('M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4')}{P('M7 10l5 5 5-5M12 15V3')}</>,
   star: P('m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8-6.2-3.3-6.2 3.3L7 14.2 2 9.3l6.9-1z'),
 } satisfies Record<string, ReactNode>;
 
