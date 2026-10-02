@@ -1,7 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useShallow } from 'zustand/react/shallow';
-import { orderedRooms, useStore } from '../store';
+import { orderedRooms, switcherShown, useStore } from '../store';
 import { themeFor } from '../world/palettes';
 import { cats, sims } from '../sim/registry';
 import type { Phase } from '../sim/registry';
@@ -100,8 +100,8 @@ export function TopBar() {
   const muted = useStore((s) => s.muted);
   const setMuted = useStore((s) => s.setMuted);
   const nameCount = useStore((s) => s.names.length);
-  const showSwitcher = useStore((s) => s.showSwitcher);
-  const setShowSwitcher = useStore((s) => s.setShowSwitcher);
+  const showSwitcher = useStore(switcherShown);
+  const toggleSwitcher = useStore((s) => s.toggleSwitcher);
   const soundReady = useSyncExternalStore(subscribeAudioState, audioRunning);
   const musicOn = useStore((s) => s.musicOn);
   const setMusicOn = useStore((s) => s.setMusicOn);
@@ -122,7 +122,7 @@ export function TopBar() {
         <button
           type="button"
           className={`pill pill-btn pill-${connection}${showSwitcher ? '' : ' pill-collapsed'}`}
-          onClick={() => setShowSwitcher(!showSwitcher)}
+          onClick={toggleSwitcher}
           aria-pressed={showSwitcher}
           title={showSwitcher ? 'Hide the list of sessions' : 'Show the list of sessions'}
         >
@@ -496,14 +496,36 @@ export function RoomSwitcher() {
   const askReleaseAll = useStore((s) => s.askReleaseAll);
   const unseen = useStore((s) => s.unseen);
   const asks = useStore((s) => s.asks);
-  const show = useStore((s) => s.showSwitcher);
+  const show = useStore(switcherShown);
+  const toggle = useStore((s) => s.toggleSwitcher);
+  const looking = useStore((s) => s.selectedKey !== null);
+  const setAuto = useStore((s) => s.setSwitcherAuto);
+  // phones and tablets: the strip folds away while a person is looked at (the sheet about them needs the room) and comes back as it was when they are let go
+  useEffect(() => {
+    if (!looking) setAuto(false);
+    else if (useStore.getState().showSwitcher && window.matchMedia('(max-width: 1040px)').matches) setAuto(true);
+  }, [looking, setAuto]);
   const ctxPref = useStore((s) => s.contextWindow);
   const status = useRoomStatus();
   const listRef = useRef<HTMLDivElement>(null);
+  const navRef = useRef<HTMLElement>(null);
+  // on a phone the strip (and its button) is as tall as its cards: the character sheet and the toasts sit above it via --switcher-h
+  const hasRooms = order.length > 0;
+  useLayoutEffect(() => {
+    const nav = navRef.current;
+    const app = nav?.closest<HTMLElement>('.app');
+    if (!nav || !app) return;
+    const ro = new ResizeObserver(() => app.style.setProperty('--switcher-h', `${nav.offsetHeight}px`));
+    ro.observe(nav);
+    return () => {
+      ro.disconnect();
+      app.style.removeProperty('--switcher-h');
+    };
+  }, [hasRooms]);
   // the room that is opened stays in view when the list scrolls
   useEffect(() => {
     listRef.current?.querySelector('.room-card.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  }, [active]);
+  }, [active, show]);
   // when the order changes (a read summary sorts the list) the cards glide to their new places: FLIP, transform only, so the compositor does the work
   const orderKey = order.join('\n');
   const placed = useRef<{ key: string; at: Map<string, [number, number]> }>({ key: orderKey, at: new Map() });
@@ -530,11 +552,17 @@ export function RoomSwitcher() {
     }
     placed.current = { key: orderKey, at };
   }, [orderKey, show]);
-  if (!order.length || !show) return null;
+  if (!order.length) return null;
   const idleCount = order.filter((id) => !(status[id] ?? NO_STATUS).working).length;
   return (
-    <nav className="switcher" aria-label="Sessions">
-      <div className="switcher-list" ref={listRef}>
+    <nav className="switcher" aria-label="Sessions" ref={navRef}>
+      {/* phones and tablets: the strip covers the bottom of the room, so it can be folded away right where it is (the status pill in the top bar does the same) */}
+      <button type="button" className="switcher-toggle" onClick={toggle} aria-pressed={show} aria-controls="switcher-list" title={show ? 'Hide the list of sessions' : 'Show the list of sessions'}>
+        <Icon name="building" size={14} /> Rooms · {order.length}
+        <Icon name={show ? 'chevron-down' : 'chevron-up'} size={14} />
+      </button>
+      {show ? (
+      <div className="switcher-list" id="switcher-list" ref={listRef}>
         {order.map((id, i) => {
           const r = rooms[id];
           if (!r) return null;
@@ -571,6 +599,7 @@ export function RoomSwitcher() {
           </button>
         ) : null}
       </div>
+      ) : null}
     </nav>
   );
 }

@@ -70,6 +70,8 @@ interface State {
   showNames: boolean;
   /** the list of sessions on the right is shown (toggled by the live pill in the top bar) */
   showSwitcher: boolean;
+  /** on a phone the list folds away while a person is looked at, and comes back when they are let go (not saved; see switcherShown) */
+  switcherAuto: boolean;
   /** sound effects are off */
   muted: boolean;
   /** the user's list of names for the director and the staff */
@@ -133,6 +135,9 @@ interface State {
   setMuted: (on: boolean) => void;
   setShowNames: (on: boolean) => void;
   setShowSwitcher: (on: boolean) => void;
+  setSwitcherAuto: (on: boolean) => void;
+  /** the session list button / the live pill: shows a list that was folded for a person, or else flips the saved choice */
+  toggleSwitcher: () => void;
   applyNames: (list: string[]) => void;
   resetView: () => void;
   setAutoDemo: (on: boolean) => void;
@@ -249,6 +254,9 @@ function isStale(s: State, id: string, now: number): boolean {
  * (sorted again shortly after a room starts or stops working, see the subscription at the end of this file, and at once
  * when a summary is closed). (The number keys and the arrow keys follow the same order.)
  */
+/** the session list is on screen: switched on and not folded away for the person being looked at */
+export const switcherShown = (s: Pick<State, 'showSwitcher' | 'switcherAuto'>) => s.showSwitcher && !s.switcherAuto;
+
 export function orderedRooms(s: Pick<State, 'listOrder'>): string[] {
   return [...s.listOrder];
 }
@@ -1211,6 +1219,7 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
   showHelp: false,
   showNames: false,
   showSwitcher: loadShowSwitcher(),
+  switcherAuto: false,
   names: loadNames(),
   resetTick: 0,
   autoDemo: false,
@@ -1433,7 +1442,13 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
     } catch {
       /* private mode: the choice just is not remembered */
     }
-    set({ showSwitcher: on });
+    set({ showSwitcher: on, switcherAuto: false });
+  },
+  setSwitcherAuto: (on) => set({ switcherAuto: on }),
+  toggleSwitcher: () => {
+    const s = get();
+    if (s.switcherAuto) set({ switcherAuto: false });
+    else s.setShowSwitcher(!s.showSwitcher);
   },
 
   /** Save the list and give everybody who is already in an office a name from it (director first). */

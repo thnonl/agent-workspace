@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo } from 'react';
 import { BubbleLayer } from './ui/BubbleLayer';
 import { AgentPanel, Announcer, EmptyState, Help, NamesDialog, PipContext, RoomHeader, ReleaseConfirm, RoomSwitcher, SummaryPaper, TopBar } from './ui/Overlay';
-import { localHour, orderedRooms, useStore } from './store';
+import { localHour, orderedRooms, switcherShown, useStore } from './store';
 import { celestial, envForHour, skyColors } from './env';
 import { connectLive } from './live/connection';
 import { startDemo } from './demo/simulator';
@@ -304,13 +304,14 @@ export default function App() {
   const [sky1, sky2] = skyColors(themeFor(themeIndex).sky, e);
   const body = celestial(hour);
   const weather = useStore((s) => s.weather);
-  const showList = useStore((s) => s.showSwitcher && s.visibleOrder.length > 0);
+  const showList = useStore((s) => switcherShown(s) && s.visibleOrder.length > 0);
+  const hasRooms = useStore((s) => s.visibleOrder.length > 0);
   const cinema = useStore((s) => s.cinema);
   const pip = useStore((s) => s.pip);
   const stars = useMemo(() => Array.from({ length: 70 }, (_, i) => ({ x: (i * 37.7) % 100, y: (i * 53.3) % 62, s: 1 + ((i * 7) % 3), d: (i * 0.37) % 4 })), []);
   return (
     <div
-      className={`app wx-${weather}${e.night > 0.55 ? ' is-night' : ''}${showList ? ' has-list' : ''}${cinema || pip ? ' cinema' : ''}${pip ? ' pip' : ''}`}
+      className={`app wx-${weather}${e.night > 0.55 ? ' is-night' : ''}${showList ? ' has-list' : ''}${hasRooms ? ' has-rooms' : ''}${cinema || pip ? ' cinema' : ''}${pip ? ' pip' : ''}`}
       style={{ ['--sky1' as string]: sky1, ['--sky2' as string]: sky2, ['--night' as string]: e.night.toFixed(3), ['--warm' as string]: e.warm.toFixed(3), ['--wx' as string]: OVERCAST[weather] }}
     >
       <div className="sky">

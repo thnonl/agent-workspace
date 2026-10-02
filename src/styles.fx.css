@@ -194,6 +194,26 @@
   .room-card { width: min(264px, 59.2vw); }
 }
 
+/* --- the "Rooms" button right above the strip folds it away (only where the strip covers the bottom of the room) --- */
+.switcher-toggle { display: none; }
+@media (max-width: 1040px) {
+  .switcher-toggle {
+    display: inline-flex; align-items: center; gap: 5px; align-self: flex-start; margin-bottom: 6px; pointer-events: auto; cursor: pointer;
+    padding: 5px 10px 5px 12px; border-radius: 999px; border: 2px solid #fff; background: var(--glass); color: var(--ink);
+    font: inherit; font-size: 12.5px; font-weight: 800; line-height: 18px; box-shadow: 0 6px 18px rgba(120, 90, 160, 0.14);
+  }
+  .switcher-toggle:active { transform: scale(0.96); }
+  .app.is-night .switcher-toggle { border-color: rgba(255, 255, 255, 0.16); }
+  /* the character sheet sits above the strip, or above the button alone when the strip is folded (--switcher-h: the measured height of both) */
+  .has-rooms .panel { bottom: calc(14px + var(--switcher-h, 0px) + 8px); }
+}
+@media (max-width: 860px) {
+  .has-rooms .toasts { bottom: calc(14px + var(--switcher-h, 0px) + 8px); }
+}
+@media (max-width: 560px) {
+  .has-rooms .panel, .has-rooms .toasts { bottom: calc(10px + var(--switcher-h, 0px) + 8px); }
+}
+
 /* the name tag takes the place of a bubble (and the other way round) at once: fading it in from nothing left the spot over the head
    empty for a third of a second every time a bubble went away, which looked like the name blinking */
 .nametag { animation: none; }
