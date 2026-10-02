@@ -74,7 +74,7 @@ export interface ActorCtx {
 /** what somebody does at the desk when there is no work: listen to music with headphones on, watch a video, type something of their own */
 export type DeskAct = 'music' | 'video' | 'browse' | 'game' | 'call' | 'shop' | 'mail';
 
-type ActivityKind = DeskAct | 'wander' | 'sofa' | 'lounge' | 'watch' | 'window' | 'pet' | 'stay' | 'chat' | 'parcel' | 'tidy' | 'sleep' | 'toilet' | 'table' | 'fetch' | StationKind;
+type ActivityKind = DeskAct | 'wander' | 'sofa' | 'lounge' | 'couchGame' | 'watch' | 'window' | 'pet' | 'stay' | 'chat' | 'parcel' | 'tidy' | 'sleep' | 'toilet' | 'table' | 'fetch' | StationKind;
 
 /** activities that sit down on a spot (sofa, toilet, chair at the round table) */
 const SEATED = new Set<ActivityKind>(['sofa', 'toilet', 'table']);
@@ -176,7 +176,7 @@ const roomsLoading = () => frame.loading || performance.now() - frame.loadingAt 
 function thoughtOf(a: Activity, name: string): [string, string] | null {
   switch (a.kind) {
     case 'wander': return [thoughts.wander(), 'walk'];
-    case 'sofa': return a.sleep ? [thoughts.sleep(), 'sleep'] : a.lounge ? [thoughts.lounge(), 'sofa'] : a.phone ? [thoughts.phone(), 'phone'] : [thoughts.sofa(), 'sofa'];
+    case 'sofa': return a.couchGame ? playLines.start('psConsole', a.detail || undefined, !!a.boss) : a.sleep ? [thoughts.sleep(), 'sleep'] : a.lounge ? [thoughts.lounge(), 'sofa'] : a.phone ? [thoughts.phone(), 'phone'] : [thoughts.sofa(), 'sofa'];
     case 'watch': return [thoughts.watch(name), 'watch'];
     case 'window': return a.smoke ? [thoughts.smoke(), 'smoke'] : [thoughts.window(), 'window'];
     case 'parcel': return [thoughts.parcel(), 'parcel'];
@@ -208,7 +208,7 @@ function thoughtOf(a: Activity, name: string): [string, string] | null {
 }
 
 /** what a character holds in the right hand */
-export type HeldKind = 'none' | 'cup' | 'book' | 'can' | 'bowl' | 'dumbbell' | 'parcel' | 'pot' | 'cig' | 'phone';
+export type HeldKind = 'none' | 'cup' | 'book' | 'can' | 'bowl' | 'dumbbell' | 'parcel' | 'pot' | 'cig' | 'phone' | 'pad';
 
 /** arm/body key pose of a station activity (missing values fall back to the relaxed pose) */
 interface Key {
@@ -261,6 +261,8 @@ interface Activity {
   sleep?: boolean;
   /** lying back on a bean bag (a sofa break on a bean bag) */
   lounge?: boolean;
+  /** on the sofa in front of the console, playing (a sofa break) */
+  couchGame?: boolean;
   /** sofa: scroll a phone while sitting there */
   phone?: boolean;
   /** the target is on the porch: the way there leads through the door (see routeOut) */
@@ -1484,6 +1486,7 @@ export class Actor {
     }
     this.act = a;
     this.parcelTrip = a.kind === 'parcel';
+    this.sim.gaming = !!a.couchGame;
     // the thought appears right away – the character is still in the chair
     this.announce(ctx, thoughtOf(a, a.detail ?? ''));
     if (a.atDesk) {
@@ -1656,6 +1659,7 @@ export class Actor {
 
   private goHome(ctx: ActorCtx) {
     dismissIdle(this.sim.key); // the break is over: the thought about it goes away
+    this.sim.gaming = false;
     this.resumeAct = null;
     if (this.act?.partnerKey) {
       const friend = sims.get(this.act.partnerKey);
@@ -1723,8 +1727,14 @@ export class Actor {
     const playFree = stationsOf('play');
     const playMate = (st: Station) => layout.stations.some((o, j) => o !== st && o.kind === 'play' && o.propIdx === st.propIdx && sims.get(spotOwners.get(`${s.roomId}@${j}`) ?? '')?.onStage);
     const playJoin = playFree.some(({ st }) => playMate(st));
+    // the console in front of the lounge sofa: free seats, and whether somebody already plays there
+    const couch = layout.couch;
+    const couchFree = couch ? couch.seats.filter((i) => !layout.spots[i].off && !spotOwners.has(`${s.roomId}#${i}`)) : [];
+    const couchGamer = (i: number) => couch!.seats.map((j) => (j === i ? '' : spotOwners.get(`${s.roomId}#${j}`) ?? '')).find((k) => k && sims.get(k)?.gaming && sims.get(k)?.onStage) ?? '';
+    const couchJoin = couchFree.some((i) => couchGamer(i));
     const options: [ActivityKind, number][] = [
       ['play', playFree.length ? (staff ? 3 : 10) * (playJoin ? 3 : 1) : 0],
+      ['couchGame', couchFree.length ? (staff ? 3 : 10) * (couchJoin ? 3 : 1) : 0],
       ['wander', staff ? 0.4 : 0.9], ['sofa', seats.length ? (staff ? 4 : 3) : 0], ['lounge', beanbags.length ? (staff ? 7 : 3) : 0], ['watch', watchable.length ? (staff ? 1.5 : 4) : 0],
       ['fetch', canFetch ? (staff ? 3.5 : 2.5) : 0], ['window', windowsFree.length ? (staff ? 1.5 : 2.5) : 0], ['pet', petCats.length ? (staff ? 4.5 : 5) : 0], ['stay', staff ? 5 : 0],
       ['drink', stationsOf('drink').length ? 4 : 0], ['read', stationsOf('read').length ? 3.5 : 0], ['fish', stationsOf('fish').length ? 3.5 : 0],
@@ -1771,6 +1781,15 @@ export class Actor {
         spotOwners.set(stationKey, s.key);
         const dur = kind === 'drink' ? 15 : kind === 'read' ? 26 + Math.random() * 10 : kind === 'fish' ? 22 + Math.random() * 10 : kind === 'wash' ? 14 : kind === 'cook' ? 34 + Math.random() * 6 : kind === 'box' ? 18 + Math.random() * 10 : kind === 'lift' ? 20 + Math.random() * 10 : 20 + Math.random() * 6;
         return { kind, target: st.stand, yaw: st.yaw, dur, station: st, stationKey, detail: kind === 'read' ? pickOne(BOOKS) : undefined };
+      }
+      case 'couchGame': {
+        // next to a colleague who already plays, else any free seat of the sofa
+        const withMate = couchFree.filter((i) => couchGamer(i));
+        const i = pick(withMate.length ? withMate : couchFree);
+        const sp = layout.spots[i];
+        spotOwners.set(`${s.roomId}#${i}`, s.key);
+        const mate = couchGamer(i);
+        return { kind: 'sofa', target: sp.approach, yaw: sp.yaw, dur: 26 + Math.random() * 16, spot: i, couchGame: true, detail: mate ? ctx.nameOf(mate) : '', boss: this.isDirector };
       }
       case 'play': {
         // join a colleague at a two-player machine first, else any free place
@@ -2070,6 +2089,8 @@ export class Actor {
           else if (a.sleep) {
             this.sleepPose(pose, true);
             this.zzz(ctx, t);
+          } else if (a.couchGame) {
+            this.padPose(pose, ctx, a, t);
           } else if (a.lounge) {
             this.loungePose(pose, t);
           } else if (a.drinkCup) {
@@ -2589,6 +2610,7 @@ export class Actor {
       }
       case 'consoleTv': {
         // the controller held in front of the chest, thumbs busy, leaning into the curves
+        if (into > 0.3) this.held = 'pad';
         p.armLx = p.armRx = mix(-0.95);
         p.armLz = p.armRz = mix(-0.32);
         p.foreLx = mix(-1.55 + Math.sin(c * 15) * 0.05);
@@ -3164,6 +3186,39 @@ export class Actor {
       this.cue('huff', curlEnd + 0.4);
     }
     if (t > d - 1.0) pose.happy = 1;
+  }
+
+  /** on the sofa with the controller: hands in the lap, thumbs busy, leaning into the game; a bit of banter with whoever plays alongside */
+  private padPose(p: Pose, ctx: ActorCtx, a: Activity, t: number) {
+    const c = this.clock;
+    const d = a.dur;
+    const into = seg(t, 0, 0.8) * (1 - seg(t, d - 0.8, d));
+    this.held = into > 0.3 ? 'pad' : 'none';
+    p.armLx = p.armRx = -0.7 * into;
+    p.armLz = p.armRz = -0.38 * into;
+    p.foreLx = (-1.3 + Math.sin(c * 15) * 0.05) * into;
+    p.foreRx = (-1.3 + Math.sin(c * 13 + 1) * 0.05) * into;
+    // leaning forward when it gets exciting, into the curves now and then
+    const thrill = Math.max(0, Math.sin(c * 0.45)) ** 3;
+    p.lean = (0.05 + 0.22 * thrill) * into;
+    p.roll = Math.sin(c * 1.4) * 0.08 * thrill * into;
+    p.headX = 0.05 * into;
+    if (thrill > 0.7) p.mouth = 'o';
+    const s = this.sim;
+    const couch = ctx.layout.couch;
+    const mate = !!couch && couch.seats.some((j) => {
+      const k = spotOwners.get(`${s.roomId}#${j}`);
+      return !!k && k !== s.key && !!sims.get(k)?.gaming;
+    });
+    const won = (this.clock * 7.3) % 1 < 0.5;
+    if (mate && this.chatLine < 0 && t > d * 0.45) {
+      this.chatLine = 0;
+      this.announce(ctx, playLines.versus());
+    } else if (!mate && this.chatLine < 0 && t > d - 2.2) {
+      this.chatLine = 0;
+      this.announce(ctx, playLines.end(won));
+    }
+    if (t > d - 2.2) p.happy = Math.max(p.happy, won ? 1 : 0);
   }
 
   /** lying back on a bean bag: the body sinks back over the first second, legs stretched out, hands folded on the belly */

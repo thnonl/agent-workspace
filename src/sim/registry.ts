@@ -66,6 +66,8 @@ export interface SimState {
   actKind?: string;
   /** fetching the parcel or carrying a carton to open it: no task is handed to them until it is done (see store.dispatchRoom) */
   carrying?: boolean;
+  /** on the sofa playing on the console (a colleague who wants to play sits down next to them) */
+  gaming?: boolean;
 }
 
 export const sims = new Map<string, SimState>();

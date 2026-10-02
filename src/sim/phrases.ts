@@ -199,6 +199,7 @@ const PLAY: Record<string, string[]> = {
   vrStation: ['Off to another world for a bit', 'VR goggles on!', 'Let’s fight some virtual robots', 'Don’t mind me waving at nothing'],
   pingPong: ['Ping-pong, anyone?', 'Time for a quick rally', 'My backhand needs practice'],
   hoops: ['Shooting some hoops', 'Three-pointer time', 'Nothing but net', 'Let’s break the basket record'],
+  psConsole: ['A match on the big screen!', 'PS time – who’s in?', 'One race from the couch', 'Couch co-op, anyone?', 'Controller charged, let’s go', 'Sofa, controller, big TV: perfect'],
 };
 const PLAY_BOSS = ['Even the boss needs a break', 'This is research. Serious research.', 'Team building, technically', 'The boss is allowed one game. Or two.'];
 const PLAY_JOIN: ((n: string) => string)[] = [(n) => `Mind if I join, ${n}?`, (n) => `${n}, prepare to lose!`, (n) => `Room for one more, ${n}?`, (n) => `Rematch, ${n}!`, (n) => `Two players, ${n}? Let’s go!`];
@@ -309,7 +310,7 @@ const UNBOXED_NAME: Record<string, string> = {
   sink: 'a sink', stove: 'a stove', punchDummy: 'a punching dummy', dumbbells: 'a set of dumbbells', toilet: 'a toilet',
   arcade: 'an arcade machine', arcadeDuo: 'a two-player arcade', pinball: 'a pinball machine', clawMachine: 'a claw machine', airHockey: 'an air hockey table',
   foosball: 'a foosball table', danceMachine: 'a dance machine', consoleTv: 'a game console', racingSim: 'a racing simulator', vrStation: 'a VR station',
-  pingPong: 'a ping-pong table', hoops: 'a basketball arcade',
+  pingPong: 'a ping-pong table', hoops: 'a basketball arcade', psConsole: 'a PS5 and a big TV', psWall: 'a PS5 and a wall TV',
 };
 const UNBOXED = [
   (n: string) => `Wow, ${n}! The office just got an upgrade`,

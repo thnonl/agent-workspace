@@ -332,6 +332,71 @@ function Hoops({ p }: { p: Prop }) {
   );
 }
 
+/** a PS5-style console with a big TV on a low cabinet, facing the sofa of a lounge corner (one plays sitting on the sofa) */
+function PsConsole({ p, theme }: { p: Prop; theme: RoomTheme }) {
+  const white = M('#f4f6fb', { rough: 0.35 });
+  const black = M('#1b1d2a', { rough: 0.4 });
+  return (
+    <group>
+      <RB size={[1.5, 0.42, 0.44]} pos={[0, 0.21, 0]} color={shade(theme.desk, -0.12)} r={0.03} />
+      <RB size={[1.46, 0.02, 0.42]} pos={[0, 0.43, 0]} color={theme.deskTop} r={0.01} cast={false} />
+      {[-0.37, 0.37].map((x) => <RB key={x} size={[0.7, 0.3, 0.01]} pos={[x, 0.22, 0.222]} color={shade(theme.desk, -0.2)} r={0.005} cast={false} />)}
+      {/* the TV on its foot, and a soundbar */}
+      <RB size={[0.36, 0.03, 0.18]} pos={[0, 0.455, -0.06]} color="#20222e" r={0.01} />
+      <Ms geo={G.cyl(0.025, 0.025, 0.1, 8)} mat={black} pos={[0, 0.52, -0.06]} />
+      <RB size={[1.42, 0.82, 0.05]} pos={[0, 1.0, -0.07]} color="#16171f" r={0.02} />
+      <Ms geo={G.plane(1.34, 0.74)} mat={MB(SCREEN[p.variant % SCREEN.length])} pos={[0, 1.0, -0.044]} cast={false} />
+      <Ms geo={G.plane(0.62, 0.1)} mat={MB('#ffffff')} pos={[-0.25, 1.24, -0.042]} cast={false} />
+      <Ms geo={G.plane(0.3, 0.05)} mat={MB('#ffd166')} pos={[0.35, 0.78, -0.042]} cast={false} />
+      <RB size={[0.56, 0.07, 0.09]} pos={[-0.05, 0.48, 0.13]} color="#20222e" r={0.02} cast={false} />
+      {/* the console lying flat on the cabinet beside the soundbar, in front of the TV: white shells over and under a black core, a blue light */}
+      <group position={[0.5, 0.44, 0.08]}>
+        <Ms geo={G.rbox(0.4, 0.022, 0.26, 0.02)} mat={white} pos={[0, 0.013, 0]} />
+        <RB size={[0.36, 0.06, 0.22]} pos={[0, 0.054, 0]} color="#16171f" r={0.012} />
+        <Ms geo={G.rbox(0.42, 0.024, 0.28, 0.02)} mat={white} pos={[0, 0.096, 0]} />
+        <Ms geo={G.plane(0.3, 0.004)} mat={MB('#46c2ff')} pos={[0, 0.054, 0.111]} cast={false} />
+      </group>
+      {/* two controllers waiting on the cabinet */}
+      {[[-0.6, 0.3], [-0.42, -0.25]].map(([x, ry], i) => (
+        <group key={i} position={[x, 0.45, 0.1]} rotation={[0, ry, 0]}>
+          <Ms geo={G.rbox(0.16, 0.035, 0.09, 0.02)} mat={i ? black : white} cast={false} />
+          <Ms geo={G.plane(0.06, 0.004)} mat={MB('#46c2ff')} pos={[0, 0.019, -0.03]} rot={[-Math.PI / 2, 0, 0]} cast={false} />
+        </group>
+      ))}
+    </group>
+  );
+}
+
+/** the same console without a cabinet: the TV on a bracket on the wall, the console lying on the floor under it, the controllers beside it */
+function PsWall({ p }: { p: Prop }) {
+  const white = M('#f4f6fb', { rough: 0.35 });
+  const black = M('#1b1d2a', { rough: 0.4 });
+  return (
+    <group>
+      {/* the bracket and the TV */}
+      <RB size={[0.3, 0.2, 0.06]} pos={[0, 1.32, -0.13]} color="#3a3d50" r={0.01} cast={false} />
+      <RB size={[1.42, 0.82, 0.05]} pos={[0, 1.32, -0.08]} color="#16171f" r={0.02} />
+      <Ms geo={G.plane(1.34, 0.74)} mat={MB(SCREEN[p.variant % SCREEN.length])} pos={[0, 1.32, -0.054]} cast={false} />
+      <Ms geo={G.plane(0.62, 0.1)} mat={MB('#ffffff')} pos={[-0.25, 1.56, -0.052]} cast={false} />
+      <Ms geo={G.plane(0.3, 0.05)} mat={MB('#ffd166')} pos={[0.35, 1.1, -0.052]} cast={false} />
+      {/* the cable down the wall */}
+      <Ms geo={G.cyl(0.008, 0.008, 0.9, 6)} mat={black} pos={[0.32, 0.46, -0.14]} cast={false} />
+      {/* the console lying on the floor, the controllers beside it */}
+      <group position={[0.42, 0, 0.02]}>
+        <Ms geo={G.rbox(0.4, 0.022, 0.26, 0.02)} mat={white} pos={[0, 0.013, 0]} />
+        <RB size={[0.36, 0.06, 0.22]} pos={[0, 0.054, 0]} color="#16171f" r={0.012} />
+        <Ms geo={G.rbox(0.42, 0.024, 0.28, 0.02)} mat={white} pos={[0, 0.096, 0]} />
+        <Ms geo={G.plane(0.3, 0.004)} mat={MB('#46c2ff')} pos={[0, 0.054, 0.111]} cast={false} />
+      </group>
+      {[[-0.2, 0.05, 0.4], [0.0, 0.08, -0.3]].map(([x, z, ry], i) => (
+        <group key={i} position={[x, 0.02, z]} rotation={[0, ry, 0]}>
+          <Ms geo={G.rbox(0.16, 0.035, 0.09, 0.02)} mat={i ? black : white} cast={false} />
+        </group>
+      ))}
+    </group>
+  );
+}
+
 /** The model of a game machine (null for any other prop). */
 export function GameMachine({ p, theme }: { p: Prop; theme: RoomTheme }) {
   switch (p.kind) {
@@ -347,6 +412,8 @@ export function GameMachine({ p, theme }: { p: Prop; theme: RoomTheme }) {
     case 'vrStation': return <VrStation p={p} />;
     case 'pingPong': return <PingPong p={p} />;
     case 'hoops': return <Hoops p={p} />;
+    case 'psConsole': return <PsConsole p={p} theme={theme} />;
+    case 'psWall': return <PsWall p={p} />;
     default: return null;
   }
 }

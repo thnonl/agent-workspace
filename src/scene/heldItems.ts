@@ -35,6 +35,8 @@ export interface HeldItems {
   phone: THREE.Group;
   phoneTilt: THREE.Group;
   phoneScreen: THREE.Mesh;
+  /** a game controller held in both hands (the console in front of the sofa, the TV console) */
+  pad: THREE.Group;
 }
 
 /** the screen glow flickers between these shared materials (no per-frame allocation) */
@@ -181,5 +183,18 @@ export function buildHeldItems(accent: string): HeldItems {
   phoneTilt.quaternion.copy(Q_PHONE_CHEST);
   phone.add(phoneTilt);
   phone.visible = false;
-  return { cup, book, bookLeft, bookRight, can, bowl, spout, stream, drops, steam, fx, parcel, pot, cig, smoke, phone, phoneTilt, phoneScreen };
+  // game controller: a white body with two grips, black middle, the thumbsticks and the blue light bar; tilted towards the face like the phone
+  const pad = group();
+  const padTilt = group();
+  const padWhite = M('#f4f6fb', { rough: 0.35 });
+  const padBlack = M('#1b1d2a', { rough: 0.4 });
+  padTilt.add(mesh(G.rbox(0.16, 0.035, 0.08, 0.016), padWhite, 0, 0, 0, { cast: false }));
+  for (const sx of [-1, 1]) padTilt.add(mesh(G.capsule(0.024, 0.06, 4, 8), padWhite, sx * 0.065, -0.005, -0.045, { r: [Math.PI / 2 - 0.35, 0, sx * 0.25], cast: false }));
+  padTilt.add(mesh(G.rbox(0.07, 0.038, 0.05, 0.012), padBlack, 0, 0.002, -0.01, { cast: false }));
+  for (const sx of [-1, 1]) padTilt.add(mesh(G.cyl(0.012, 0.012, 0.02, 10), padBlack, sx * 0.025, 0.025, -0.015, { cast: false }));
+  padTilt.add(mesh(G.box(0.07, 0.003, 0.006), MB('#46c2ff'), 0, 0.019, 0.03, { cast: false }));
+  padTilt.quaternion.copy(Q_PHONE_CHEST);
+  pad.add(padTilt);
+  pad.visible = false;
+  return { cup, book, bookLeft, bookRight, can, bowl, spout, stream, drops, steam, fx, parcel, pot, cig, smoke, phone, phoneTilt, phoneScreen, pad };
 }

@@ -8,7 +8,7 @@ export type PropKind =
   | 'fileCabinet' | 'copier' | 'meetingSet' | 'whiteboardStand' | 'boxes' | 'serverRack' | 'fridge' | 'vending'
   | 'trolley' | 'recycle' | 'loungeSet' | 'credenza' | 'sink' | 'stove' | 'punchDummy' | 'dumbbells' | 'toilet'
   // game machines (a room has at most one, see GAMES)
-  | 'arcade' | 'arcadeDuo' | 'pinball' | 'clawMachine' | 'airHockey' | 'foosball' | 'danceMachine' | 'consoleTv' | 'racingSim' | 'vrStation' | 'pingPong' | 'hoops';
+  | 'arcade' | 'arcadeDuo' | 'pinball' | 'clawMachine' | 'airHockey' | 'foosball' | 'danceMachine' | 'consoleTv' | 'racingSim' | 'vrStation' | 'pingPong' | 'hoops' | 'psConsole' | 'psWall';
 
 export interface Prop {
   kind: PropKind;
@@ -256,6 +256,8 @@ export interface RoomLayout {
   kind: string;
   /** the director's corner did not fit anywhere (an attempt of buildLayout that is only kept when no other one is better) */
   cramped?: boolean;
+  /** a console with a TV facing the sofa of a lounge corner: the prop and the sofa seats (indices into `spots`) one plays from */
+  couch: { console: number; sofa: number; seats: number[] } | null;
   /** an L-shaped (V) room: the corner nearest to the camera (front right) is cut away, this wide (x) and deep (z); null = the whole rectangle */
   notch: { w: number; d: number } | null;
   seating: 'fan' | 'bench';
@@ -394,6 +396,8 @@ export const FOOT: Record<PropKind, [number, number, number]> = {
   vrStation: [0.7, 0.5, 1.6],
   pingPong: [1.5, 2.6, 0.8],
   hoops: [1.0, 2.2, 2.4],
+  psConsole: [1.5, 0.45, 1.3],
+  psWall: [1.45, 0.32, 1.8],
 };
 
 /**
@@ -406,6 +410,8 @@ export interface GameSpec {
   wall: boolean;
   front: number;
   seated?: boolean;
+  /** a console with a big TV that stands facing the sofa of a lounge corner: one plays sitting on the sofa (no places of its own) */
+  couch?: boolean;
 }
 export const GAMES: Partial<Record<PropKind, GameSpec>> = {
   arcade: { players: [[0, 0.8, Math.PI]], wall: true, front: 0.9 },
@@ -420,8 +426,23 @@ export const GAMES: Partial<Record<PropKind, GameSpec>> = {
   vrStation: { players: [[0, 1.25, Math.PI]], wall: true, front: 1.7 },
   pingPong: { players: [[0, 1.75, Math.PI], [0, -1.75, 0]], wall: false, front: 0 },
   hoops: { players: [[0, 1.5, Math.PI]], wall: true, front: 0.9 },
+  psConsole: { players: [], wall: false, front: 0, couch: true },
+  // (the same console with the TV on the wall and the console on the floor: where there is no room for the cabinet)
+  psWall: { players: [], wall: true, front: 0, couch: true },
 };
-const GAME_KINDS = Object.keys(GAMES) as PropKind[];
+const GAME_KINDS = (Object.keys(GAMES) as PropKind[]).filter((k) => k !== 'psWall');
+/** the share of the rooms that get a game machine */
+const GAME_CHANCE = 0.85;
+/** a console stands this far in front of the lounge corner / sofa it faces (the nearest that fits; the coffee table is in between) */
+const COUCH_GAPS = [0.35, 0.6, 0.9, 1.4];
+/** the seats one plays the console from: a lounge corner's sofa or a sofa of its own */
+const COUCH_KINDS = new Set<PropKind>(['loungeSet', 'sofa']);
+/** where a console in front of seat prop `sp` stands (gap `gap`), turned to face it */
+function couchSpot(sp: Prop, gap: number): OR {
+  const [cw, cd] = FOOT.psConsole;
+  const o = rot2(0, FOOT[sp.kind][1] / 2 + gap + cd / 2, sp.rot);
+  return { x: sp.x + o.x, z: sp.z + o.z, w: cw, d: cd, rot: sp.rot + Math.PI };
+}
 
 /** width of a narrow window with a single sash (a two-sash one is 2.3) */
 const WIN_W1 = 1.25;
@@ -509,8 +530,8 @@ export function buildLayout(seed: number, themeIndex: number): RoomLayout {
   let best: RoomLayout | null = null;
   for (let attempt = 0; attempt < 4; attempt++) {
     const l = buildLayoutTry(seed, themeIndex, attempt);
-    // (good: enough desks, the director's corner fits, the toilet can be reached)
-    const ok = (x: RoomLayout) => !x.cramped && !!x.restroom;
+    // (good: enough desks, the director's corner fits, the toilet can be reached, and there is a game machine)
+    const ok = (x: RoomLayout) => !x.cramped && !!x.restroom && x.props.some((p) => GAMES[p.kind]);
     if (l.desks.length >= MIN_DESKS && ok(l)) return l;
     if (!best || (!ok(best) && ok(l)) || (ok(best) === ok(l) && l.desks.length > best.desks.length)) best = l;
   }
@@ -1200,17 +1221,95 @@ function buildLayoutTry(seed: number, themeIndex: number, attempt: number): Room
   // every office gets a lounge sofa (the sofa breaks are a favourite); three of four also get a meeting table
   const lounge = r.pick(['both', 'both', 'both', 'loungeSet'] as const);
   tryFloor('loungeSet', [0, Math.PI / 2, -Math.PI / 2]);
-  if (lounge !== 'loungeSet') tryFloor('meetingSet', [0, Math.PI / 4]);
-  // the big rooms have room for a second lounge corner
-  if (kind.name !== 'cozy' && r.chance(0.4)) tryFloor('loungeSet', [0, Math.PI / 2, -Math.PI / 2]);
-  // --------------------------------------------- a game machine (or none): at most one per room
-  // own generator; placed right after the big lounge pieces, before the furniture along the walls takes the room it needs
+  /** the first place in front of one of `couches` (nearest gap first) that is inside the room and free */
+  const couchFit = (couches: Prop[]): (OR & { kind: PropKind }) | null => {
+    for (const cp of couches) {
+      for (const gap of COUCH_GAPS) {
+        const rect = couchSpot(cp, gap);
+        if (!corners(rect).every((c) => c.x > -W / 2 + 0.3 && c.x < W / 2 - 0.3 && c.z > -D / 2 + 0.3 && c.z < D / 2 - 0.3)) continue;
+        if (reserved.some((q) => overlapOR(rect, q)) || placed.some((q) => overlapOR(rect, q, 0.1))) continue;
+        return { ...rect, kind: 'psConsole' };
+      }
+    }
+    // no room for the cabinet: the TV on the wall the sofa looks at (the back or the left one, the others are cut away), the console on the floor
+    for (const cp of couches) {
+      const f = rot2(0, 1, cp.rot);
+      const toBack = f.z < -0.99;
+      const toLeft = f.x < -0.99;
+      if (!toBack && !toLeft) continue;
+      const [ww, wd] = FOOT.psWall;
+      const reach = toBack ? cp.z + D / 2 : cp.x + W / 2;
+      const gap = reach - FOOT[cp.kind][1] / 2 - wd - 0.06;
+      if (gap < 0.35 || gap > 3.2) continue;
+      const o = rot2(0, FOOT[cp.kind][1] / 2 + gap + wd / 2, cp.rot);
+      const rect: OR = { x: cp.x + o.x, z: cp.z + o.z, w: ww, d: wd, rot: cp.rot + Math.PI };
+      const pos = toBack ? rect.x : rect.z;
+      const wall = toBack ? 'back' : 'left';
+      if (windows.some((wn) => wn.wall === wall && Math.abs(wn.pos - pos) < wn.w / 2 + ww / 2 + 0.3)) continue;
+      if (door.wall === wall && Math.abs(door.pos - pos) < door.width / 2 + ww / 2 + 0.4) continue;
+      if (reserved.some((q) => overlapOR(rect, q)) || placed.some((q) => overlapOR(rect, q, 0.05))) continue;
+      return { ...rect, kind: 'psWall' };
+    }
+    return null;
+  };
+  /**
+   * A gaming corner of its own (when no sofa has room for the console in front of it): the TV with the console against a wall, a sofa
+   * facing it. Returns whether it found a place.
+   */
+  const gamingCorner = (rng: Rng): boolean => {
+    const [cw, cd] = FOOT.psConsole;
+    const [sw, sd] = FOOT.sofa;
+    const inside = (q: OR) => corners(q).every((c) => c.x > -W / 2 + 0.05 && c.x < W / 2 - 0.05 && c.z > -D / 2 + 0.05 && c.z < D / 2 - 0.05);
+    const look = () => ({ variant: rng.int(0, 3), color: rng.pick(colorsAll), color2: rng.pick(colorsAll) });
+    for (let t = 0; t < 240; t++) {
+      // (roomy first; later tries make do with the sofa nearer the TV and less floor round it)
+      const tight = t >= 120;
+      const gap = tight ? COUCH_GAPS[2] : COUCH_GAPS[3];
+      const side = rng.int(0, 3);
+      let x: number, z: number, rot: number;
+      if (side === 0) { x = rng.range(-W / 2 + 1.6, W / 2 - 1.6); z = -D / 2 + cd / 2 + 0.06; rot = 0; }
+      else if (side === 1) { x = -W / 2 + cd / 2 + 0.06; z = rng.range(-D / 2 + 1.6, D / 2 - 1.6); rot = Math.PI / 2; }
+      else if (side === 2) { x = W / 2 - cd / 2 - 0.05; z = rng.range(-D / 2 + 1.6, D / 2 - 1.6); rot = -Math.PI / 2; }
+      else { x = rng.range(-W / 2 + 1.6, W / 2 - 1.6); z = D / 2 - cd / 2 - 0.05; rot = Math.PI; }
+      const tv: OR = { x, z, w: cw, d: cd, rot };
+      const so = rot2(0, cd / 2 + gap + sd / 2, rot);
+      const sofa: OR = { x: x + so.x, z: z + so.z, w: sw, d: sd, rot: rot + Math.PI };
+      const mo = rot2(0, cd / 2 + gap / 2, rot);
+      const between: OR = { x: x + mo.x, z: z + mo.z, w: sw, d: gap, rot };
+      // (the seats are walked up to from the front of the sofa, and round it one walks past)
+      const around: OR = { ...sofa, w: sw + (tight ? 0.6 : 1.2), d: sd + (tight ? 0.6 : 1.2) };
+      if (!inside(tv) || !inside(sofa) || !inside(between)) continue;
+      if (windows.some((wn) => (rot === 0 && wn.wall === 'back' && Math.abs(wn.pos - x) < wn.w / 2 + cw / 2 + 0.3) || (rot === Math.PI / 2 && wn.wall === 'left' && Math.abs(wn.pos - z) < wn.w / 2 + cw / 2 + 0.3))) continue;
+      if ([tv, sofa, between, around].some((q) => reserved.some((r2) => overlapOR(q, r2)) || placed.some((r2) => overlapOR(q, r2, 0.05)))) continue;
+      placed.push(tv, sofa, between);
+      props.push({ kind: 'psConsole', x, z, rot, ...look() }, { kind: 'sofa', x: sofa.x, z: sofa.z, rot: sofa.rot, ...look() });
+      return true;
+    }
+    return false;
+  };
+  // --------------------------------------------- a game machine (one per room)
+  // own generator; placed right after the lounge corner, before the meeting table and the furniture along the walls take the room it needs
   {
     const gameRng = new Rng((seed ^ 0x2545f491) >>> 0);
-    if (gameRng.chance(0.65)) {
-      const gk = gameRng.pick(GAME_KINDS);
+    // (most rooms get one: the kind drawn first, and when it does not fit, the other kinds in turn)
+    // (a room with a lounge corner often tries the console in front of its sofa first)
+    const consoleFirst = gameRng.chance(0.3) && props.some((p) => p.kind === 'loungeSet');
+    // (a room without another machine has the console: it is tried last of all, or alone)
+    const others = gameRng.shuffle(GAME_KINDS.filter((k) => k !== 'psConsole'));
+    const order: PropKind[] = !gameRng.chance(GAME_CHANCE) ? ['psConsole'] : consoleFirst ? ['psConsole', ...others] : [...others, 'psConsole'];
+    for (const gk of order) {
+      if (props.some((p) => GAMES[p.kind])) break;
       const spec = GAMES[gk]!;
       const [gw, gd, gh] = FOOT[gk];
+      if (spec.couch) {
+        // in front of a lounge corner (its sofa looks +z, the coffee table is in between), turned to face the sofa
+        const rect = couchFit(props.filter((lp) => COUCH_KINDS.has(lp.kind)));
+        if (rect) {
+          placed.push(rect);
+          props.push({ kind: rect.kind, x: rect.x, z: rect.z, rot: rect.rot, variant: gameRng.int(0, 3), color: gameRng.pick(colorsAll), color2: gameRng.pick(colorsAll) });
+        }
+        continue;
+      }
       const inside = (q: OR, m: number) => corners(q).every((c) => c.x > -W / 2 + m && c.x < W / 2 - m && c.z > -D / 2 + m && c.z < D / 2 - m);
       for (let t = 0; t < 160; t++) {
         let gx: number, gz: number, grot: number;
@@ -1246,6 +1345,33 @@ function buildLayoutTry(seed: number, themeIndex: number, attempt: number): Room
     }
   }
 
+  // (no machine found a place: a gaming corner with the console and a sofa of its own)
+  if (!props.some((p) => GAMES[p.kind])) gamingCorner(new Rng((seed ^ 0x1f83d9ab) >>> 0));
+  // (still none – a small room: the lounge corner moves to another free spot, where the console fits in front of it)
+  for (let k = 0; k < 12 && !props.some((p) => GAMES[p.kind]); k++) {
+    const li = props.findIndex((p) => p.kind === 'loungeSet');
+    if (li < 0) break;
+    const old = props[li];
+    const pr = propRect(old);
+    const pi = placed.findIndex((q) => q.x === pr.x && q.z === pr.z && q.w === pr.w && q.d === pr.d);
+    props.splice(li, 1);
+    if (pi >= 0) placed.splice(pi, 1);
+    if (!tryFloor('loungeSet', [0, Math.PI / 2, -Math.PI / 2])) {
+      props.splice(li, 0, old);
+      placed.push(pr);
+      break;
+    }
+    const moved = props[props.length - 1];
+    const rect = couchFit([moved]);
+    if (rect) {
+      placed.push(rect);
+      props.push({ kind: rect.kind, x: rect.x, z: rect.z, rot: rect.rot, variant: k % 4, color: colorsAll[k % colorsAll.length], color2: colorsAll[(k + 1) % colorsAll.length] });
+    }
+  }
+  // (the meeting table and a second lounge corner after the game machine: a console needs the floor in front of the first sofa)
+  if (lounge !== 'loungeSet') tryFloor('meetingSet', [0, Math.PI / 4]);
+  // the big rooms have room for a second lounge corner
+  if (kind.name !== 'cozy' && r.chance(0.4)) tryFloor('loungeSet', [0, Math.PI / 2, -Math.PI / 2]);
   // the pieces that make an office kitchen and library (they are there from the start) get their place on the walls first
   const firstWall: PropKind[] = ['coffee', 'bookshelf', 'fridge', ...(r.chance(0.85) ? (['stove'] as PropKind[]) : [])];
   for (const k of firstWall) tryWall(k);
@@ -1543,6 +1669,54 @@ function buildLayoutTry(seed: number, themeIndex: number, attempt: number): Room
     }
   }
 
+  // ------------------------------------------- still no game machine: the console in front of any sofa (as long as the ways stay open)
+  if (!props.some((p) => GAMES[p.kind])) {
+    const lateRng = new Rng((seed ^ 0x1f83d9ab) >>> 0);
+    const couches = props.filter((p) => COUCH_KINDS.has(p.kind));
+    const tryAdd = (list: Prop[], rects: OR[]): boolean => {
+      const base = props.length;
+      props.push(...list);
+      nav = buildNav(props);
+      if (reachable(nav)) {
+        placed.push(...rects);
+        return true;
+      }
+      props.length = base;
+      nav = buildNav(props);
+      return false;
+    };
+    const look = () => ({ variant: lateRng.int(0, 3), color: lateRng.pick(colorsAll), color2: lateRng.pick(colorsAll) });
+    const rect = couchFit(couches);
+    let done = !!rect && tryAdd([{ kind: rect.kind, x: rect.x, z: rect.z, rot: rect.rot, ...look() }], [rect]);
+    // a corner of its own (the ways must stay open); in a small, full room the meeting table makes way for it
+    const corner = (): boolean => {
+      const np = props.length;
+      const nq = placed.length;
+      if (!gamingCorner(lateRng)) return false;
+      nav = buildNav(props);
+      if (reachable(nav)) return true;
+      props.length = np;
+      placed.length = nq;
+      nav = buildNav(props);
+      return false;
+    };
+    if (!done) done = corner();
+    const mi = props.findIndex((p) => p.kind === 'meetingSet');
+    if (!done && mi >= 0) {
+      const meeting = props[mi];
+      const mr = propRect(meeting);
+      const qi = placed.findIndex((q) => q.x === mr.x && q.z === mr.z && q.w === mr.w && q.d === mr.d);
+      props.splice(mi, 1);
+      if (qi >= 0) placed.splice(qi, 1);
+      done = corner();
+      if (!done) {
+        props.splice(mi, 0, meeting);
+        if (qi >= 0) placed.push(mr);
+      }
+      nav = buildNav(props);
+    }
+  }
+
   // ------------------------------------------------ exercise corner (punching dummy, dumbbells)
   // own generator and placed last, so every room keeps exactly the furniture it had before these props existed
   {
@@ -1629,6 +1803,21 @@ function buildLayoutTry(seed: number, themeIndex: number, attempt: number): Room
       const a = freeNear({ x: p.x + ap.x, z: p.z + ap.z });
       // (a seat nobody can walk up to is no seat)
       if (a && nav.reachable(door.inside, a)) spots.push({ kind: (p.kind === 'loungeSet' ? 'sofa' : p.kind) as Spot['kind'], x: p.x + c.x, z: p.z + c.z, y, yaw: p.rot, approach: a, propIdx: props.indexOf(p) });
+    }
+  }
+  // a console in front of a lounge corner: its sofa seats are where one plays
+  let couch: { console: number; sofa: number; seats: number[] } | null = null;
+  {
+    const ci = props.findIndex((p) => GAMES[p.kind]?.couch);
+    if (ci >= 0) {
+      const cp = props[ci];
+      const li = props.findIndex((lp) => {
+        if (!COUCH_KINDS.has(lp.kind)) return false;
+        const l = rot2(cp.x - lp.x, cp.z - lp.z, -lp.rot);
+        return Math.abs(l.x) < 0.05 && l.z > 0 && l.z < 6 && Math.abs(Math.cos(cp.rot - lp.rot) + 1) < 0.01;
+      });
+      const seats = spots.map((sp, i) => (sp.propIdx === li && sp.kind === 'sofa' && li >= 0 ? i : -1)).filter((i) => i >= 0);
+      if (li >= 0 && seats.length) couch = { console: ci, sofa: li, seats };
     }
   }
   // the chairs of the round tables
@@ -1795,6 +1984,8 @@ function buildLayoutTry(seed: number, themeIndex: number, attempt: number): Room
     if (p.kind === 'coatRack' || p.kind === 'toilet' || p.kind === 'boxes' || p === restSink || GAMES[p.kind]) keep.add(i);
   });
   // (the big things that make a room are there from the start as well: a stove, the coffee machine, a fridge, a bookshelf, the sofa and the round table)
+  // (the sofa one plays the console from is there with it)
+  if (couch) keep.add(couch.sofa);
   for (const k of ['fileCabinet', 'bin', 'plant', 'stove', 'coffee', 'fridge', 'bookshelf', 'loungeSet', 'sofa', 'meetingSet'] as const) {
     const i = props.findIndex((p, j) => p.kind === k && !keep.has(j));
     if (i >= 0) keep.add(i);
@@ -1821,7 +2012,7 @@ function buildLayoutTry(seed: number, themeIndex: number, attempt: number): Room
   });
 
   return {
-    seed, kind: kind.name, notch, seating, cramped: dirCramped, width: W, depth: D, wallHeight, theme, door, windows, desks, director, props, wallDecor, decals, rug, signPos, catWindows, spots, restroom, tables, toys, movable, stations, catCount, nav,
+    seed, kind: kind.name, notch, seating, cramped: dirCramped, couch, width: W, depth: D, wallHeight, theme, door, windows, desks, director, props, wallDecor, decals, rug, signPos, catWindows, spots, restroom, tables, toys, movable, stations, catCount, nav,
     late, lateBig, lateRank, lateDone: late.map(() => false), blockProp: (i) => blockProp(nav, props[i], 1), unblockProp: (i) => blockProp(nav, props[i], -1),
     fitDistance: Math.hypot(W, D) * 1.2 + 3.5,
   };
