@@ -225,19 +225,35 @@ export function lateAvailable(roomId: string, layout: import('../world/layout').
 }
 
 /**
- * Takes a thing that is to be delivered, picked at random from what is left (it is on its way from now on): its place in
+ * Takes a thing that is to be delivered, picked at random from what is left (some kinds more often, see LATE_WEIGHT; it is on its way from now on): its place in
  * `layout.late`, or -1 when everything is sent already. Every thing has its own place in the layout (a sofa by the wall, a lamp in a
  * corner, a plant by the window…, checked to leave every walkway open whichever of the others are there), so the order does not matter.
  */
 export function claimLate(roomId: string, layout: import('../world/layout').RoomLayout): number {
   const c = deliveryEntry(roomId, layout);
   const open: number[] = [];
-  for (let k = 0; k < layout.late.length; k++) if (!layout.lateDone[k] && !c.claims.has(k)) open.push(k);
+  let total = 0;
+  for (let k = 0; k < layout.late.length; k++) {
+    if (layout.lateDone[k] || c.claims.has(k)) continue;
+    open.push(k);
+    total += LATE_WEIGHT[layout.props[layout.late[k]].kind] ?? 1;
+  }
   if (!open.length) return -1;
-  const k = open[Math.floor(Math.random() * open.length)];
+  let pick = Math.random() * total;
+  let k = open[open.length - 1];
+  for (const o of open) {
+    pick -= LATE_WEIGHT[layout.props[layout.late[o]].kind] ?? 1;
+    if (pick < 0) {
+      k = o;
+      break;
+    }
+  }
   c.claims.add(k);
   return k;
 }
+
+/** things that turn up in a parcel / a carton more often than the rest (1 for everything else): a floor lamp lights up the room */
+const LATE_WEIGHT: Partial<Record<import('../world/layout').PropKind, number>> = { floorLamp: 4 };
 
 /** The delivery was called off: the thing is next in line again. */
 export function releaseLate(roomId: string, layout: import('../world/layout').RoomLayout, rank: number) {

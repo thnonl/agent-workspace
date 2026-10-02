@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 import { env } from '../env';
 import { DUST, FX, HALO } from './fx';
-import { frame } from '../sim/frame';
 
 /**
  * 0-1 per room: its lights are on. Somebody inside switches them on, the last one to leave switches them off (kept up to date by
@@ -9,8 +8,14 @@ import { frame } from '../sim/frame';
  */
 export const roomLit = new Map<string, number>();
 export const litOf = (id: string | null | undefined): number => (id ? roomLit.get(id) ?? 1 : 1);
+/**
+ * 0-1: the lights of what the camera looks at. Mostly the active room's (roomLit), but while the camera glides from one room to another it
+ * goes over from the room that was left to the new one as the camera travels (kept up to date by EnvSync in Scene.tsx): a dark room that
+ * is being left must not light up the moment the other room is picked.
+ */
+export const viewLit = { v: 1 };
 /** how much the lamps shine in the room on screen: the time of day, and whether anybody is in (the shared lamp materials follow it) */
-export const lampsNow = (): number => env.lamps * litOf(frame.activeId);
+export const lampsNow = (): number => env.lamps * viewLit.v;
 
 /**
  * Materials that react to the time of day (lamps, bulbs, window glass, light cones).

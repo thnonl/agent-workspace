@@ -11,7 +11,7 @@ import { OVERCAST } from '../weather';
 import { photoHooks } from '../photo';
 import { floatingWindow } from '../pipHost';
 import { lightParams } from './lighting';
-import { roomLit, updateGlow } from './glow';
+import { litOf, roomLit, updateGlow, viewLit } from './glow';
 import { RoomView, roomOrigin } from './RoomView';
 import { GhostFloor } from './RoomGhost';
 
@@ -640,11 +640,11 @@ function PerfHook() {
 /** Feeds the system clock into the damped `env` object and refreshes time-reactive materials. */
 function EnvSync() {
   const last = useRef({ lamps: -1, day: -1, night: -1, overcast: -1, lit: -1 });
-  useFrame((_, dt) => {
+  useFrame((state, dt) => {
     const st = useStore.getState();
     stepEnv(envForHour(st.hour), Math.min(Math.max(dt, 0), 0.1), OVERCAST[st.weather]);
     syncRoomLit(st, Math.min(Math.max(dt, 0), 0.1));
-    const lit = roomLit.get(frame.activeId ?? '') ?? 1;
+    const lit = (viewLit.v = litOnView(st, (state.controls as { target?: THREE.Vector3 } | null)?.target));
     const l = last.current;
     // the materials only need a refresh while the time of day (or the weather, or the lights of the room on screen) is actually changing
     if (Math.abs(l.lamps - env.lamps) + Math.abs(l.day - env.day) + Math.abs(l.night - env.night) + Math.abs(l.overcast - env.overcast) + Math.abs(l.lit - lit) > 1e-5) {
@@ -657,6 +657,26 @@ function EnvSync() {
     }
   });
   return null;
+}
+
+/**
+ * The lights the camera looks at (see viewLit): the active room's, or during a glide those of the room that was left and of the new one,
+ * mixed by how far the camera has come along the way between them (still the old room's while the camera waits, PRE_ROLL_MS).
+ */
+function litOnView(st: ReturnType<typeof useStore.getState>, target: THREE.Vector3 | undefined): number {
+  const to = litOf(frame.activeId);
+  if (!frame.glide || !frame.fromId || !frame.activeId || !target) return to;
+  const a = st.rooms[frame.fromId];
+  const b = st.rooms[frame.activeId];
+  if (!a || !b) return to;
+  const oa = roomOrigin(a.index);
+  const ob = roomOrigin(b.index);
+  const dx = ob[0] - oa[0];
+  const dz = ob[2] - oa[2];
+  const len2 = dx * dx + dz * dz;
+  const p = len2 < 1e-6 ? 1 : Math.min(1, Math.max(0, ((target.x - oa[0]) * dx + (target.z - oa[2]) * dz) / len2));
+  const from = litOf(frame.fromId);
+  return from + (to - from) * p;
 }
 
 /** Somebody is in the room: a person on stage (the room on screen), or one who is present (a room whose people only exist as records). */

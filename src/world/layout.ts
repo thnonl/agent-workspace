@@ -1977,16 +1977,17 @@ function buildLayoutTry(seed: number, themeIndex: number, attempt: number): Room
     if (mouse) toys.push({ kind: 'mouse', x: mouse.x, z: mouse.z, rot: r.range(0, Math.PI * 2) });
   }
 
-  // ------------- a new room is sparse: the coat rack, the toilet, its sink, the cartons and one file cabinet, bin and plant are there from the
+  // ------------- a new room is sparse: the coat rack, the toilet, its sink, the cartons and one file cabinet, bin, plant and floor lamp are there from the
   // start, everything else arrives by delivery (the cartons are parcels people open when they carry them to their place) (own generator: the rest of the room is unaffected)
   const keep = new Set<number>();
   props.forEach((p, i) => {
     if (p.kind === 'coatRack' || p.kind === 'toilet' || p.kind === 'boxes' || p === restSink || GAMES[p.kind]) keep.add(i);
   });
-  // (the big things that make a room are there from the start as well: a stove, the coffee machine, a fridge, a bookshelf, the sofa and the round table)
+  // (the big things that make a room are there from the start as well: a stove, the coffee machine, a fridge, a bookshelf, the sofa and the round table;
+  // and one floor lamp)
   // (the sofa one plays the console from is there with it)
   if (couch) keep.add(couch.sofa);
-  for (const k of ['fileCabinet', 'bin', 'plant', 'stove', 'coffee', 'fridge', 'bookshelf', 'loungeSet', 'sofa', 'meetingSet'] as const) {
+  for (const k of ['fileCabinet', 'bin', 'plant', 'floorLamp', 'stove', 'coffee', 'fridge', 'bookshelf', 'loungeSet', 'sofa', 'meetingSet'] as const) {
     const i = props.findIndex((p, j) => p.kind === k && !keep.has(j));
     if (i >= 0) keep.add(i);
   }
