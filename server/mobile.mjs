@@ -5,6 +5,9 @@
 // URL (the QR code and the Android app do that): the answer sets an HttpOnly cookie and redirects to the same URL
 // without the token, so the page's own fetch / EventSource calls carry it from then on. `Authorization: Bearer <token>`
 // works too (curl).
+//
+// The generated token is short enough to type: 6 characters like BE5FG0 (digits and capitals without I, L and O; it is
+// compared ignoring case, with O read as 0 and I / L as 1). Guessing is kept out by a limit on wrong tries per address.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -16,6 +19,18 @@ export const REPO = 'thnonl/agent-workspace';
 export const APK_URL = `https://github.com/${REPO}/releases/latest/download/agent-workspace.apk`;
 export const ANDROID_PACKAGE = 'io.github.thnonl.agentworkspace';
 const COOKIE = 'aw_token';
+/** what a generated token is made of: no I, L or O, which read like 1 and 0 */
+const TOKEN_CHARS = '0123456789ABCDEFGHJKMNPQRSTUVWXYZ';
+const TOKEN_LENGTH = 6;
+const TOKEN_RE = new RegExp(`^[${TOKEN_CHARS}]{${TOKEN_LENGTH}}$`);
+/** wrong tokens one address may send per window before it gets 429 for the rest of that window */
+export const MAX_FAILS = 10;
+export const FAIL_WINDOW_MS = 60_000;
+
+export const generateToken = () => Array.from({ length: TOKEN_LENGTH }, () => TOKEN_CHARS[crypto.randomInt(TOKEN_CHARS.length)]).join('');
+
+/** How tokens are compared: case does not matter, O counts as 0, I and L as 1 (easy to mistype from the screen). */
+export const normalizeToken = (t) => String(t).trim().toUpperCase().replace(/O/g, '0').replace(/[IL]/g, '1');
 
 export function tokenFile() {
   return path.join(path.dirname(defaultDbFile()), 'token');
@@ -23,18 +38,19 @@ export function tokenFile() {
 
 /**
  * The token: `explicit` (--token), else $AGENT_WORKSPACE_TOKEN, else the one saved in ~/.agent-workspace/token, else a new
- * random one that is saved there – so a phone that scanned the QR code once stays connected across restarts.
+ * random one that is saved there – so a phone that scanned the QR code once stays connected across restarts. A saved token
+ * of the older, long kind is replaced by a short one.
  */
 export function loadToken({ explicit, file = tokenFile(), log = console.error } = {}) {
   const given = explicit || process.env.AGENT_WORKSPACE_TOKEN;
   if (given) return String(given);
   try {
     const saved = fs.readFileSync(file, 'utf8').trim();
-    if (saved) return saved;
+    if (TOKEN_RE.test(saved)) return saved;
   } catch {
     /* first run */
   }
-  const token = crypto.randomBytes(18).toString('base64url');
+  const token = generateToken();
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, token + '\n', { mode: 0o600 });
@@ -49,8 +65,8 @@ const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 export const isLoopback = (req) => LOOPBACK.has(req.socket?.remoteAddress ?? '') && !req.headers?.['x-forwarded-for'] && !req.headers?.forwarded;
 
 function same(a, b) {
-  const x = Buffer.from(String(a));
-  const y = Buffer.from(String(b));
+  const x = Buffer.from(normalizeToken(a));
+  const y = Buffer.from(normalizeToken(b));
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 }
 
@@ -69,8 +85,8 @@ main{max-width:22rem;padding:1.5rem;text-align:center}h1{font-size:1.4rem;margin
 a.btn{display:block;margin:.7rem 0;padding:.85rem 1rem;border-radius:.8rem;background:#f2a65a;color:#1d1b2e;font-weight:700;text-decoration:none}
 a.alt{background:#3a3655;color:#f4efe6}small{color:#8f88a6}`;
 
-function page(res, status, title, body) {
-  res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+function page(res, status, title, body, headers = {}) {
+  res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer', ...headers });
   res.end(
     `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
       `<title>${esc(title)}</title><style>${PAGE_STYLE}</style></head><body><main>${body}</main></body></html>`,
@@ -124,9 +140,34 @@ export function lanAddresses(bound) {
 
 /**
  * Connect-style middleware in front of everything else: lets loopback and token holders through, serves /m and
- * /api/connect, answers 401 otherwise.
+ * /api/connect, answers 401 otherwise – and 429 to an address that sent too many wrong tokens lately.
  */
-export function createGuard({ token }) {
+export function createGuard({ token, now = Date.now }) {
+  /** remote address → wrong tries in the current window */
+  const fails = new Map();
+  const blocked = (ip) => {
+    const f = fails.get(ip);
+    return !!f && now() < f.until && f.n >= MAX_FAILS;
+  };
+  const failed = (ip) => {
+    const t = now();
+    let f = fails.get(ip);
+    if (!f || t >= f.until) {
+      if (fails.size > 1000) for (const [k, v] of fails) if (t >= v.until) fails.delete(k);
+      f = { n: 0, until: t + FAIL_WINDOW_MS };
+      fails.set(ip, f);
+    }
+    f.n++;
+  };
+  const tooMany = (res, api) => {
+    const headers = { 'Cache-Control': 'no-store', 'Retry-After': String(Math.ceil(FAIL_WINDOW_MS / 1000)) };
+    if (api) {
+      res.writeHead(429, { 'Content-Type': 'application/json', ...headers });
+      return res.end(JSON.stringify({ error: 'too many wrong tokens, try again in a minute' }));
+    }
+    return page(res, 429, 'Agent Workspace', '<h1>⏳ Too many wrong tokens</h1><p>Wait a minute, then try again.</p>', headers);
+  };
+
   return function guard(req, res, next) {
     let url;
     try {
@@ -134,15 +175,25 @@ export function createGuard({ token }) {
     } catch {
       return next();
     }
-    const given = url.searchParams.get('token') ?? url.searchParams.get('t');
+    const local = isLoopback(req);
+    const ip = req.socket?.remoteAddress ?? '';
+    const api = url.pathname.startsWith('/api/');
     if (url.pathname === '/m') {
-      if (!given || !same(given, token)) return page(res, 401, 'Agent Workspace', '<h1>🔒 Wrong or old QR code</h1><p>Open <b>Settings → Connect a phone</b> on the computer and scan the QR code again.</p>');
+      if (!local && blocked(ip)) return tooMany(res, false);
+      const given = url.searchParams.get('t') ?? url.searchParams.get('token');
+      if (!given || !same(given, token)) {
+        if (!local && given) failed(ip);
+        return page(res, 401, 'Agent Workspace', '<h1>🔒 Wrong or old QR code</h1><p>Open <b>Settings → Connect a phone</b> on the computer and scan the QR code again.</p>');
+      }
       return landing(res, token);
     }
-    const local = isLoopback(req);
     if (!local) {
+      if (blocked(ip)) return tooMany(res, api);
       if (url.searchParams.has('token')) {
-        if (!same(url.searchParams.get('token'), token)) return page(res, 401, 'Agent Workspace', '<h1>🔒 Wrong token</h1><p>Scan the QR code in <b>Settings → Connect a phone</b> on the computer again.</p>');
+        if (!same(url.searchParams.get('token'), token)) {
+          failed(ip);
+          return page(res, 401, 'Agent Workspace', '<h1>🔒 Wrong token</h1><p>Check the token under <b>Settings → Connect a phone</b> on the computer, or scan its QR code.</p>');
+        }
         url.searchParams.delete('token');
         res.writeHead(302, {
           'Set-Cookie': `${COOKIE}=${encodeURIComponent(token)}; Path=/; Max-Age=31536000; HttpOnly; SameSite=Lax`,
@@ -152,13 +203,17 @@ export function createGuard({ token }) {
         return res.end();
       }
       const bearer = /^Bearer\s+(.+)$/i.exec(String(req.headers.authorization || ''))?.[1];
-      const ok = (bearer && same(bearer, token)) || same(cookie(req, COOKIE) ?? '', token);
-      if (!ok) {
-        if (url.pathname.startsWith('/api/')) {
-          res.writeHead(401, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      const jar = cookie(req, COOKIE);
+      if (!(bearer && same(bearer, token)) && !(jar && same(jar, token))) {
+        const headers = {};
+        if (bearer || jar) failed(ip);
+        // a cookie from an older token: drop it, so the page's retries do not count as more wrong tries
+        if (jar) headers['Set-Cookie'] = `${COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`;
+        if (api) {
+          res.writeHead(401, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers });
           return res.end(JSON.stringify({ error: 'token required' }));
         }
-        return page(res, 401, 'Agent Workspace', '<h1>🔒 This office is locked</h1><p>Open <b>Settings → Connect a phone</b> on the computer that runs Agent Workspace and scan the QR code.</p>');
+        return page(res, 401, 'Agent Workspace', '<h1>🔒 This office is locked</h1><p>Open <b>Settings → Connect a phone</b> on the computer that runs Agent Workspace and scan the QR code, or type its token in the app.</p>', headers);
       }
     }
     if (url.pathname === '/api/connect') {

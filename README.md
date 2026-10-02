@@ -110,11 +110,11 @@ agent-workspace                    # from then on, in any terminal
 | --- | --- |
 | `-p, --port <n>` | Port to listen on (default `4173`, or `$PORT`) |
 | `--host <ip>` | Address to listen on (default `127.0.0.1`: this machine only; `0.0.0.0` makes it reachable from your network) |
-| `--token <t>` | Access token other machines (phones) must bring – default: a random one saved in `~/.agent-workspace/token` |
+| `--token <t>` | Access token other machines (phones) must bring – default: 6 random characters like `BE5FG0`, saved in `~/.agent-workspace/token` |
 | `--no-open` | Do not open the browser |
 | `-h, --help` | Show the options |
 
-The page is only reachable from your own machine unless you pass `--host` – it shows what your agents are doing, so share it deliberately. With `--host`, every other machine needs the **access token** (your own machine never does): the QR code in *Settings → Connect a phone* carries it, or open `http://<ip>:<port>/?token=<token>` once – the server keeps it in a cookie. A request that a proxy or tunnel on your machine forwards with an `X-Forwarded-For` or `Forwarded` header counts as another machine.
+The page is only reachable from your own machine unless you pass `--host` – it shows what your agents are doing, so share it deliberately. With `--host`, every other machine needs the **access token** (your own machine never does): the QR code in *Settings → Connect a phone* carries it, or open `http://<ip>:<port>/?token=<token>` once – the server keeps it in a cookie. The token is short enough to type (case does not matter; O counts as 0, I and L as 1), and an address that sends 10 wrong tokens within a minute has to wait for the rest of that minute. A request that a proxy or tunnel on your machine forwards with an `X-Forwarded-For` or `Forwarded` header counts as another machine.
 
 **Updating:** keep the `@latest` in the `npx` command: without it `npx` can reuse an older copy from its cache. `npm update -g @thnonline/agent-workspace` updates a global install, `npx clear-npx-cache` helps if `npx` still starts an old version, and `npm rm -g @thnonline/agent-workspace` removes the global install. A copy inside a project's `node_modules` is used as it is.
 

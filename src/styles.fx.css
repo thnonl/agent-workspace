@@ -28,7 +28,7 @@
 .connect-grid > span { color: var(--ink-soft); }
 .connect-grid > code { justify-self: start; }
 .connect-grid select { justify-self: start; max-width: 100%; font: inherit; font-family: 'JetBrains Mono Variable', ui-monospace, monospace; font-size: 12px; padding: 4px 8px; border-radius: 8px; border: 2px solid rgba(120, 90, 160, 0.25); background: #fff; color: inherit; }
-.connect-token { user-select: all; word-break: break-all; }
+.connect-token { user-select: all; word-break: break-all; font-size: 15px; font-weight: 800; letter-spacing: 0.18em; }
 .modal-settings a.btn { text-decoration: none; color: var(--ink); }
 .connect-qr { width: 220px; max-width: 100%; margin: 12px auto 0; padding: 8px; border-radius: 14px; background: #fff; }
 .connect-qr svg { display: block; width: 100%; height: auto; }

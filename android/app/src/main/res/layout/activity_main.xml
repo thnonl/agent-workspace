@@ -113,7 +113,7 @@
                 android:hint="@string/token_hint"
                 android:imeOptions="actionGo"
                 android:importantForAutofill="no"
-                android:inputType="textNoSuggestions|textVisiblePassword" />
+                android:inputType="textCapCharacters|textNoSuggestions|textVisiblePassword" />
 
             <Button
                 android:id="@+id/connect"

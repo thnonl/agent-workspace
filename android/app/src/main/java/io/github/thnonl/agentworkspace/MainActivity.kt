@@ -5,6 +5,7 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.os.Bundle
 import android.os.SystemClock
+import android.text.InputFilter
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.webkit.CookieManager
@@ -70,6 +71,8 @@ class MainActivity : ComponentActivity() {
         portInput = findViewById(R.id.port)
         tokenInput = findViewById(R.id.token)
         errorText = findViewById(R.id.error)
+        // tokens are typed in capitals (the server ignores case, so a custom lower-case token still works)
+        tokenInput.filters = tokenInput.filters + InputFilter.AllCaps()
         findViewById<TextView>(R.id.version).text = getString(R.string.version, BuildConfig.VERSION_NAME)
         findViewById<Button>(R.id.scan).setOnClickListener { startScan() }
         findViewById<Button>(R.id.connect).setOnClickListener { connectFromForm() }
