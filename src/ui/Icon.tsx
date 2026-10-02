@@ -31,6 +31,7 @@ const ICONS = {
   'chevron-left': P('m15 18-6-6 6-6'),
   'chevron-right': P('m9 18 6-6-6-6'),
   'chevron-up': P('m18 15-6-6-6 6'),
+  menu: P('M4 6h16M4 12h16M4 18h16'),
   x: P('M18 6 6 18M6 6l12 12'),
   check: P('M20 6 9 17l-5-5'),
   'check-circle': <><circle cx="12" cy="12" r="10" />{P('m9 12 2 2 4-4')}</>,

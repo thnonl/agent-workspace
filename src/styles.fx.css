@@ -341,3 +341,44 @@
 }
 .pip-placeholder { height: 100%; display: grid; place-content: center; justify-items: center; gap: 14px; text-align: center; padding: 24px; background: linear-gradient(160deg, var(--sky1, #ffe9f0), var(--sky2, #ffd0b5)); color: var(--ink); font-weight: 800; }
 .pip-placeholder p { margin: 0; font-size: 16px; }
+
+/* --- one button folds the top bar and the room header away (phones and tablets), and brings them back --- */
+.hud-fold { display: none; }
+@media (max-width: 1040px) {
+  .topbar .hud-fold { display: grid; place-items: center; }
+  .hud-fold .ico { animation: hudFoldIco 0.32s cubic-bezier(0.3, 1.4, 0.5, 1) both; }
+  /* the other buttons only turn invisible: the row keeps its height and the fold button does not move under the finger.
+     They shrink into the fold button one after the other, the nearest first (--d), and come out of it the same way.
+     (the empty row must not catch the taps meant for the room) */
+  .topbar-right > :not(.hud-fold) {
+    --d: 0ms;
+    transition: opacity 0.2s ease var(--d), transform 0.32s cubic-bezier(0.3, 1.35, 0.5, 1) var(--d), visibility 0s linear 0s, background 0.15s;
+  }
+  .hud-folded .topbar-right > :not(.hud-fold) {
+    opacity: 0; transform: translateX(14px) scale(0.6); visibility: hidden;
+    transition: opacity 0.16s ease var(--d), transform 0.2s ease-in var(--d), visibility 0s linear calc(var(--d) + 0.2s), background 0.15s;
+  }
+  .topbar-right > :nth-last-child(3) { --d: 25ms; }
+  .topbar-right > :nth-last-child(4) { --d: 50ms; }
+  .topbar-right > :nth-last-child(5) { --d: 75ms; }
+  .topbar-right > :nth-last-child(6) { --d: 100ms; }
+  .topbar-right > :nth-last-child(n + 7) { --d: 125ms; }
+  .hud-folded .topbar .brand { visibility: hidden; }
+  .hud-folded .topbar, .hud-folded .topbar-right { pointer-events: none; }
+  .hud-folded .topbar-right .hud-fold { pointer-events: auto; }
+  /* the room header lifts away; unfolded it slides in again with its usual entrance (slideIn) */
+  .hud-folded .room-header { animation: hudOut 0.22s ease-in both; pointer-events: none; }
+}
+@keyframes hudOut { to { opacity: 0; transform: translateY(-10px) scale(0.96); visibility: hidden; } }
+@keyframes hudFoldIco { from { opacity: 0; transform: rotate(-90deg) scale(0.5); } }
+@media (prefers-reduced-motion: reduce) {
+  .topbar-right > :not(.hud-fold), .hud-folded .topbar-right > :not(.hud-fold) { transition: none; }
+  .hud-fold .ico { animation: none; }
+  .hud-folded .room-header { animation: none; visibility: hidden; }
+}
+/* a phone held sideways: the bar stays on one row (the room header beside it gives way and ends in "…"), so the fold button is in the corner */
+@media (max-height: 480px) and (min-width: 561px) and (max-width: 860px) {
+  .hud-top .topbar { flex: none; }
+  .hud-top .topbar-right { flex-wrap: nowrap; }
+  .hud-top .room-header { margin-right: auto; }
+}

@@ -72,6 +72,8 @@ interface State {
   showSwitcher: boolean;
   /** on a phone the list folds away while a person is looked at, and comes back when they are let go (not saved; see switcherShown) */
   switcherAuto: boolean;
+  /** phones and tablets: the top bar and the room header are folded away behind one button (saved per browser) */
+  hudFolded: boolean;
   /** sound effects are off */
   muted: boolean;
   /** the user's list of names for the director and the staff */
@@ -136,6 +138,7 @@ interface State {
   setShowNames: (on: boolean) => void;
   setShowSwitcher: (on: boolean) => void;
   setSwitcherAuto: (on: boolean) => void;
+  setHudFolded: (on: boolean) => void;
   /** the session list button / the live pill: shows a list that was folded for a person, or else flips the saved choice */
   toggleSwitcher: () => void;
   applyNames: (list: string[]) => void;
@@ -190,6 +193,14 @@ const queryOf = (name: string): string | null => (typeof location === 'undefined
 const pickMode = <T extends string>(q: string | null, allowed: readonly T[]): T | null => (allowed.includes(q as T) ? (q as T) : null);
 const initWeatherMode: WeatherMode = pickMode(queryOf('weather'), WEATHER_MODES) ?? loadPref('weather', WEATHER_MODES, 'auto');
 const initSeasonMode: SeasonMode = pickMode(queryOf('season'), SEASON_MODES) ?? loadPref('season', SEASON_MODES, 'auto');
+const HUD_FOLD_KEY = 'agent-workspace.hudFolded';
+function loadHudFolded(): boolean {
+  try {
+    return getSetting(HUD_FOLD_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
 function loadShowSwitcher(): boolean {
   try {
     return getSetting(SWITCHER_KEY) !== '0';
@@ -1220,6 +1231,7 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
   showNames: false,
   showSwitcher: loadShowSwitcher(),
   switcherAuto: false,
+  hudFolded: loadHudFolded(),
   names: loadNames(),
   resetTick: 0,
   autoDemo: false,
@@ -1445,6 +1457,14 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
     set({ showSwitcher: on, switcherAuto: false });
   },
   setSwitcherAuto: (on) => set({ switcherAuto: on }),
+  setHudFolded: (on) => {
+    try {
+      setSetting(HUD_FOLD_KEY, on ? '1' : '0');
+    } catch {
+      /* private mode: the choice just is not remembered */
+    }
+    set({ hudFolded: on });
+  },
   toggleSwitcher: () => {
     const s = get();
     if (s.switcherAuto) set({ switcherAuto: false });

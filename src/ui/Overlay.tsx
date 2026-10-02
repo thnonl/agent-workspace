@@ -108,6 +108,8 @@ export function TopBar() {
   const setMusicOn = useStore((s) => s.setMusicOn);
   const setCinema = useStore((s) => s.setCinema);
   const setShowSettings = useStore((s) => s.setShowSettings);
+  const hudFolded = useStore((s) => s.hudFolded);
+  const setHudFolded = useStore((s) => s.setHudFolded);
 
   const status: ReactNode = connection === 'live' ? (liveRooms ? <>Live · {liveRooms}<span className="lbl"> session{liveRooms > 1 ? 's' : ''}</span></> : 'Live · idle') : connection === 'connecting' ? 'Connecting…' : 'Offline';
   return (
@@ -177,6 +179,11 @@ export function TopBar() {
         <button className="btn btn-icon" onClick={resetView} aria-label="Reset camera" title="Reset camera (R)"><Icon name="crosshair" size={18} /></button>
         <button className="btn btn-icon" onClick={() => setShowSettings(true)} aria-label="Settings" title="Settings: graphics, weather, decorations, sound"><Icon name="settings" size={18} /></button>
         <button className="btn btn-icon" onClick={() => setHelp(true)} aria-label="Help" title="Help (?)"><Icon name="help" size={18} /></button>
+        {/* phones and tablets: fold the bar and the room header away to see more of the room, and back */}
+        <button className="btn btn-icon hud-fold" onClick={() => setHudFolded(!hudFolded)} aria-expanded={!hudFolded} aria-label={hudFolded ? 'Show the buttons' : 'Hide the buttons'} title={hudFolded ? 'Show the buttons and the room header' : 'Hide the buttons and the room header'}>
+          {/* (keyed: the new icon turns in each time) */}
+          <Icon key={hudFolded ? 'menu' : 'chevron-right'} name={hudFolded ? 'menu' : 'chevron-right'} size={18} />
+        </button>
       </div>
     </header>
   );
