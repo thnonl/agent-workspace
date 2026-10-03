@@ -17,7 +17,7 @@ import { doneLines, pickAck } from './sim/phrases';
 import { celebrate } from './sim/celebrate';
 import { frame } from './sim/frame';
 import { noteCue, notePeople, noteReport, noteRun, noteTask } from './progress';
-import { HIRE_GAP_MS, bufferTaskSpeech, clearTalk, debugFlags, dropRoomRuntime, dropRuntime, dropTaskSpeech, enqueueSpeech, hasQueuedTool, runtimeFor, sims, takeTaskSpeech, talkPending } from './sim/registry';
+import { HIRE_GAP_MS, bufferTaskSpeech, clearTalk, debugFlags, dropRoomRuntime, dropRuntime, dropTaskSpeech, enqueueSpeech, hasQueuedTool, runtimeFor, sims, takeTaskSpeech, talkPending, tickQuietDelivery } from './sim/registry';
 
 export type Connection = 'connecting' | 'live' | 'offline';
 export type TimeMode = 'auto' | 'day' | 'dusk' | 'night';
@@ -940,6 +940,8 @@ function tickRoom(get: Get, set: SetFn, roomId: string, now: number) {
     if (age > (waiting[i].tool === 'Image' ? IMAGE_WAIT_MS : CALL_STALE_MS)) settleByDirector(get, set, roomId, waiting[i], now);
   }
   rt.queued = tasksOf(get(), roomId).filter((t) => !t.assignee && !t.done).length;
+  // a room that is not on screen stands still, but its things keep arriving: switching back, it has moved on in the meantime
+  if (get().visibleOrder.includes(roomId)) tickQuietDelivery(roomId, getLayout(room.seed, room.themeIndex), get().activeRoomId === roomId, performance.now() / 1000);
   const busy = room.mainActive || tasksOf(get(), roomId).length > 0;
   if (busy) {
     touchRoom(roomId, now);

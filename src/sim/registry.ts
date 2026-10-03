@@ -1,5 +1,6 @@
 import type { Speech } from '../types';
 import { frame } from './frame';
+import { FOOT } from '../world/layout';
 
 /**
  * Non-reactive runtime state shared between scene components (characters, doors, chairs, bubbles).
@@ -130,6 +131,8 @@ export interface RoomRuntime {
   /** what is in the parcel: its place in layout.late (-1: nothing) and whether it is a big box */
   parcelRank: number;
   parcelBig: boolean;
+  /** performance.now()/1000 of the next thing that turns up on its own while nobody is about to fetch a parcel (0 = not scheduled; see tickQuietDelivery) */
+  quietAt: number;
   /** the main agent waits for the user's answer since then (performance.now()/1000, 0 = no question pending): the director waves for attention */
   askAt: number;
   /** everybody who stands or sits cheers until then (performance.now()/1000; see sim/celebrate.ts) */
@@ -333,13 +336,48 @@ export function parcelDone(rt: RoomRuntime, now: number) {
   rt.parcelAt = now + NEXT_PARCEL_S[0] + Math.random() * (NEXT_PARCEL_S[1] - NEXT_PARCEL_S[0]);
 }
 
+/** Seconds between two things that turn up in a room that is not on screen (see tickQuietDelivery). */
+const QUIET_PARCEL_S: [number, number] = [40, 120];
+
+/**
+ * A room that is not on screen stands still (nobody fetches its parcels), but it is furnished all the same: every QUIET_PARCEL_S one
+ * more thing of `layout.late` turns up at its place, so the room has moved on when the user switches back to it. The room on screen
+ * gets its things only the usual way (a parcel at the door, see tickParcel). Nothing is put where somebody (or a cat) stands: it waits
+ * for the next try then. Returns true when something turned up.
+ */
+export function tickQuietDelivery(roomId: string, layout: import('../world/layout').RoomLayout, onScreen: boolean, now: number): boolean {
+  const rt = runtimeFor(roomId);
+  if (onScreen) {
+    rt.quietAt = 0;
+    return false;
+  }
+  if (rt.quietAt === 0) rt.quietAt = now + QUIET_PARCEL_S[0] + Math.random() * (QUIET_PARCEL_S[1] - QUIET_PARCEL_S[0]);
+  if (now < rt.quietAt) return false;
+  rt.quietAt = 0;
+  const rank = claimLate(roomId, layout);
+  if (rank < 0) return false;
+  const p = layout.props[layout.late[rank]];
+  const [w, d] = FOOT[p.kind];
+  const reach = Math.hypot(w, d) / 2 + 0.5;
+  const inTheWay = (o: { roomId: string; onStage: boolean; x: number; z: number }) => o.roomId === roomId && o.onStage && Math.hypot(o.x - p.x, o.z - p.z) < reach;
+  let blocked = false;
+  for (const s of sims.values()) if (inTheWay(s)) blocked = true;
+  for (const c of cats.values()) if (inTheWay(c)) blocked = true;
+  if (blocked) {
+    releaseLate(roomId, layout, rank);
+    return false;
+  }
+  commitDelivery(roomId, layout, rank);
+  return true;
+}
+
 export function runtimeFor(roomId: string): RoomRuntime {
   let rt = roomRuntime.get(roomId);
   if (!rt) {
     rt = {
       doorFreeAt: 0, leaveFreeAt: 0, motionAt: -99, motionBy: null, visitors: [null, null, null], directorSeated: false, directorKey: null, receivedAt: -99,
       burstKey: null, burstStart: 0, lastToolAt: 0, burstSeq: 0, queued: 0, lastHire: 0, lastNewcomer: 0, lastNewHire: 0, prompt: '', idleSince: 0, leaving: false, wasBusy: false, runStart: 0, lastText: '', knownFinal: '', talkDeadline: 0,
-      parcel: 'none', parcelAt: 0, parcelBy: null, parcelRank: -1, parcelBig: false, askAt: 0, cheerUntil: 0, summaryDue: false,
+      parcel: 'none', parcelAt: 0, parcelBy: null, parcelRank: -1, parcelBig: false, quietAt: 0, askAt: 0, cheerUntil: 0, summaryDue: false,
     };
     roomRuntime.set(roomId, rt);
   }
