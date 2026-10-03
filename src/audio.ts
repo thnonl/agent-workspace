@@ -163,6 +163,8 @@ export function unlockAudio() {
 if (typeof window !== 'undefined') {
   window.addEventListener('pointerdown', unlockAudio, { passive: true });
   window.addEventListener('keydown', unlockAudio);
+  // the Android app's WebView lets audio start without a tap (mediaPlaybackRequiresUserGesture = false)
+  if (navigator.userAgent.includes('AgentWorkspaceApp')) unlockAudio();
 }
 
 const MIN_GAP: Partial<Record<Sfx, number>> = { shutter: 500, fanfare: 1500, confetti: 400, sparkle: 600, levelup: 2000, achieve: 1500, puff: 400, radio: 300, clap: 3000, key: 70, pop: 160, talk: 240, blip: 200, water: 500, sizzle: 1500, flush: 6000, doorbell: 4000, inhale: 2500, exhale: 2500, thud: 130, huff: 900, clank: 250, pickup: 3000, swipe: 2500, mail: 2500, ask: 3000 };
