@@ -162,8 +162,8 @@ export type StationKind = 'drink' | 'read' | 'fish' | 'wash' | 'water' | 'cook' 
 export interface Station {
   kind: StationKind;
   prop: PropKind;
-  /** a place at a game machine: which player (0, 1) and whether one sits there (the racing seat) */
-  game?: { slot: number; seated: boolean };
+  /** a place at a game machine: which player (0, 1), whether one sits there (the racing seat), and where one plays (stepped in from `stand`) */
+  game?: { slot: number; seated: boolean; at: V2 };
   /** index into `props` of the thing it is at; `off` while that thing has not been delivered yet (see RoomLayout.late) */
   propIdx: number;
   off?: boolean;
@@ -401,12 +401,13 @@ export const FOOT: Record<PropKind, [number, number, number]> = {
 };
 
 /**
- * The game machines. `players`: where each player stands (machine-local x, z: +z is the front) and the way they look (local yaw);
+ * The game machines. `players`: where each player stands (machine-local x, z: +z is the front), the way they look (local yaw) and,
+ * optionally, how near the machine they step to play (local z; the place they walk to stays clear of the machine in the walking grid);
  * `wall`: it stands with its back to a wall (else anywhere on the open floor); `front`: floor in front of the footprint that belongs to it
  * (the dance pads, the racing seat, the room to move in); `seated`: one sits to play.
  */
 export interface GameSpec {
-  players: [number, number, number][];
+  players: ([number, number, number] | [number, number, number, number])[];
   wall: boolean;
   front: number;
   seated?: boolean;
@@ -414,18 +415,18 @@ export interface GameSpec {
   couch?: boolean;
 }
 export const GAMES: Partial<Record<PropKind, GameSpec>> = {
-  arcade: { players: [[0, 0.8, Math.PI]], wall: true, front: 0.9 },
-  arcadeDuo: { players: [[-0.33, 0.82, Math.PI], [0.33, 0.82, Math.PI]], wall: true, front: 0.9 },
-  pinball: { players: [[0, 1.05, Math.PI]], wall: true, front: 0.8 },
-  clawMachine: { players: [[0, 0.85, Math.PI]], wall: true, front: 0.9 },
-  airHockey: { players: [[0, 1.35, Math.PI], [0, -1.35, 0]], wall: false, front: 0 },
-  foosball: { players: [[0, 0.78, Math.PI], [0, -0.78, 0]], wall: false, front: 0 },
+  arcade: { players: [[0, 0.8, Math.PI, 0.66]], wall: true, front: 0.9 },
+  arcadeDuo: { players: [[-0.33, 0.82, Math.PI, 0.66], [0.33, 0.82, Math.PI, 0.66]], wall: true, front: 0.9 },
+  pinball: { players: [[0, 1.05, Math.PI, 0.97]], wall: true, front: 0.8 },
+  clawMachine: { players: [[0, 0.85, Math.PI, 0.7]], wall: true, front: 0.9 },
+  airHockey: { players: [[0, 1.35, Math.PI, 1.15], [0, -1.35, 0, -1.15]], wall: false, front: 0 },
+  foosball: { players: [[0, 0.78, Math.PI, 0.72], [0, -0.78, 0, -0.72]], wall: false, front: 0 },
   danceMachine: { players: [[-0.42, 0.88, Math.PI], [0.42, 0.88, Math.PI]], wall: true, front: 1.4 },
   consoleTv: { players: [[-0.45, 1.65, Math.PI], [0.45, 1.65, Math.PI]], wall: true, front: 1.9 },
-  racingSim: { players: [[0, 0.92, Math.PI]], wall: true, front: 1.2, seated: true },
+  racingSim: { players: [[0, 0.92, Math.PI, 0.66]], wall: true, front: 1.2, seated: true },
   vrStation: { players: [[0, 1.25, Math.PI]], wall: true, front: 1.7 },
-  pingPong: { players: [[0, 1.75, Math.PI], [0, -1.75, 0]], wall: false, front: 0 },
-  hoops: { players: [[0, 1.5, Math.PI]], wall: true, front: 0.9 },
+  pingPong: { players: [[0, 1.75, Math.PI, 1.68], [0, -1.75, 0, -1.68]], wall: false, front: 0 },
+  hoops: { players: [[0, 1.5, Math.PI, 1.3]], wall: true, front: 0.9 },
   psConsole: { players: [], wall: false, front: 0, couch: true },
   // (the same console with the TV on the wall and the console on the floor: where there is no room for the cabinet)
   psWall: { players: [], wall: true, front: 0, couch: true },
@@ -1851,11 +1852,13 @@ function buildLayoutTry(seed: number, themeIndex: number, attempt: number): Room
   for (const pr of props) {
     const game = GAMES[pr.kind];
     if (game) {
-      game.players.forEach(([lx, lz, ly], slot) => {
+      game.players.forEach(([lx, lz, ly, pz], slot) => {
         const o = rot2(lx, lz, pr.rot);
         const stand = { x: pr.x + o.x, z: pr.z + o.z };
+        const oa = rot2(lx, pz ?? lz, pr.rot);
+        const at = { x: pr.x + oa.x, z: pr.z + oa.z };
         if (Math.abs(stand.x) > W / 2 - 0.4 || Math.abs(stand.z) > D / 2 - 0.4 || nav.isBlocked(stand.x, stand.z) || !nav.findPath(door.inside, stand)) return;
-        stations.push({ kind: 'play', prop: pr.kind, propIdx: props.indexOf(pr), stand, target: { x: pr.x, z: pr.z }, yaw: pr.rot + ly, game: { slot, seated: !!game.seated } });
+        stations.push({ kind: 'play', prop: pr.kind, propIdx: props.indexOf(pr), stand, target: { x: pr.x, z: pr.z }, yaw: pr.rot + ly, game: { slot, seated: !!game.seated, at } });
       });
       continue;
     }

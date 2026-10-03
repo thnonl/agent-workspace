@@ -1,5 +1,5 @@
 import type { PersonRec, SpeechKind, TaskRec } from '../types';
-import { FOOT, rot2, rrLocal, rrWorld, type PropKind, type RoomLayout, type Spot, type Station, type StationKind } from '../world/layout';
+import { FOOT, GAMES, rot2, rrLocal, rrWorld, type PropKind, type RoomLayout, type Spot, type Station, type StationKind } from '../world/layout';
 import type { V2 } from '../world/nav';
 import { sfx, type Sfx } from '../audio';
 import { env } from '../env';
@@ -9,6 +9,7 @@ import { kickDummy, takeDumbbells } from './gym';
 import { notePet } from '../progress';
 import { HIRE_GAP_MS, HURRY_QUEUE, claimLate, commitDelivery, debugFlags, lateAvailable, movedIfAny, movedOf, notifyMoved, dismissIdle, enqueueSpeech, greet, parcelDone, releaseLate, roomRuntime, tickParcel, sims, simsInRoom, spotOwners, type CatSim, type Phase, type RoomRuntime, type SimState } from './registry';
 import { commitMove, findTidySpot, standBeside, untidyProps, type Place } from './tidy';
+import { CLAW_SHOW, danceArrows, gameLive, gripOf, joinGame, stepGame } from './gamePlay';
 
 export interface Pose {
   bob: number;
@@ -208,7 +209,7 @@ function thoughtOf(a: Activity, name: string): [string, string] | null {
 }
 
 /** what a character holds in the right hand */
-export type HeldKind = 'none' | 'cup' | 'book' | 'can' | 'bowl' | 'dumbbell' | 'parcel' | 'pot' | 'cig' | 'phone' | 'pad';
+export type HeldKind = 'none' | 'cup' | 'book' | 'can' | 'bowl' | 'dumbbell' | 'parcel' | 'pot' | 'cig' | 'phone' | 'pad' | 'paddle' | 'plush' | 'vr';
 
 /** arm/body key pose of a station activity (missing values fall back to the relaxed pose) */
 interface Key {
@@ -294,6 +295,13 @@ interface Activity {
 
 /** height of the hip above the floor for an appearance scale of 1 (model hip * rig scale) */
 const HIP = 0.47 * 0.85;
+/** the rig in its own units (scene/character.ts): hip height, shoulders on the torso, the arm bones (shoulder to elbow, elbow to the hand's centre), the eyes above the hips */
+const RIG_HIP = 0.47;
+const SHOULDER_X = 0.285;
+const SHOULDER_Y = 0.5;
+const ARM_L1 = 0.22;
+const ARM_L2 = 0.215;
+const EYE_UP = 0.92;
 /** thigh radius at the hip relative to the hip height (the sofa cushion carries the underside of the thigh) */
 const THIGH_R = 0.098 / 0.47;
 /** on a sofa the person sits this far forward of the seat point (the cushion is deeper than the legs are long) */
@@ -528,6 +536,20 @@ export class Actor {
   smoke = 0;
   /** what the right hand holds (drawn by the character component) */
   held: HeldKind = 'none';
+  /** the plush toy won at the claw machine (colour index; held 'plush') */
+  plush = 0;
+  /** 0..1: eyes on a game (the head does not glance at the viewer) */
+  focus = 0;
+  /** playing: turned this far from the machine (the VR player looks about) */
+  private playYaw = 0;
+  /** world scale of the rig (appearance scale x rig scale) */
+  private readonly ws: number;
+  // scratch points for the hands and the eyes
+  private readonly wTmp = [0, 0, 0];
+  private readonly wA = [0, 0, 0];
+  private readonly wB = [0, 0, 0];
+  /** the time step of this update */
+  private stepDt = 0;
   /** 0..1: the watering can is tilted and pouring */
   pour = 0;
   /** tilt of the held item about the character's x axis (radians, positive = leaning forward) */
@@ -592,6 +614,7 @@ export class Actor {
     this.layoutRef = layout;
     this.isDirector = isDirector;
     this.hip = HIP * scale;
+    this.ws = 0.85 * scale;
     this.reach = deskReach(scale, isDirector, SEAT_LIFT);
     this.sim = { key, roomId, x: layout.door.outside.x, z: layout.door.outside.z, yaw: 0, phase: 'waiting', sitT: 0, y: 0, onStage: false, desk, busy: false, slot: -1, walking: false, chatBy: null, quiet: false };
   }
@@ -942,6 +965,7 @@ export class Actor {
   update(dt: number, ctx: ActorCtx) {
     dt = Math.min(dt, SLOW_MAX_DT); // (callers already cap the active room at ACTIVE_MAX_DT; slow rooms hand in one long step)
     this.clock += dt;
+    this.stepDt = dt;
     // (getting up and sitting down go at the pace of walking)
     this.t += this.sim.phase === 'sitting' || this.sim.phase === 'standing' ? dt * this.tempo() : dt;
     this.ctxNow = ctx;
@@ -1343,6 +1367,8 @@ export class Actor {
           this.from = { x: s.x, z: s.z };
           this.resume = true;
           this.strolling = false;
+          // (a toy won at the claw machine is tucked away at the desk)
+          if (this.held === 'plush') this.held = 'none';
           this.setPhase('sitting');
         }
         break;
@@ -1721,6 +1747,7 @@ export class Actor {
   private goHome(ctx: ActorCtx) {
     dismissIdle(this.sim.key); // the break is over: the thought about it goes away
     this.sim.gaming = false;
+    this.focus = 0;
     this.resumeAct = null;
     if (this.act?.partnerKey) {
       const friend = sims.get(this.act.partnerKey);
@@ -2269,12 +2296,32 @@ export class Actor {
       case 'water':
       case 'box':
       case 'lift':
-      case 'play':
       case 'cook': {
         this.faceYaw(a.yaw, dt, 7);
         this.idlePose(pose);
         this.stationPose(a, pose, ctx);
         if (back || t > a.dur) this.goHome(ctx);
+        break;
+      }
+      case 'play': {
+        this.faceYaw(a.yaw + this.playYaw, dt, 7);
+        this.idlePose(pose);
+        // a toy won at the claw machine: shown off, then off home with it
+        const st = a.station;
+        const gl = st ? gameLive(s.roomId, st.propIdx, st.prop) : null;
+        const prize = st?.prop === 'clawMachine' && gl && gl.won >= 0 ? gl.won : -1;
+        if (prize >= 0 && gl!.gt - gl!.goalAt > CLAW_SHOW - 0.6 && a.dur > t + 0.9) a.dur = t + 0.9;
+        this.playPose(a, pose, ctx, t, a.dur, dt);
+        if (back || t > a.dur) {
+          this.focus = 0;
+          this.playYaw = 0;
+          if (prize >= 0) {
+            this.held = 'plush';
+            this.plush = prize;
+            gl!.won = -1;
+          }
+          this.goHome(ctx);
+        }
         break;
       }
       case 'chat': {
@@ -2409,6 +2456,14 @@ export class Actor {
 
   /** the cup / bowl in the right hand while walking: held up in front of the chest */
   private carryPose(p: Pose) {
+    if (this.held === 'plush') {
+      // the toy won at the claw machine, hugged to the chest
+      p.armRx = p.armLx = -0.85;
+      p.armRz = p.armLz = -0.35;
+      p.foreRx = p.foreLx = -1.35;
+      p.happy = Math.max(p.happy, 0.7);
+      return;
+    }
     if (this.held !== 'cup' && this.held !== 'bowl') return;
     p.armRx = -0.95;
     p.armRz = -0.12;
@@ -2569,11 +2624,13 @@ export class Actor {
   }
 
   /**
-   * Playing at a game machine: a pose for every kind of machine. Two players at one machine tease each other once in the middle; one
-   * alone cheers or groans at the end.
+   * Playing at a game machine. The machine runs its own little game (sim/gamePlay.ts: the puck, the ball, the claw, the rods, the wheel…);
+   * the hands go where the controls are (arm IK), the eyes follow the ball, the body steps along the table with the mallet / paddle. Two
+   * players at one machine tease each other once in the middle; one alone cheers or groans at the end.
    */
-  private playPose(a: Activity, p: Pose, ctx: ActorCtx, t: number, d: number, c: number) {
+  private playPose(a: Activity, p: Pose, ctx: ActorCtx, t: number, d: number, dt: number) {
     const s = this.sim;
+    const c = this.clock;
     this.held = 'none';
     this.pour = 0;
     this.tapFlow = 0;
@@ -2582,79 +2639,36 @@ export class Actor {
     this.steam = 0;
     this.steamAt = null;
     const st = a.station;
-    if (!st) return;
+    if (!st?.game) return;
+    const prop = ctx.layout.props[st.propIdx];
     const into = seg(t, 0, 0.8) * (1 - seg(t, d - 0.8, d));
     const mix = (v: number) => v * into;
-    const won = (this.clock * 7.3) % 1 < 0.5;
+    const slot = st.game.slot;
+    const g = gameLive(s.roomId, st.propIdx, st.prop, GAMES[st.prop]?.players.length ?? 1);
+    if (joinGame(g, slot, s.key, into)) stepGame(g, dt, (n) => sfx(n, s.roomId));
+    this.focus = into;
+    this.playYaw = 0;
+    const gr = gripOf(g, slot);
+    // the machine frame: local x along (cos rot, -sin rot), local z along (sin rot, cos rot)
+    const cr = Math.cos(prop.rot);
+    const sr = Math.sin(prop.rot);
+    const world = (v: readonly number[], out: number[] = this.wTmp) => {
+      out[0] = prop.x + v[0] * cr + v[2] * sr;
+      out[1] = v[1];
+      out[2] = prop.z - v[0] * sr + v[2] * cr;
+      return out;
+    };
+    // a step up to the controls (the walk ends a little further out), and along the table with the mallet / paddle
+    const off = gr.side * into;
+    s.x = lerp(st.stand.x, st.game.at.x, into) + off * cr;
+    s.z = lerp(st.stand.z, st.game.at.z, into) - off * sr;
+    p.lean = mix(gr.lean);
+    let won = (this.clock * 7.3) % 1 < 0.5;
     switch (st.prop) {
-      case 'arcade':
-      case 'arcadeDuo': {
-        // stick in the left hand, buttons under the right
-        p.armLx = mix(-0.85 + Math.sin(c * 9) * 0.06);
-        p.armLz = mix(-0.2 + Math.sin(c * 13) * 0.12);
-        p.foreLx = mix(-0.9);
-        p.armRx = mix(-0.8);
-        p.armRz = mix(-0.25);
-        p.foreRx = mix(-0.95 + Math.max(0, Math.sin(c * 17)) * 0.18);
-        p.lean = mix(0.12);
-        p.headX = mix(0.08);
-        for (let at = 2; at < d - 2; at += 2.7) this.cue('blip', at);
-        break;
-      }
-      case 'pinball': {
-        // both hands on the flipper buttons at the sides, bent over the glass
-        const l = Math.max(0, Math.sin(c * 8));
-        const r = Math.max(0, Math.sin(c * 8 + 2.2));
-        p.armLx = mix(-0.55);
-        p.armRx = mix(-0.55);
-        p.armLz = mix(0.32 + l * 0.08);
-        p.armRz = mix(0.32 + r * 0.08);
-        p.foreLx = mix(-0.55 - l * 0.2);
-        p.foreRx = mix(-0.55 - r * 0.2);
-        p.lean = mix(0.28);
-        p.headX = mix(0.3);
-        for (let at = 1.5; at < d - 1.5; at += 1.9) this.cue('blip', at);
-        break;
-      }
-      case 'clawMachine': {
-        // steer the claw, look up at it, then down when it drops
-        const drop = seg(t, d - 6, d - 4.5);
-        p.armRx = mix(-0.9);
-        p.armRz = mix(-0.15 + Math.sin(c * 2.2) * 0.15 * (1 - drop));
-        p.foreRx = mix(-0.55);
-        p.headX = mix(-0.25 + drop * 0.5);
-        p.headY = mix(Math.sin(c * 1.1) * 0.2 * (1 - drop));
-        p.lean = mix(0.08);
-        break;
-      }
-      case 'airHockey': {
-        // bent over the table, the mallet hand sweeping from side to side
-        p.lean = mix(0.4);
-        p.armRx = mix(-0.95);
-        p.armRz = mix(-0.1 + Math.sin(c * 6) * 0.35);
-        p.foreRx = mix(-0.35);
-        p.armLx = mix(-0.3);
-        p.armLz = mix(0.25);
-        p.headX = mix(0.25);
-        p.headY = mix(Math.sin(c * 6 - 0.6) * 0.3);
-        for (let at = 1.2; at < d - 1.5; at += 1.6) this.cue('blip', at);
-        break;
-      }
-      case 'foosball': {
-        // both hands on the rods, twisting them
-        const tw = Math.sin(c * 9);
-        p.armLx = p.armRx = mix(-0.95);
-        p.armLz = mix(-0.15 + tw * 0.15);
-        p.armRz = mix(-0.15 - tw * 0.15);
-        p.foreLx = p.foreRx = mix(-0.45);
-        p.lean = mix(0.2);
-        p.headX = mix(0.3);
-        p.roll = mix(Math.sin(c * 3) * 0.05);
-        break;
-      }
       case 'danceMachine': {
         // stepping on the arrows to the beat, and silly moves on top: the chicken, disco, the robot, the sprinkler, the floss, raise the roof
-        // (one per bar, each dancer starting with another one; the last moment of a bar blends into the next move)
+        // (one per bar, each dancer starting with another one; the last moment of a bar blends into the next move); the arrows under the
+        // feet light up
         const b = c * 7;
         const st1 = Math.max(0, Math.sin(b));
         const st2 = Math.max(0, Math.sin(b + Math.PI));
@@ -2663,8 +2677,8 @@ export class Actor {
         const next = DANCE_MOVES[(Math.floor(bar) + 1) % DANCE_MOVES.length];
         const f = now(b);
         const w = smooth(seg(bar % 1, 0.88, 1));
-        const g = w > 0 ? next(b) : f;
-        const at = (k: keyof DanceFrame) => mix((f[k] ?? DANCE_REST[k]) * (1 - w) + (g[k] ?? DANCE_REST[k]) * w);
+        const g2 = w > 0 ? next(b) : f;
+        const at = (k: keyof DanceFrame) => mix((f[k] ?? DANCE_REST[k]) * (1 - w) + (g2[k] ?? DANCE_REST[k]) * w);
         p.thighLx = mix(-0.6 * st1) + at('thighLx');
         p.kneeLx = mix(0.9 * st1) + at('kneeLx');
         p.thighRx = mix(-0.6 * st2) + at('thighRx');
@@ -2684,81 +2698,76 @@ export class Actor {
         p.bob = mix(Math.abs(Math.sin(b)) * 0.06) + at('bob');
         p.happy = mix(0.9 * (1 - (f.straight ?? 0) * (1 - w)));
         if ((f.oh ?? 0) > 0.5 && w < 0.5) p.mouth = 'o';
+        g.lit[slot] = into > 0.5 ? danceArrows(b) : 0;
         for (let at2 = 1; at2 < d - 1; at2 += 1.8) this.cue('thud', at2);
+        this.focus = 0;
         break;
       }
       case 'consoleTv': {
-        // the controller held in front of the chest, thumbs busy, leaning into the curves
+        // the controller held in front of the chest, thumbs busy, leaning into the curves, eyes on the TV
         if (into > 0.3) this.held = 'pad';
         p.armLx = p.armRx = mix(-0.95);
         p.armLz = p.armRz = mix(-0.32);
         p.foreLx = mix(-1.55 + Math.sin(c * 15) * 0.05);
         p.foreRx = mix(-1.55 + Math.sin(c * 13 + 1) * 0.05);
-        p.roll = mix(Math.sin(c * 1.3) * 0.1);
-        p.headX = mix(0.05);
-        if (Math.sin(c * 0.7) > 0.9) p.mouth = 'o';
-        break;
-      }
-      case 'racingSim': {
-        // in the bucket seat, both hands on the wheel
-        s.sitT = 1;
-        this.seatedPose(p, 1);
-        const steer = Math.sin(c * 1.7) * 0.25 + Math.sin(c * 4.1) * 0.08;
-        p.armLx = p.armRx = mix(-1.2);
-        p.armLz = mix(-0.25 + steer);
-        p.armRz = mix(-0.25 - steer);
-        p.foreLx = p.foreRx = mix(-0.45);
-        p.roll = mix(steer * 0.25);
-        p.lean = mix(-0.05);
-        p.headX = mix(0.05);
+        p.roll = mix(g.steer * 0.12);
+        this.lookTo(p, world([0, 1.03, 0]), into);
+        if (Math.abs(g.steer) > 0.95) p.mouth = 'o';
         break;
       }
       case 'vrStation': {
-        // goggles on (looking about blindly), swiping at things nobody else can see
-        p.armRx = mix(-1.3 + Math.sin(c * 2.3) * 0.6);
-        p.armRz = mix(-0.2 + Math.sin(c * 1.7) * 0.4);
-        p.armLx = mix(-1.0 + Math.cos(c * 1.9) * 0.6);
-        p.armLz = mix(0.2 + Math.cos(c * 2.6) * 0.3);
-        p.foreRx = p.foreLx = mix(-0.4);
-        p.headY = mix(Math.sin(c * 0.9) * 0.7);
-        p.headX = mix(-0.15 + Math.sin(c * 1.3) * 0.15);
-        const duck = Math.max(0, Math.sin(c * 0.6)) ** 6;
+        // headset on (hands up to the face at the start and the end), the controllers in both hands, swiping at things nobody else sees,
+        // turning about and ducking
+        const on = seg(t, 0.9, 1.0) * (1 - seg(t, d - 1.4, d - 1.3));
+        const fit = Math.max(Math.sin(seg(t, 0.3, 1.5) * Math.PI), Math.sin(seg(t, d - 2.0, d - 0.8) * Math.PI));
+        this.held = on > 0.5 ? 'vr' : 'none';
+        p.armRx = mix(lerp(-1.3 + Math.sin(c * 2.3) * 0.6, -2.4, fit));
+        p.armRz = mix(lerp(-0.2 + Math.sin(c * 1.7) * 0.4, 0.45, fit));
+        p.armLx = mix(lerp(-1.0 + Math.cos(c * 1.9) * 0.6, -2.4, fit));
+        p.armLz = mix(lerp(0.2 + Math.cos(c * 2.6) * 0.3, 0.45, fit));
+        p.foreRx = p.foreLx = mix(lerp(-0.4, -2.1, fit));
+        const look = on * (1 - fit);
+        p.headY = mix(Math.sin(c * 0.9) * 0.7 * look);
+        p.headX = mix((-0.15 + Math.sin(c * 1.3) * 0.15) * look);
+        this.playYaw = Math.sin(c * 0.35) * 0.8 * look;
+        const duck = Math.max(0, Math.sin(c * 0.6)) ** 6 * look;
         p.thighLx = p.thighRx = mix(-0.4 * duck);
         p.kneeLx = p.kneeRx = mix(0.8 * duck);
         p.bob = mix(-0.08 * duck);
         p.mouth = Math.sin(c * 0.8) > 0.6 ? 'o' : 'smile';
+        this.focus = into * on;
         break;
       }
-      case 'pingPong': {
-        // the paddle hand swinging forehand, light on the feet
-        const sw = Math.sin(c * 4.5);
-        p.armRx = mix(-0.7 + sw * 0.45);
-        p.armRz = mix(-0.35 + sw * 0.35);
-        p.foreRx = mix(-0.7);
-        p.armLx = mix(-0.4);
-        p.armLz = mix(0.2);
-        p.lean = mix(0.18);
-        p.bob = mix(Math.abs(Math.sin(c * 4.5)) * 0.03);
-        p.headY = mix(sw * 0.2);
-        for (let at = 1; at < d - 1; at += 1.4) this.cue('blip', at);
+      case 'racingSim': {
+        // in the bucket seat, both hands on the wheel, leaning into the curves
+        s.sitT = 1;
+        this.seatedPose(p, 1);
+        p.roll = mix(-g.steer * 0.1);
         break;
       }
-      case 'hoops': {
-        // a throw every 1.6 seconds: ball up to the chest, both arms up, release, look at the hoop
-        const u = (t % 1.6) / 1.6;
-        const up = seg(u, 0.1, 0.45) * (1 - seg(u, 0.6, 0.95));
-        p.armLx = p.armRx = mix(-0.7 - 1.9 * up);
-        p.armLz = mix(0.2);
-        p.armRz = mix(-0.2);
-        p.foreLx = p.foreRx = mix(-1.2 + 0.9 * up);
-        p.headX = mix(-0.3);
-        p.thighLx = p.thighRx = mix(-0.25 * (1 - up));
-        p.kneeLx = p.kneeRx = mix(0.45 * (1 - up));
-        p.bob = mix(0.05 * up);
+      case 'pingPong':
+        if (into > 0.3) this.held = 'paddle';
+        // the paddle turns with the swing
+        this.heldTilt = mix(Math.sin(c * 2) * 0.1);
         break;
-      }
-      default:
-        this.idlePose(p);
+      case 'clawMachine':
+        if (g.won >= 0 && g.gt - g.goalAt < CLAW_SHOW) {
+          this.held = 'plush';
+          this.plush = g.won;
+          p.happy = 1;
+          won = true;
+        }
+        break;
+    }
+    // the hands on the controls, the eyes on the game
+    if (gr.hands[0] || gr.hands[1]) this.reachPair(p, gr.hands[0] && world(gr.hands[0], this.wA), gr.hands[1] && world(gr.hands[1], this.wB), gr.free, into);
+    if (gr.look) this.lookTo(p, world(gr.look), into);
+    // a point scored a moment ago: the scorer is thrilled, the other one groans
+    const since = g.gt - g.goalAt;
+    if (since >= 0 && since < 1.4 && g.goalBy >= 0 && st.prop !== 'clawMachine') {
+      const mine = g.goalBy === slot || st.prop === 'hoops';
+      p.happy = Math.max(p.happy, mine ? 1 : 0);
+      p.mouth = mine ? 'o' : 'sad';
     }
     // two at one machine: one bit of banter in the middle; alone: a cheer or a groan at the end
     const mate = ctx.layout.stations.some((o, j) => o !== st && o.kind === 'play' && o.propIdx === st.propIdx && sims.get(spotOwners.get(`${s.roomId}@${j}`) ?? '')?.onStage);
@@ -2773,6 +2782,96 @@ export class Actor {
       p.happy = Math.max(p.happy, won ? 1 : 0);
       if (!won && !mate) p.mouth = 'sad';
     }
+  }
+
+  /**
+   * Two hands at two world points (either may be null: that arm stays as posed). `free`: the hands may swap so that each takes the point
+   * on its own side; else the first point is for the rig's right hand (the one that holds things).
+   */
+  private reachPair(p: Pose, a: number[] | null, b: number[] | null, free: boolean, k: number) {
+    if (free && a && b) {
+      // the point further to the rig's +x goes to the right arm
+      const s = this.sim;
+      const ax = (a[0] - s.x) * Math.cos(s.yaw) - (a[2] - s.z) * Math.sin(s.yaw);
+      const bx = (b[0] - s.x) * Math.cos(s.yaw) - (b[2] - s.z) * Math.sin(s.yaw);
+      if (bx > ax) [a, b] = [b, a];
+    } else if (free && b && !a) [a, b] = [b, a];
+    if (a) this.reachTo(p, 1, a, k);
+    if (b) this.reachTo(p, -1, b, k);
+  }
+
+  /**
+   * Arm angles that put the hand of one arm (+1: the rig's right arm, -1: the left) at a world point: the point is taken into the torso's
+   * frame (position, yaw and scale of the body, the bob, the lean / twist / roll of the pose), then a two-bone solve for the shoulder and
+   * the elbow. Mixed into the pose by k.
+   */
+  private reachTo(p: Pose, side: 1 | -1, w: readonly number[], k: number) {
+    const s = this.sim;
+    const ws = this.ws;
+    const cy = Math.cos(s.yaw);
+    const sy = Math.sin(s.yaw);
+    const dx = w[0] - s.x;
+    const dz = w[2] - s.z;
+    let x = (dx * cy - dz * sy) / ws;
+    let y = (w[1] - s.y) / ws - p.bob - RIG_HIP;
+    let z = (dx * sy + dz * cy) / ws;
+    // undo the torso's rotation (Euler XYZ: lean, twist, roll)
+    let c = Math.cos(-p.lean);
+    let n = Math.sin(-p.lean);
+    [y, z] = [y * c - z * n, y * n + z * c];
+    c = Math.cos(-p.twist);
+    n = Math.sin(-p.twist);
+    [x, z] = [x * c + z * n, -x * n + z * c];
+    c = Math.cos(-p.roll);
+    n = Math.sin(-p.roll);
+    [x, y] = [x * c - y * n, x * n + y * c];
+    x -= side * SHOULDER_X;
+    y -= SHOULDER_Y;
+    // two bones: the elbow bend from the distance, then the swing out to the side and the raise forward
+    let d = Math.hypot(x, y, z);
+    const dm = Math.min(Math.max(d, 0.08), 0.985 * (ARM_L1 + ARM_L2));
+    if (d > 1e-6) {
+      x *= dm / d;
+      y *= dm / d;
+      z *= dm / d;
+    }
+    d = dm;
+    const g = Math.acos(Math.max(-1, Math.min(1, (d * d - ARM_L1 * ARM_L1 - ARM_L2 * ARM_L2) / (2 * ARM_L1 * ARM_L2))));
+    const A = ARM_L1 + ARM_L2 * Math.cos(g);
+    const B = ARM_L2 * Math.sin(g);
+    const az = Math.asin(Math.max(-1, Math.min(1, x / A)));
+    let ax = Math.atan2(z, y) - Math.atan2(B, -A * Math.cos(az));
+    if (ax > Math.PI) ax -= Math.PI * 2;
+    if (ax < -Math.PI) ax += Math.PI * 2;
+    if (side > 0) {
+      p.armRx = lerp(p.armRx, ax, k);
+      p.armRz = lerp(p.armRz, az, k);
+      p.foreRx = lerp(p.foreRx, -g, k);
+    } else {
+      p.armLx = lerp(p.armLx, ax, k);
+      p.armLz = lerp(p.armLz, -az, k);
+      p.foreLx = lerp(p.foreLx, -g, k);
+    }
+  }
+
+  /** turn the head (within reason) to look at a world point; mixed in by k */
+  private lookTo(p: Pose, w: readonly number[], k: number) {
+    const s = this.sim;
+    const ws = this.ws;
+    const cy = Math.cos(s.yaw);
+    const sy = Math.sin(s.yaw);
+    const dx = w[0] - s.x;
+    const dz = w[2] - s.z;
+    const x = (dx * cy - dz * sy) / ws;
+    const y = (w[1] - s.y) / ws;
+    const z = (dx * sy + dz * cy) / ws;
+    // the eyes: on the torso's axis above the hips, tipped forward by the lean
+    const ey = RIG_HIP + p.bob + Math.cos(p.lean) * EYE_UP;
+    const ez = Math.sin(p.lean) * EYE_UP;
+    const yaw = Math.atan2(x, z - ez) - p.twist;
+    const pitch = Math.atan2(ey - y, Math.hypot(x, z - ez)) - p.lean;
+    p.headY = lerp(p.headY, Math.max(-0.9, Math.min(0.9, yaw)), k);
+    p.headX = lerp(p.headX, Math.max(-0.55, Math.min(0.75, pitch)), k);
   }
 
   /** the seat is free again; after the toilet one goes and washes their hands, anything else goes home */
@@ -2971,10 +3070,6 @@ export class Actor {
     const t = this.t;
     const d = a.dur;
     const c = this.clock;
-    if (a.kind === 'play') {
-      this.playPose(a, pose, ctx, t, d, c);
-      return;
-    }
     this.held = 'none';
     this.pour = 0;
     this.tapFlow = 0;
@@ -3285,6 +3380,13 @@ export class Actor {
     if (thrill > 0.7) p.mouth = 'o';
     const s = this.sim;
     const couch = ctx.layout.couch;
+    if (couch) {
+      // the console's controllers leave the cabinet, the game on the TV runs
+      const g = gameLive(s.roomId, couch.console, ctx.layout.props[couch.console].kind, couch.seats.length);
+      if (joinGame(g, Math.max(0, couch.seats.indexOf(a.spot ?? -1)), s.key, into)) stepGame(g, this.stepDt, (n) => sfx(n, s.roomId));
+      p.roll += -g.steer * 0.06 * into;
+      this.focus = into;
+    }
     const mate = !!couch && couch.seats.some((j) => {
       const k = spotOwners.get(`${s.roomId}#${j}`);
       return !!k && k !== s.key && !!sims.get(k)?.gaming;

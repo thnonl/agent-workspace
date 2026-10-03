@@ -37,6 +37,29 @@ export interface HeldItems {
   phoneScreen: THREE.Mesh;
   /** a game controller held in both hands (the console in front of the sofa, the TV console) */
   pad: THREE.Group;
+  /** a ping-pong paddle (blade up, facing forward) */
+  paddle: THREE.Group;
+  /** a plush toy won at the claw machine; `plushBody` takes the colour of the toy (PLUSH_MATS) */
+  plush: THREE.Group;
+  plushBody: THREE.Mesh[];
+  /** the VR headset (a child of the head) and the two controllers (one per hand) */
+  vrHead: THREE.Group;
+  vrR: THREE.Group;
+  vrL: THREE.Group;
+}
+
+/** the colours of the claw machine's plush toys (the same order as in the model) */
+export const PLUSH_COLORS = ['#ff8fb1', '#ffd166', '#7cc9ff', '#9be89b', '#c9a0ff', '#ff9f68'];
+export const PLUSH_MATS = PLUSH_COLORS.map((c) => M(c, { rough: 0.9 }));
+
+/** a VR hand controller: a grip with a ring around the top */
+function vrController(): THREE.Group {
+  const g = group();
+  g.add(mesh(G.capsule(0.022, 0.07, 4, 8), M('#20222e', { rough: 0.45 }), 0, 0, 0.02, { r: [Math.PI / 2 - 0.4, 0, 0], cast: false }));
+  g.add(mesh(G.torus(0.04, 0.009, Math.PI * 2, 6, 16), M('#f4f6fb', { rough: 0.4 }), 0, 0.04, 0.05, { r: [0.5, 0, 0], cast: false }));
+  g.add(mesh(G.sphere(0.008, 6, 5), MB('#46c2ff'), 0, 0.03, 0.06, { cast: false }));
+  g.visible = false;
+  return g;
 }
 
 /** the screen glow flickers between these shared materials (no per-frame allocation) */
@@ -196,5 +219,39 @@ export function buildHeldItems(accent: string): HeldItems {
   padTilt.quaternion.copy(Q_PHONE_CHEST);
   pad.add(padTilt);
   pad.visible = false;
-  return { cup, book, bookLeft, bookRight, can, bowl, spout, stream, drops, steam, fx, parcel, pot, cig, smoke, phone, phoneTilt, phoneScreen, pad };
+
+  // ping-pong paddle: a round red blade standing up in front of the hand, the wooden handle down into the fist
+  const paddle = group();
+  paddle.add(mesh(G.cyl(0.075, 0.075, 0.012, 18), M('#e63946', { rough: 0.6 }), 0, 0.075, 0, { r: [Math.PI / 2, 0, 0], cast: false }));
+  paddle.add(mesh(G.cyl(0.072, 0.072, 0.013, 18), M('#1b1d2a', { rough: 0.6 }), 0, 0.075, -0.001, { r: [Math.PI / 2, 0, 0], cast: false }));
+  paddle.add(mesh(G.rbox(0.03, 0.1, 0.022, 0.006), M('#c8a274', { rough: 0.7 }), 0, -0.01, 0, { cast: false }));
+  paddle.visible = false;
+
+  // plush toy: a round body with ears, a face, little arms
+  const plush = group();
+  const plushBody: THREE.Mesh[] = [];
+  const pb = mesh(G.sphere(0.085, 14, 10), PLUSH_MATS[0], 0, 0, 0, { s: [1, 0.95, 0.9], cast: false });
+  const ph = mesh(G.sphere(0.065, 12, 10), PLUSH_MATS[0], 0, 0.11, 0.01, { cast: false });
+  plushBody.push(pb, ph);
+  plush.add(pb, ph);
+  for (const sx of [-1, 1]) {
+    const ear = mesh(G.sphere(0.028, 8, 6), PLUSH_MATS[0], sx * 0.045, 0.165, 0.0, { cast: false });
+    const arm = mesh(G.sphere(0.03, 8, 6), PLUSH_MATS[0], sx * 0.08, 0.02, 0.04, { s: [0.8, 1.2, 0.8], cast: false });
+    plushBody.push(ear, arm);
+    plush.add(ear, arm);
+    plush.add(mesh(G.sphere(0.011, 6, 5), MB('#1b1d2a'), sx * 0.024, 0.12, 0.068, { cast: false }));
+  }
+  plush.add(mesh(G.sphere(0.012, 6, 5), MB('#ff6f91'), 0, 0.1, 0.073, { cast: false }));
+  plush.visible = false;
+
+  // VR headset: a white visor over the eyes, a dark face plate, the strap round the head (head frame: centre of the head, face towards +z)
+  const vrHead = group();
+  vrHead.add(mesh(G.rbox(0.62, 0.27, 0.2, 0.07), M('#f4f6fb', { rough: 0.35 }), 0, -0.02, 0.4, { cast: false }));
+  vrHead.add(mesh(G.rbox(0.56, 0.2, 0.02, 0.05), M('#20222e', { rough: 0.3 }), 0, -0.02, 0.505, { cast: false }));
+  vrHead.add(mesh(G.plane(0.18, 0.03), MB('#46c2ff'), 0.12, 0.04, 0.517, { cast: false }));
+  vrHead.add(mesh(G.torus(0.45, 0.035, Math.PI * 2, 6, 28), M('#20222e', { rough: 0.5 }), 0, 0.0, 0.0, { r: [Math.PI / 2 + 0.12, 0, 0], s: [1, 1.04, 1], cast: false }));
+  vrHead.visible = false;
+  const vrR = vrController();
+  const vrL = vrController();
+  return { cup, book, bookLeft, bookRight, can, bowl, spout, stream, drops, steam, fx, parcel, pot, cig, smoke, phone, phoneTilt, phoneScreen, pad, paddle, plush, plushBody, vrHead, vrR, vrL };
 }

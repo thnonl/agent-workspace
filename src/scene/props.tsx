@@ -340,7 +340,8 @@ function LoungeSet({ p, theme }: { p: Prop; theme: RoomTheme }) {
   );
 }
 
-export function PropView({ p, theme, roomId }: { p: Prop; theme: RoomTheme; roomId?: string }) {
+/** `idx`: the prop's index in the layout (a game machine's moving parts follow the game played there) */
+export function PropView({ p, theme, roomId, idx }: { p: Prop; theme: RoomTheme; roomId?: string; idx?: number }) {
   let body: React.ReactNode;
   switch (p.kind) {
     case 'bookshelf': body = <Bookshelf p={p} theme={theme} />; break;
@@ -374,7 +375,7 @@ export function PropView({ p, theme, roomId }: { p: Prop; theme: RoomTheme; room
     case 'punchDummy': body = <PunchDummy p={p} theme={theme} roomId={roomId} />; break;
     case 'toilet': body = <Toilet p={p} theme={theme} />; break;
     case 'dumbbells': body = <Dumbbells p={p} theme={theme} roomId={roomId} />; break;
-    default: body = GAMES[p.kind] ? <GameMachine p={p} theme={theme} /> : null;
+    default: body = GAMES[p.kind] ? <GameMachine p={p} theme={theme} roomId={roomId} idx={idx} /> : null;
   }
   return (
     <group position={[p.x, 0, p.z]} rotation={[0, p.rot, 0]}>

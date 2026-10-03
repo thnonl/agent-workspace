@@ -14,7 +14,7 @@ import { burst } from '../sim/celebrate';
 import { walkMatrices } from './matrixWalk';
 import { buildLaptop } from './laptop';
 import { disposeOwned } from './bake';
-import { buildHeldItems, PHONE_GLOWS } from './heldItems';
+import { buildHeldItems, PHONE_GLOWS, PLUSH_MATS } from './heldItems';
 import { buildDumbbells } from './dumbbells';
 import { G } from './kit';
 import { DESK_TOP } from './furniture';
@@ -158,7 +158,9 @@ export function PersonActor({ personKey, roomId, layout, frozen: frozenProp = fa
   const scale = RIG_SCALE * app.scale;
   const items = useMemo(() => {
     const it = buildHeldItems(layout.theme.accent);
-    rig.handHold.add(it.cup, it.book, it.can, it.bowl, it.parcel, it.pot, it.cig, it.phone, it.pad);
+    rig.handHold.add(it.cup, it.book, it.can, it.bowl, it.parcel, it.pot, it.cig, it.phone, it.pad, it.paddle, it.plush, it.vrR);
+    rig.handHoldL.add(it.vrL);
+    rig.head.add(it.vrHead);
     return it;
   }, [rig, layout.theme]);
   const bells = useMemo(() => {
@@ -372,7 +374,8 @@ export function PersonActor({ personKey, roomId, layout, frozen: frozenProp = fa
       let d = (toCam - sim.yaw) % (Math.PI * 2);
       if (d > Math.PI) d -= Math.PI * 2;
       if (d < -Math.PI) d += Math.PI * 2;
-      glance = Math.max(-0.7, Math.min(0.7, d * 0.55));
+      // (not while the eyes are on a game)
+      glance = Math.max(-0.7, Math.min(0.7, d * 0.55)) * (1 - 0.9 * actor.focus);
     }
     // a bag carried by the hand: that arm hardly swings (the hand holds the handle); the bag follows the hand, see below
     const handBag = !!rig.bagCarry.byHand;
@@ -550,6 +553,13 @@ export function PersonActor({ personKey, roomId, layout, frozen: frozenProp = fa
     else if (held === 'pot') items.pot.scale.setScalar(actor.heldScale);
     items.cig.visible = held === 'cig';
     items.pad.visible = held === 'pad';
+    items.paddle.visible = held === 'paddle';
+    items.plush.visible = held === 'plush';
+    if (held === 'plush') {
+      const pm = PLUSH_MATS[actor.plush % PLUSH_MATS.length];
+      for (const m of items.plushBody) m.material = pm;
+    }
+    items.vrHead.visible = items.vrR.visible = items.vrL.visible = held === 'vr';
     const phoneOn = held === 'phone';
     items.phone.visible = phoneOn;
     if (phoneOn) {
@@ -558,15 +568,15 @@ export function PersonActor({ personKey, roomId, layout, frozen: frozenProp = fa
     }
     // dumbbells sit in both hands as they are (no upright correction needed)
     bells.right.visible = bells.left.visible = held === 'dumbbell';
-    if (held !== 'none' && held !== 'dumbbell') {
+    if (held !== 'none' && held !== 'dumbbell' && held !== 'vr') {
       rig.root.updateMatrixWorld(true);
       rig.handHold.getWorldQuaternion(qHand);
       rig.root.getWorldQuaternion(qRoot);
       qRel.copy(qHand).invert().multiply(qRoot);
       qTilt.setFromAxisAngle(tiltAxis, actor.heldTilt);
-      const item = phoneOn ? items.phone : held === 'pad' ? items.pad : held === 'parcel' ? items.parcel : held === 'pot' ? items.pot : held === 'cig' ? items.cig : held === 'cup' ? items.cup : held === 'book' ? items.book : held === 'bowl' ? items.bowl : items.can;
+      const item = phoneOn ? items.phone : held === 'pad' ? items.pad : held === 'paddle' ? items.paddle : held === 'plush' ? items.plush : held === 'parcel' ? items.parcel : held === 'pot' ? items.pot : held === 'cig' ? items.cig : held === 'cup' ? items.cup : held === 'book' ? items.book : held === 'bowl' ? items.bowl : items.can;
       // (the controller sits between the two hands: to the left of the right one)
-      const off = held === 'phone' ? vTmp.set(-0.03, 0.05, 0.05) : held === 'pad' ? vTmp.set(-0.09, 0.03, 0.05) : held === 'parcel' ? vTmp.set(-0.2, -0.02, 0.14) : held === 'pot' ? vTmp.set(-0.2, -0.02, 0.14) : held === 'cig' ? vTmp.set(0, 0.03, 0.02) : held === 'cup' ? vTmp.set(0, 0.07, 0.03) : held === 'book' ? vTmp.set(-0.13, 0.03, 0.06) : held === 'bowl' ? vTmp.set(0, 0.05, 0.06) : vTmp.set(0, -0.03, 0.1);
+      const off = held === 'phone' ? vTmp.set(-0.03, 0.05, 0.05) : held === 'pad' ? vTmp.set(-0.09, 0.03, 0.05) : held === 'paddle' ? vTmp.set(0, 0.03, 0.02) : held === 'plush' ? vTmp.set(-0.1, 0.02, 0.08) : held === 'parcel' ? vTmp.set(-0.2, -0.02, 0.14) : held === 'pot' ? vTmp.set(-0.2, -0.02, 0.14) : held === 'cig' ? vTmp.set(0, 0.03, 0.02) : held === 'cup' ? vTmp.set(0, 0.07, 0.03) : held === 'book' ? vTmp.set(-0.13, 0.03, 0.06) : held === 'bowl' ? vTmp.set(0, 0.05, 0.06) : vTmp.set(0, -0.03, 0.1);
       item.position.copy(off).applyQuaternion(qRel);
       item.quaternion.copy(qRel).multiply(qTilt);
       if (held === 'book') {

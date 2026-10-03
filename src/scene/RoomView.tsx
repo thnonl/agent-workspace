@@ -184,7 +184,7 @@ const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle, season,
       ) : null}
       {stage >= STAGE.props ? (
         <StaticBake ready={stage >= STAGE.props + PROP_STEPS - 1}>
-          {layout.props.map((p, i) => (i < propCount && !layout.movable.includes(i) && layout.lateRank[i] < 0 ? <PropItem key={i} p={p} theme={theme} roomId={roomId} /> : null))}
+          {layout.props.map((p, i) => (i < propCount && !layout.movable.includes(i) && layout.lateRank[i] < 0 ? <PropItem key={i} p={p} theme={theme} roomId={roomId} idx={i} /> : null))}
           {layout.restroom && stage >= STAGE.props + PROP_STEPS - 1 ? <RestroomShell rr={layout.restroom} layout={layout} /> : null}
         </StaticBake>
       ) : null}
