@@ -115,7 +115,7 @@ export function TopBar() {
   return (
     <header className="topbar">
       <div className="brand">
-        <span className="brand-logo" aria-hidden="true"><Icon name="building" size={22} /></span>
+        <img className="brand-logo" src={`${import.meta.env.BASE_URL}favicon.svg`} alt="" aria-hidden="true" />
         <div>
           <h1>Agent Workspace</h1>
           <small>watch your agents at work</small>
