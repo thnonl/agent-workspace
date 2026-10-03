@@ -150,6 +150,24 @@
   .topbar .btn, .topbar .btn-icon { flex: none; }
 }
 .pill-dot, .pill-caret { flex: none; }
+/* a phone: the "Rooms" button under the strip already shows and folds the session list, so the live pill goes;
+   it is still there while the page is connecting or offline, the one thing nothing else tells */
+@media (max-width: 560px) {
+  .topbar .pill-live { display: none; }
+  /* (the buttons gather on the right instead of spreading over the row; a connecting / offline pill still fills the rest) */
+  .hud-top .topbar-right { justify-content: flex-end; gap: 5px; }
+  /* the room the pill leaves takes back music and photo (and the screensaver on a wider phone); they give it up again for a
+     connecting / offline pill. (Level and names are in Settings, the floating window does not exist on phones) */
+  .topbar .btn-music, .topbar .btn-photo { display: grid; }
+  .topbar-right:has(> .pill:not(.pill-live)) :is(.btn-music, .btn-photo, .btn-cinema) { display: none; }
+}
+@media (min-width: 400px) and (max-width: 560px) {
+  .topbar .btn-cinema { display: grid; }
+}
+@media (min-width: 480px) and (max-width: 560px) {
+  .topbar .btn-names { display: inline-flex; }
+  .topbar-right:has(> .pill:not(.pill-live)) .btn-names { display: none; }
+}
 
 /* a phone held sideways (or any window that is very short): the header and the bar share one row, the session strip shrinks.
    (only when the window is also wide: a phone in split screen is short AND narrow, and the two did not fit side by side –

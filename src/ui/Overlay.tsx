@@ -171,8 +171,8 @@ export function TopBar() {
         </button>
         <LevelChip />
         <button className={`btn btn-icon btn-extra btn-music${musicOn ? ' btn-on' : ''}`} onClick={() => setMusicOn(!musicOn)} aria-pressed={musicOn} aria-label={musicOn ? 'Lo-fi music on' : 'Lo-fi music off'} title={musicOn ? 'Lo-fi music is on – click to stop (K)' : 'Play lo-fi music (K)'}><Icon name="music" size={18} /></button>
-        <button className="btn btn-icon btn-extra" onClick={() => takePhoto()} aria-label="Take a photo" title="Save a photo of the office (P)"><Icon name="camera" size={18} /></button>
-        <button className="btn btn-icon btn-extra" onClick={() => setCinema(true)} aria-label="Screensaver mode" title="Screensaver: hide the buttons and tour the rooms (C)"><Icon name="maximize" size={18} /></button>
+        <button className="btn btn-icon btn-extra btn-photo" onClick={() => takePhoto()} aria-label="Take a photo" title="Save a photo of the office (P)"><Icon name="camera" size={18} /></button>
+        <button className="btn btn-icon btn-extra btn-cinema" onClick={() => setCinema(true)} aria-label="Screensaver mode" title="Screensaver: hide the buttons and tour the rooms (C)"><Icon name="maximize" size={18} /></button>
         {pipSupported() ? (
           <button className="btn btn-icon btn-extra" onClick={togglePip} aria-label="Floating window" title="Show the office in a small floating window that stays on top (I)"><Icon name="pip" size={18} /></button>
         ) : null}
