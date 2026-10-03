@@ -288,6 +288,32 @@ export function createMonitor({
     out(s, { type: 'agent_done', sessionId: s.id, agentId: id, summary: clip(summary, 260), failed });
   };
 
+  /** The agent / background task with this task id: the running one if there is one, else the latest. */
+  const taskOf = (s, taskId) => {
+    let found = null;
+    for (const a of s.agents.values()) if (a.asyncId === taskId && (!found || a.status === 'running' || found.status !== 'running')) found = a;
+    return found;
+  };
+
+  /**
+   * SendMessage woke up a background agent that had stopped: it works again, as a task of its own (keyed by the SendMessage call,
+   * which its next notice names), and its transcript – the same file it wrote before – now speaks for that task.
+   */
+  const resumeAgent = (s, callId, agentId) => {
+    const before = taskOf(s, agentId);
+    if (before?.status === 'running') return; // the message reached an agent that is still at work
+    // (its launch may lie before the part of the transcript that was read: its meta file still names it)
+    const meta = before ? null : parseJson(safeRead(path.join(s.file.replace(/\.jsonl$/, ''), 'subagents', `agent-${agentId}.meta.json`)));
+    const ag = spawnAgent(s, callId, before?.label || meta?.description || meta?.agentType || 'Sub agent', before?.agentType || meta?.agentType || '');
+    ag.asyncId = agentId;
+    for (const sf of s.subFiles.values()) {
+      if (sf.agentFileId !== agentId) continue;
+      sf.key = callId;
+      sf.staleAt = undefined;
+      ag.followed = true;
+    }
+  };
+
   // ------------------------------------------------------------ line parsing
   const handleNotifications = (s, text) => {
     const re = /<task-notification>([\s\S]*?)<\/task-notification>/g;
@@ -300,11 +326,13 @@ export function createMonitor({
       const result = (body.match(/<result>([\s\S]*?)<\/result>/) || [])[1] || (body.match(/<summary>([\s\S]*?)<\/summary>/) || [])[1] || '';
       // a notice can name the agent by its tool-use id, by its task id (the id of the background agent) or only inside the text
       // ("... was restarted before background work reported back: "<title>" (task <id>)"): all three end the right agent
-      const id = (body.match(/<tool-use-id>([\s\S]*?)<\/tool-use-id>/) || [])[1]?.trim()
-        || (body.match(/<task-id>([\s\S]*?)<\/task-id>/) || [])[1]?.trim()
-        || (result.match(/\(task ([0-9a-z]{8,})\)/) || [])[1];
-      if (!id) continue;
-      const ag = s.agents.has(id) ? s.agents.get(id) : [...s.agents.values()].find((a) => a.asyncId === id);
+      // (the tool-use id of an agent woken up again by SendMessage is that of the SendMessage call: the task id still names the agent)
+      const ids = [
+        (body.match(/<tool-use-id>([\s\S]*?)<\/tool-use-id>/) || [])[1]?.trim(),
+        (body.match(/<task-id>([\s\S]*?)<\/task-id>/) || [])[1]?.trim(),
+        (result.match(/\(task ([0-9a-z]{8,})\)/) || [])[1],
+      ].filter(Boolean);
+      const ag = ids.map((id) => s.agents.get(id)).find(Boolean) || ids.map((id) => taskOf(s, id)).find(Boolean);
       // a Monitor reports each line it caught ("Monitor event", no status) and goes on watching – until it expires
       const event = (body.match(/<event>([\s\S]*?)<\/event>/) || [])[1]?.trim() || '';
       if (ag?.background && !/<status>/.test(body) && !/Monitor expired/.test(event)) {
@@ -336,10 +364,14 @@ export function createMonitor({
       const label = s.shellLabels.get(id);
       s.shellLabels.delete(id);
       if (block.is_error === true) return;
+      if (typeof tur?.resumedAgentId === 'string' && tur.resumedAgentId) {
+        resumeAgent(s, id, tur.resumedAgentId);
+        return;
+      }
       // stopping a background task (TaskStop, older KillShell) brings no notice of its own
       const stopped = STOP_TOOLS.has(s.toolNames.get(id) || '') ? String(tur?.task_id || tur?.shell_id || '') : '';
       if (stopped) {
-        const victim = [...s.agents.values()].find((a) => a.asyncId === stopped || a.id === stopped);
+        const victim = s.agents.get(stopped) || taskOf(s, stopped);
         if (victim) finishAgent(s, victim.id, 'Stopped before it finished', true);
         return;
       }
@@ -559,10 +591,11 @@ export function createMonitor({
         } catch {
           /* meta may not be written yet */
         }
-        if (meta?.toolUseId) sf.key = meta.toolUseId;
-        else {
-          for (const ag of s.agents.values()) if (ag.asyncId && ag.asyncId === sf.agentFileId) sf.key = ag.id;
-        }
+        // (an agent woken up again by SendMessage writes on in its old file: the file speaks for the running task, not for the first one)
+        const known = taskOf(s, sf.agentFileId);
+        if (known?.status === 'running') sf.key = known.id;
+        else if (meta?.toolUseId) sf.key = meta.toolUseId;
+        else if (known) sf.key = known.id;
         if (sf.key && !s.agents.has(sf.key)) {
           // agent started before we looked at the parent transcript; only adopt it if still fresh
           let fresh = false;

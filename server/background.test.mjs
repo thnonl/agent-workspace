@@ -20,7 +20,7 @@ function setup(sid) {
   monitor.on((e) => events.push(e));
   const write = (obj) => fs.appendFileSync(file, `${JSON.stringify(obj)}\n`);
   const base = { cwd: 'E:\\demo', sessionId: sid, isSidechain: false };
-  return { sessionsDir, events, monitor, write, base };
+  return { sessionsDir, project, events, monitor, write, base };
 }
 
 const assistant = (base, content, stop = null) => ({ ...base, type: 'assistant', message: { role: 'assistant', content, stop_reason: stop } });
@@ -118,4 +118,41 @@ test('TaskStop ends the background command it stops (no notification follows)', 
   const done = events.find((e) => e.type === 'agent_done' && e.agentId === 'toolu_slow');
   assert.ok(done?.failed, 'stopped');
   assert.ok(!events.some((e) => e.type === 'agent_start' && e.agentId === 'toolu_stop'), 'TaskStop itself is no background task');
+});
+
+test('an agent woken up again by SendMessage works again until its next notification', async (t) => {
+  const sid = 'aaaaaaaa-2222-3333-4444-555555555555';
+  const { events, monitor, write, base, project } = setup(sid);
+  t.after(() => monitor.stop());
+  monitor.start();
+  write(user(base, 'Build the stamp tool'));
+  await sleep(200);
+  write(assistant(base, [{ type: 'tool_use', id: 'toolu_launch', name: 'Agent', input: { description: 'Stamp tool', subagent_type: 'general-purpose', run_in_background: true } }], 'tool_use'));
+  write(user(base, [{ type: 'tool_result', tool_use_id: 'toolu_launch', content: [{ type: 'text', text: 'Async agent launched successfully.' }] }], { toolUseResult: { isAsync: true, status: 'async_launched', agentId: 'astamp1' } }));
+  const subDir = path.join(project, sid, 'subagents');
+  fs.mkdirSync(subDir, { recursive: true });
+  fs.writeFileSync(path.join(subDir, 'agent-astamp1.meta.json'), JSON.stringify({ toolUseId: 'toolu_launch', description: 'Stamp tool' }));
+  const subFile = path.join(subDir, 'agent-astamp1.jsonl');
+  const sub = (o) => fs.appendFileSync(subFile, `${JSON.stringify(o)}\n`);
+  sub(assistant({ ...base, isSidechain: true }, [{ type: 'text', text: 'First proofs ready.' }], 'end_turn'));
+  write(assistant(base, [{ type: 'text', text: 'Waiting for the agent.' }], 'end_turn'));
+  await sleep(200);
+  write(notice(base, '<task-id>astamp1</task-id>\n<tool-use-id>toolu_launch</tool-use-id>\n<status>completed</status>\n<summary>Agent "Stamp tool" finished</summary>'));
+  write(assistant(base, [{ type: 'tool_use', id: 'toolu_send', name: 'SendMessage', input: { to: 'astamp1', message: 'Go on, all 57 files' } }], 'tool_use'));
+  write(user(base, [{ type: 'tool_result', tool_use_id: 'toolu_send', content: [{ type: 'text', text: '{"success":true,"message":"Resuming agent astamp1"}' }] }], { toolUseResult: { success: true, message: 'Resuming agent astamp1', resumedAgentId: 'astamp1' } }));
+  write(assistant(base, [{ type: 'text', text: 'Told it to go on.' }], 'end_turn'));
+  await sleep(300);
+  assert.ok(events.some((e) => e.type === 'agent_done' && e.agentId === 'toolu_launch'), 'the first run ended');
+  const again = events.find((e) => e.type === 'agent_start' && e.agentId === 'toolu_send');
+  assert.ok(again, 'the agent works again');
+  assert.equal(again.label, 'Stamp tool');
+  // its old file goes on, now for the new task
+  sub(assistant({ ...base, isSidechain: true }, [{ type: 'tool_use', id: 'tr1', name: 'Read', input: { file_path: 'C:\menu.pdf' } }], 'tool_use'));
+  await sleep(300);
+  assert.ok(events.some((e) => e.type === 'agent_say' && e.agentId === 'toolu_send' && e.kind === 'tool'), 'its transcript speaks for the new task');
+  assert.ok(!events.some((e) => e.type === 'agent_done' && e.agentId === 'toolu_send'), 'still running');
+  write(notice(base, '<task-id>astamp1</task-id>\n<tool-use-id>toolu_send</tool-use-id>\n<status>completed</status>\n<summary>Agent "Stamp tool" finished</summary>'));
+  await sleep(300);
+  monitor.stop();
+  assert.ok(events.some((e) => e.type === 'agent_done' && e.agentId === 'toolu_send'), 'the next notification ends it');
 });
