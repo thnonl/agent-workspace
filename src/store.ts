@@ -267,6 +267,12 @@ function isStale(s: State, id: string, now: number): boolean {
  */
 /** the session list is on screen: switched on and not folded away for the person being looked at */
 export const switcherShown = (s: Pick<State, 'showSwitcher' | 'switcherAuto'>) => s.showSwitcher && !s.switcherAuto;
+/**
+ * The monitor is out of reach (pill "Offline"): a live room looks closed for the night – nobody in, no cats, lights off – as if the
+ * work were done and everyone had gone home. Only the scene: the records stay, and the sync after reconnecting brings the room back
+ * to its real state. (Demo rooms do not need the monitor and go on.)
+ */
+export const offlineRoom = (s: Pick<State, 'connection' | 'rooms'>, roomId: string) => s.connection === 'offline' && !!s.rooms[roomId] && !s.rooms[roomId].demo;
 
 export function orderedRooms(s: Pick<State, 'listOrder'>): string[] {
   return [...s.listOrder];

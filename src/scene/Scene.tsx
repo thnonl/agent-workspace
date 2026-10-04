@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { Canvas, addAfterEffect, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
-import { useStore } from '../store';
+import { offlineRoom, useStore } from '../store';
 import { getLayout } from '../world/layout';
 import { anchors, cats, catsInRoom, simsInRoom, view } from '../sim/registry';
 import { afterRender, frame, GLIDE_MAX_MS, PRELOAD_ROOMS, PRE_ROLL_MS } from '../sim/frame';
@@ -700,7 +700,7 @@ function syncRoomLit(st: ReturnType<typeof useStore.getState>, dt: number) {
   }
   const k = 1 - Math.exp(-6 * dt);
   for (const id of st.visibleOrder) {
-    const target = occupied(id, presentRooms) ? 1 : 0;
+    const target = !offlineRoom(st, id) && occupied(id, presentRooms) ? 1 : 0;
     const cur = roomLit.get(id);
     roomLit.set(id, cur === undefined ? target : Math.abs(target - cur) < 0.002 ? target : cur + (target - cur) * k);
   }

@@ -1,7 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useShallow } from 'zustand/react/shallow';
-import { orderedRooms, switcherShown, useStore } from '../store';
+import { offlineRoom, orderedRooms, switcherShown, useStore } from '../store';
 import { themeFor } from '../world/palettes';
 import { cats, sims } from '../sim/registry';
 import type { Phase } from '../sim/registry';
@@ -67,7 +67,8 @@ export function useRoomStatus(): Record<string, RoomStatus> {
     // (somebody who has been hired and still waits outside the door is not in the office yet; rooms that are not on screen have no door to wait at)
     for (const p of Object.values(s.people)) if (p.present && (p.inside !== false || p.sessionId !== s.activeRoomId) && p.sessionId in count) count[p.sessionId]++;
     let k = '';
-    for (const id of s.visibleOrder) k += `${id}\t${working[id] ? 1 : 0}\t${count[id]}\n`;
+    // (offline: closed for the night, like the scene, see offlineRoom)
+    for (const id of s.visibleOrder) k += offlineRoom(s, id) ? `${id}\t0\t0\n` : `${id}\t${working[id] ? 1 : 0}\t${count[id]}\n`;
     return k;
   });
   return useMemo(() => {

@@ -5,7 +5,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { frame } from '../sim/frame';
 import { host } from '../pipHost';
 import { walkMatrices } from './matrixWalk';
-import { useStore } from '../store';
+import { offlineRoom, useStore } from '../store';
 import { getLayout } from '../world/layout';
 import type { RoomLayout } from '../world/layout';
 import { G, M } from './kit';
@@ -205,6 +205,7 @@ const RoomStatic = memo(function RoomStatic({ roomId, layout, signTitle, season,
 // (the room comes first – walls, furniture, props – and the people follow one after the other, the cats last)
 const STAGE = { floor: 1, back: 2, left: 3, desks: 4, chairs: 6, director: 7, props: 8, toys: 12, movables: 13, board: 14, light: 15, people: 16, cats: 24, party: 28 } as const;
 const BUILD_STAGES = STAGE.party;
+const NOBODY: string[] = [];
 /** the most cats a room has */
 const MAX_CATS = 2;
 const BUILD_GAP_MS = 6;
@@ -321,11 +322,13 @@ export const RoomView = memo(function RoomView({ roomId, active }: { roomId: str
         .map((p) => p.key),
     ),
   );
+  // the monitor is out of reach: the office is closed for the night – nobody in, no cats, lights off (see offlineRoom in store.ts)
+  const closed = useStore((s) => offlineRoom(s, roomId));
   const layout = useMemo(() => getLayout(seed, themeIndex), [seed, themeIndex]);
   const { theme } = layout;
   // (a room has two cats at the most, and almost never more than one, see catCount in world/layout.ts)
-  const catTotal = Math.min(MAX_CATS, layout.catCount);
-  const { stage, cap } = useBuildStage(personKeys.length, catTotal, active);
+  const catTotal = closed ? 0 : Math.min(MAX_CATS, layout.catCount);
+  const { stage, cap } = useBuildStage(closed ? 0 : personKeys.length, catTotal, active);
   const built = useRef(false);
   built.current = stage >= BUILD_STAGES;
   const done = stage >= cap;
@@ -409,7 +412,7 @@ export const RoomView = memo(function RoomView({ roomId, active }: { roomId: str
 
       {/* people */}
       {/* (everybody is there, also in a room that is only loaded ahead: standing still until the room is the one on screen) */}
-      <RoomPeople roomId={roomId} layout={layout} active={active} stage={stage} personKeys={personKeys} directorKey={directorKey} />
+      <RoomPeople roomId={roomId} layout={layout} active={active} stage={stage} personKeys={closed ? NOBODY : personKeys} directorKey={closed ? null : directorKey} />
     </group>
   );
 });
