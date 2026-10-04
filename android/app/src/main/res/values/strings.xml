@@ -2,7 +2,7 @@
 <resources>
     <string name="app_name">Agent Workspace</string>
     <string name="connect_title">Connect to your office</string>
-    <string name="connect_hint">On the computer, start Agent Workspace with --host 0.0.0.0 and open Settings → Connect a phone.</string>
+    <string name="connect_hint">On the computer, start Agent Workspace with --host 0.0.0.0 and open Settings → Connect a device.</string>
     <string name="scan_qr">Scan QR code</string>
     <string name="or_manual">or enter it yourself</string>
     <string name="host_label">IP address</string>
@@ -11,11 +11,11 @@
     <string name="token_label">Token</string>
     <string name="token_hint">6 characters, e.g. BE5FG0</string>
     <string name="connect">Connect</string>
-    <string name="scan_prompt">Scan the QR code from Settings → Connect a phone</string>
+    <string name="scan_prompt">Scan the QR code from Settings → Connect a device</string>
     <string name="err_bad_qr">This QR code is not an Agent Workspace code.</string>
     <string name="err_input">Enter the IP address and a port between 1 and 65535.</string>
     <string name="err_unreachable">Cannot reach %1$s (%2$s). Is the computer on the same Wi-Fi, started with --host 0.0.0.0, and is the port open in its firewall?</string>
-    <string name="err_token">Wrong token. Check it under Settings → Connect a phone on the computer, or scan its QR code. (After many wrong tries the computer waits a minute.)</string>
+    <string name="err_token">Wrong token. Check it under Settings → Connect a device on the computer, or scan its QR code. (After many wrong tries the computer waits a minute.)</string>
     <string name="back_again">Press back again to change the server</string>
     <string name="version">App version %1$s</string>
     <string name="update_title">Update available</string>

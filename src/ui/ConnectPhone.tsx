@@ -30,7 +30,7 @@ export const appBridge = (): AppBridge | undefined => (typeof window === 'undefi
 export const onPhone = typeof navigator !== 'undefined' && /AgentWorkspaceApp|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 
 /**
- * Settings → Connect a phone: the address phones on the network can use, the access token and a QR code. The QR code
+ * Settings → Connect a device: the address phones and other computers on the network can use, the access token and a QR code. The QR code
  * opens the server's /m page, which starts the Android app (or downloads it from the latest GitHub release); the app's
  * own scanner reads the address and the token straight from it.
  */
@@ -54,12 +54,12 @@ export function ConnectPhone() {
   const link = info && address ? `http://${address}:${info.port}/m?t=${encodeURIComponent(info.token)}` : '';
   const svg = useMemo(() => (showQr && link ? renderSVG(link, { border: 2, whiteColor: '#ffffff', blackColor: '#1d1b2e' }) : ''), [showQr, link]);
 
-  if (failed) return <p className="muted">The server did not answer – connecting a phone needs <code>npm start</code> or <code>npx @thnonline/agent-workspace</code>.</p>;
+  if (failed) return <p className="muted">The server did not answer – connecting a device needs <code>npm start</code> or <code>npx @thnonline/agent-workspace</code>.</p>;
   if (!info) return <p className="muted">Looking up the address…</p>;
   if (!address)
     return (
       <p className="muted">
-        The server only listens on this computer. Start it with <code>--host 0.0.0.0</code> (for example <code>npx @thnonline/agent-workspace@latest --host 0.0.0.0</code>) so phones on the same Wi-Fi can reach it.
+        The server only listens on this computer. Start it with <code>--host 0.0.0.0</code> (for example <code>npx @thnonline/agent-workspace@latest --host 0.0.0.0</code>) so phones and other computers on the same Wi-Fi can reach it.
       </p>
     );
   return (
@@ -94,7 +94,7 @@ export function ConnectPhone() {
       </div>
       {showQr ? <div className="connect-qr" role="img" aria-label={`QR code for ${link}`} dangerouslySetInnerHTML={{ __html: svg }} /> : null}
       <p className="muted">
-        Scan the code with the phone's camera or with the Agent Workspace app. With the app installed it connects right away; without it, the phone downloads the newest app from GitHub. The phone must be on the same network, and the firewall must let port {info.port} through. Anyone with this code can watch your sessions – keep it to yourself.
+        On a phone, scan the code with the camera or with the Agent Workspace app. With the app installed it connects right away; without it, the phone downloads the newest app from GitHub. On another computer, open the address in a browser and type the token. The device must be on the same network, and the firewall must let port {info.port} through. Anyone with the token or this code can watch your sessions – keep them to yourself.
       </p>
     </>
   );

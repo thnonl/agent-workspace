@@ -114,7 +114,7 @@ agent-workspace                    # from then on, in any terminal
 | `--no-open` | Do not open the browser |
 | `-h, --help` | Show the options |
 
-The page is only reachable from your own machine unless you pass `--host` – it shows what your agents are doing, so share it deliberately. With `--host`, every other machine needs the **access token** (your own machine never does): the QR code in *Settings → Connect a phone* carries it, or open `http://<ip>:<port>/?token=<token>` once – the server keeps it in a cookie. The token is short enough to type (case does not matter; O counts as 0, I and L as 1), and an address that sends 10 wrong tokens within a minute has to wait for the rest of that minute. A request that a proxy or tunnel on your machine forwards with an `X-Forwarded-For` or `Forwarded` header counts as another machine.
+The page is only reachable from your own machine unless you pass `--host` – it shows what your agents are doing, so share it deliberately. With `--host`, every other machine needs the **access token** (your own machine never does): the QR code in *Settings → Connect a device* carries it, or open `http://<ip>:<port>` on the other machine and type the token on the page that says the office is locked (or open `http://<ip>:<port>/?token=<token>`) once – the server keeps it in a cookie. The token is short enough to type (case does not matter; O counts as 0, I and L as 1), and an address that sends 10 wrong tokens within a minute has to wait for the rest of that minute. A request that a proxy or tunnel on your machine forwards with an `X-Forwarded-For` or `Forwarded` header counts as another machine.
 
 **Updating:** keep the `@latest` in the `npx` command: without it `npx` can reuse an older copy from its cache. `npm update -g @thnonline/agent-workspace` updates a global install, `npx clear-npx-cache` helps if `npx` still starts an old version, and `npm rm -g @thnonline/agent-workspace` removes the global install. A copy inside a project's `node_modules` is used as it is.
 
@@ -138,7 +138,7 @@ The page is only reachable from your own machine unless you pass `--host` – it
 The Android app shows the office of a computer on the same network. It is a thin WebView: the page comes from your computer, so a new web version never needs a new app.
 
 1. On the computer, start the server for your network: `npx @thnonline/agent-workspace@latest --host 0.0.0.0` (allow the port, `4173`, in the firewall when asked).
-2. Open **Settings → Connect a phone**. It shows the IP, the port and the access token, and **Show QR code** draws the QR code. (On a phone this part of the settings is hidden.)
+2. Open **Settings → Connect a device**. It shows the IP, the port and the access token, and **Show QR code** draws the QR code. (On a phone this part of the settings is hidden.)
 3. Scan the code with the phone's camera:
    * **app installed** – the app opens and connects right away;
    * **no app yet** – the phone downloads the newest APK from the [latest GitHub release](https://github.com/thnonl/agent-workspace/releases/latest) (allow your browser to *install unknown apps*). Install it and scan again.

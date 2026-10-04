@@ -138,7 +138,7 @@ export function SettingsDialog() {
         </>
       ) : onPhone ? null : (
         <>
-          <h3>Connect a phone</h3>
+          <h3>Connect a device</h3>
           <ConnectPhone />
         </>
       )}

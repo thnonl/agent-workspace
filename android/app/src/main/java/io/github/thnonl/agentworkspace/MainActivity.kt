@@ -139,7 +139,7 @@ class MainActivity : ComponentActivity() {
             javaScriptEnabled = true
             domStorageEnabled = true
             mediaPlaybackRequiresUserGesture = false
-            // the web app hides its "Connect a phone" settings when it finds this
+            // the web app hides its "Connect a device" settings when it finds this
             userAgentString = "$userAgentString AgentWorkspaceApp/${BuildConfig.VERSION_NAME}"
         }
         web.addJavascriptInterface(AppBridge(), "AgentWorkspaceApp")

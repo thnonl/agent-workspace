@@ -60,7 +60,7 @@ server.on('error', (err) => {
 server.listen(port, host, () => {
   const url = `http://${host === '0.0.0.0' || host === '::' ? 'localhost' : host}:${port}`;
   console.log(`Agent Workspace → ${url}`);
-  if (!['127.0.0.1', 'localhost', '::1'].includes(host)) console.log('Phones and other machines: Settings → Connect a phone shows the QR code');
+  if (!['127.0.0.1', 'localhost', '::1'].includes(host)) console.log('Phones and other machines: Settings → Connect a device shows the token and the QR code');
   for (const [name, source] of Object.entries(monitor.sources)) if (source) console.log(`Watching ${name}`);
   console.log(`Sessions stay for ${Math.round(monitor.windowMs / 60000)} min after their last activity`);
   if (!args.includes('--no-open')) openBrowser(url);

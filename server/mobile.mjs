@@ -1,5 +1,5 @@
 // Phones on the local network: the access token, the guard in front of every request, the connect info for the
-// "Connect a phone" settings and the /m page a scanned QR code opens.
+// "Connect a device" settings and the /m page a scanned QR code opens.
 //
 // Requests from this machine (loopback) never need the token. Anything else must bring it once, as `?token=` on any
 // URL (the QR code and the Android app do that): the answer sets an HttpOnly cookie and redirects to the same URL
@@ -83,13 +83,36 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&
 const PAGE_STYLE = `body{margin:0;min-height:100vh;display:grid;place-items:center;font:16px/1.5 system-ui,sans-serif;background:#1d1b2e;color:#f4efe6}
 main{max-width:22rem;padding:1.5rem;text-align:center}h1{font-size:1.4rem;margin:.2rem 0 1rem}p{color:#c9c2d8}
 a.btn{display:block;margin:.7rem 0;padding:.85rem 1rem;border-radius:.8rem;background:#f2a65a;color:#1d1b2e;font-weight:700;text-decoration:none}
-a.alt{background:#3a3655;color:#f4efe6}small{color:#8f88a6}`;
+a.alt{background:#3a3655;color:#f4efe6}small{color:#8f88a6}
+form{display:flex;gap:.5rem;margin:1.2rem 0 .4rem}
+input{flex:1;min-width:0;padding:.75rem .9rem;border:2px solid #3a3655;border-radius:.8rem;background:#2a2740;color:#f4efe6;font:700 1.15rem/1 ui-monospace,monospace;letter-spacing:.18em;text-align:center;text-transform:uppercase}
+input:focus{outline:none;border-color:#f2a65a}
+button{padding:.75rem 1.1rem;border:0;border-radius:.8rem;background:#f2a65a;color:#1d1b2e;font:700 1rem system-ui,sans-serif;cursor:pointer}`;
 
 function page(res, status, title, body, headers = {}) {
   res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer', ...headers });
   res.end(
     `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
       `<title>${esc(title)}</title><style>${PAGE_STYLE}</style></head><body><main>${body}</main></body></html>`,
+  );
+}
+
+/**
+ * The locked page (and the wrong-token one): a box for the token, so a computer's browser can get in without a QR code.
+ * It only sends `?token=` to the same address, which the guard already checks, turns into the cookie and drops from the URL.
+ */
+function locked(res, path, heading, text, headers = {}) {
+  page(
+    res,
+    401,
+    'Agent Workspace',
+    `<h1>${heading}</h1><p>${text}</p>
+<form method="get" action="${esc(path)}">
+<input name="token" required autofocus autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Access token" placeholder="TOKEN">
+<button type="submit">Open</button>
+</form>
+<small>The token is under <b>Settings → Connect a device</b> on the computer that runs Agent Workspace. A phone can scan the QR code there instead.</small>`,
+    headers,
   );
 }
 
@@ -183,7 +206,7 @@ export function createGuard({ token, now = Date.now }) {
       const given = url.searchParams.get('t') ?? url.searchParams.get('token');
       if (!given || !same(given, token)) {
         if (!local && given) failed(ip);
-        return page(res, 401, 'Agent Workspace', '<h1>🔒 Wrong or old QR code</h1><p>Open <b>Settings → Connect a phone</b> on the computer and scan the QR code again.</p>');
+        return page(res, 401, 'Agent Workspace', '<h1>🔒 Wrong or old QR code</h1><p>Open <b>Settings → Connect a device</b> on the computer and scan the QR code again.</p>');
       }
       return landing(res, token);
     }
@@ -192,7 +215,7 @@ export function createGuard({ token, now = Date.now }) {
       if (url.searchParams.has('token')) {
         if (!same(url.searchParams.get('token'), token)) {
           failed(ip);
-          return page(res, 401, 'Agent Workspace', '<h1>🔒 Wrong token</h1><p>Check the token under <b>Settings → Connect a phone</b> on the computer, or scan its QR code.</p>');
+          return locked(res, url.pathname, '🔒 Wrong token', 'That is not the token of this office. Check it and try again.');
         }
         url.searchParams.delete('token');
         res.writeHead(302, {
@@ -213,7 +236,7 @@ export function createGuard({ token, now = Date.now }) {
           res.writeHead(401, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers });
           return res.end(JSON.stringify({ error: 'token required' }));
         }
-        return page(res, 401, 'Agent Workspace', '<h1>🔒 This office is locked</h1><p>Open <b>Settings → Connect a phone</b> on the computer that runs Agent Workspace and scan the QR code, or type its token in the app.</p>', headers);
+        return locked(res, url.pathname, '🔒 This office is locked', 'Only the computer that runs Agent Workspace gets in without a token. Type it here to open the office in this browser.', headers);
       }
     }
     if (url.pathname === '/api/connect') {

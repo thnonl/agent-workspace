@@ -46,6 +46,22 @@ test('other machines: 401 without the token, page and API alike', async () => {
   assert.equal((await run('/?token=wrong')).status, 401);
 });
 
+test('the locked page has a box for the token that sends ?token= to the same address (wrong ones get it again)', async () => {
+  for (const url of ['/', '/?token=wrong', '/some/page']) {
+    const r = await run(url);
+    assert.equal(r.status, 401, url);
+    const path = url.split('?')[0];
+    assert.match(r.body, new RegExp(`<form method="get" action="${path}">`), url);
+    assert.match(r.body, /<input name="token"/, url);
+  }
+  assert.match((await run('/')).body, /This office is locked/);
+  assert.match((await run('/?token=wrong')).body, /Wrong token/);
+  // what the form sends gets in
+  assert.equal((await run('/some/page?token=ABC123')).headers.Location, '/some/page');
+  // the address of the page goes into the form escaped
+  assert.doesNotMatch((await run('/%22%3E%3Cscript%3E')).body, /"><script>/);
+});
+
 test('?token= sets the cookie and redirects without it; cookie and bearer pass', async () => {
   const r = await run('/?token=ABC123&demo');
   assert.equal(r.status, 302);
