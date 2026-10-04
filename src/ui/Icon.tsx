@@ -67,6 +67,7 @@ const ICONS = {
   smartphone: <><rect x="6" y="2" width="12" height="20" rx="2" />{P('M11 18h2')}</>,
   qr: <><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" />{P('M14 14h3v3M21 14v.01M14 21h3M21 18v3h-1M17 17v.01')}</>,
   download: <>{P('M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4')}{P('M7 10l5 5 5-5M12 15V3')}</>,
+  copy: <><rect x="8" y="8" width="14" height="14" rx="2" />{P('M4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2')}</>,
   star: P('m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8-6.2-3.3-6.2 3.3L7 14.2 2 9.3l6.9-1z'),
 } satisfies Record<string, ReactNode>;
 

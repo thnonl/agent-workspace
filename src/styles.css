@@ -290,6 +290,40 @@ button.pill:hover { background: #fff; }
 .paper-end { margin: 18px 0 4px; text-align: center; font-size: 12px; font-weight: 800; letter-spacing: 1px; color: #b7a97e; }
 .paper-foot { gap: 12px; display: flex; justify-content: center; padding: 10px 0 16px; border-top: 1.5px dashed rgba(160, 128, 64, 0.3); }
 .paper .muted { margin: 0; }
+/* --- update sticky note ------------------------------------------------ */
+.note-backdrop { position: absolute; inset: 0; z-index: 120; display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); place-items: center; background: rgba(60, 40, 90, 0.28); backdrop-filter: blur(2px); animation: fadeIn 0.25s both; }
+.note {
+  position: relative; width: min(440px, calc(100% - 28px)); max-height: min(86vh, 640px); overflow-y: auto; padding: 26px 26px 16px; box-sizing: border-box;
+  color: #3d3420; line-height: 1.45; border-radius: 2px 2px 4px 28px / 2px 2px 4px 18px; transform: rotate(-1.2deg);
+  background: linear-gradient(180deg, #fff6a8 0%, #ffef85 60%, #fde872 100%);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6) inset, 0 22px 44px rgba(50, 30, 80, 0.4), 6px 10px 0 -4px rgba(120, 90, 20, 0.18);
+  animation: noteIn 0.45s cubic-bezier(0.3, 1.4, 0.5, 1) both;
+}
+@keyframes noteIn { from { opacity: 0; transform: translateY(-30px) rotate(4deg) scale(0.9); } }
+.note:focus { outline: none; }
+.note-pin { position: absolute; top: 8px; left: 50%; width: 16px; height: 16px; margin-left: -8px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #ff9b9b, #e04848 60%, #a82828); box-shadow: 0 3px 4px rgba(0, 0, 0, 0.3); }
+.note-close { position: absolute; top: 10px; right: 10px; width: 30px; height: 30px; border: 0; border-radius: 50%; cursor: pointer; font-size: 19px; font-weight: 900; line-height: 1; color: inherit; background: rgba(120, 90, 20, 0.1); }
+.note-close:hover { background: rgba(120, 90, 20, 0.2); }
+.note-kicker { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 900; letter-spacing: 1.1px; text-transform: uppercase; color: #a0590c; }
+.note h2 { margin: 2px 0 0; font-size: 24px; font-weight: 900; line-height: 1.15; }
+.note-sub { margin: 2px 0 12px; font-size: 13px; font-weight: 700; color: #7a6a3c; }
+.note-where { display: flex; gap: 10px; align-items: flex-start; margin: 0 0 12px; padding: 10px 12px; border-radius: 10px; border: 2px dashed #d9534f; background: rgba(255, 255, 255, 0.55); font-size: 13px; font-weight: 700; }
+.note-where .ico { flex: none; margin-top: 1px; color: #c43c38; }
+.note-where.is-host { border-color: #2f9a63; }
+.note-where.is-host .ico { color: #2f9a63; }
+.note-where b { display: block; font-size: 14.5px; font-weight: 900; }
+.note-steps { margin: 0 0 10px; padding-left: 22px; display: flex; flex-direction: column; gap: 7px; font-size: 13px; font-weight: 700; }
+.note-cmd { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.note code { font-family: 'JetBrains Mono Variable', ui-monospace, monospace; font-size: 12px; padding: 1px 5px; border-radius: 5px; background: rgba(255, 255, 255, 0.6); overflow-wrap: anywhere; }
+.note-cmd code { flex: 1; min-width: 0; padding: 6px 9px; border-radius: 7px; background: #2f2a3a; color: #fff6c8; font-size: 12.5px; }
+.note kbd { font-family: inherit; font-size: 11.5px; font-weight: 800; padding: 0 5px; border-radius: 4px; border: 1px solid rgba(120, 90, 20, 0.35); background: rgba(255, 255, 255, 0.6); }
+.note-copy { flex: none; width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 7px; cursor: pointer; color: inherit; background: rgba(120, 90, 20, 0.12); }
+.note-copy:hover { background: rgba(120, 90, 20, 0.22); }
+.note-tip { margin: 0 0 8px; font-size: 12px; font-weight: 600; color: #6a5c32; }
+.note-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 10px; border-top: 1.5px dashed rgba(120, 90, 20, 0.3); }
+.note-foot a { font-size: 12.5px; font-weight: 800; color: #8a4d0a; }
+.app .note .btn { color: #3d3420; background: rgba(255, 255, 255, 0.7); border-color: rgba(120, 90, 20, 0.3); box-shadow: none; backdrop-filter: none; }
+.btn-update { background: linear-gradient(135deg, #fff2a0, #ffd166); color: #5a4410; }
 /* --- release confirmation ------------------------------------------- */
 .confirm-backdrop { position: absolute; inset: 0; z-index: 130; display: grid; place-items: center; background: rgba(40, 24, 70, 0.4); animation: fadeIn 0.15s both; }
 .confirm-card { width: min(440px, calc(100% - 32px)); padding: 22px 26px 20px; background: #fff; color: var(--ink); border-radius: 22px; box-shadow: 0 30px 70px rgba(40, 24, 70, 0.5); animation: pop 0.28s cubic-bezier(0.3, 1.5, 0.5, 1) both; }
@@ -489,6 +523,9 @@ kbd { font-family: 'JetBrains Mono Variable', monospace; font-size: 12px; paddin
 .app.is-night .arow-bad { background: rgba(255, 107, 107, 0.2); }
 .app.is-night .room-header-stats span.on { background: rgba(61, 220, 151, 0.22); color: #9ff0c9; }
 .app.is-night .btn-on { background: linear-gradient(135deg, #6b5bd6, #a05bc8); }
+/* (the yellow update button and the sticky note keep their light look at night) */
+.app.is-night :is(.note .btn, .btn-update) { border-color: rgba(120, 90, 20, 0.3); }
+.app :is(.note .btn, .btn-update):hover, .app.is-night :is(.note .btn, .btn-update):hover { background: #fff7c0; }
 .btn-time { min-width: 86px; }
 .app.is-night .room-header-fold { background: rgba(255, 255, 255, 0.14); }
 

@@ -1,4 +1,6 @@
 import { createSettingsStore } from './settings.mjs';
+import { createUpdateCheck } from './update.mjs';
+import { isLoopback } from './mobile.mjs';
 
 const BODY_LIMIT = 2 * 1024 * 1024;
 
@@ -39,10 +41,11 @@ function sameOriginJson(req) {
 // Tiny connect-style middleware exposing the monitor over Server-Sent Events.
 // The monitor only runs while somebody listens: the first stream starts it, and it stops `idleStopMs` after the last
 // stream closed (a page reload or an EventSource reconnect must not cost a cold start).
-export function createApi(monitor, { idleStopMs = 30_000, settings } = {}) {
+export function createApi(monitor, { idleStopMs = 30_000, settings, update } = {}) {
   // opened on first use: a server nobody asks for settings never creates the database file
   let store = settings;
   const settingsStore = () => (store ??= createSettingsStore());
+  const checkUpdate = update ?? createUpdateCheck();
   // one subscription for all clients: each event is stringified once and the same frame goes to every stream
   const clients = new Set();
   let off = null;
@@ -95,6 +98,13 @@ export function createApi(monitor, { idleStopMs = 30_000, settings } = {}) {
       // (an id is never reused: the picture behind it never changes)
       res.writeHead(200, { 'Content-Type': img.mime, 'Content-Length': img.data.length, 'Cache-Control': 'private, max-age=86400, immutable', 'X-Content-Type-Options': 'nosniff' });
       res.end(img.data);
+      return;
+    }
+    if (url.pathname === '/api/version') {
+      // (`local`: the page runs on the host itself – the update steps must be typed there, not on a phone or another computer)
+      checkUpdate()
+        .then((info) => json(res, 200, { ...info, local: isLoopback(req) }))
+        .catch((err) => json(res, 500, { error: err.message }));
       return;
     }
     if (url.pathname === '/api/health') {

@@ -16,6 +16,7 @@ import { contextShare } from '../context';
 import { LevelChip } from './ProgressDialog';
 import { Dialog } from './Dialog';
 import { onPhone } from './ConnectPhone';
+import { UpdateButton } from './UpdateNote';
 import { Icon, type IconName } from './Icon';
 import { PROVIDER_NAME, ProviderLogo, watchedSources } from './ProviderLogo';
 
@@ -178,6 +179,7 @@ export function TopBar() {
           <button className="btn btn-icon btn-extra" onClick={togglePip} aria-label="Floating window" title="Show the office in a small floating window that stays on top (I)"><Icon name="pip" size={18} /></button>
         ) : null}
         <button className="btn btn-icon" onClick={resetView} aria-label="Reset camera" title="Reset camera (R)"><Icon name="crosshair" size={18} /></button>
+        <UpdateButton />
         <button className="btn btn-icon" onClick={() => setShowSettings(true)} aria-label="Settings" title="Settings: graphics, weather, decorations, sound"><Icon name="settings" size={18} /></button>
         <button className="btn btn-icon" onClick={() => setHelp(true)} aria-label="Help" title="Help (?)"><Icon name="help" size={18} /></button>
         {/* phones and tablets: fold the bar and the room header away to see more of the room, and back */}

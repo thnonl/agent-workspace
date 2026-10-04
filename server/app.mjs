@@ -53,9 +53,9 @@ function encoded(file, accept) {
   return null;
 }
 
-/** `token`: what other machines must bring (see mobile.mjs); by default the saved / generated one. */
-export function createAppServer({ root, monitor, token = loadToken() }) {
-  const api = createApi(monitor);
+/** `token`: what other machines must bring (see mobile.mjs); by default the saved / generated one. `update`: see update.mjs. */
+export function createAppServer({ root, monitor, token = loadToken(), update }) {
+  const api = createApi(monitor, { update });
   const guard = createGuard({ token });
   return http.createServer((req, res) => {
     guard(req, res, () => api(req, res, () => {

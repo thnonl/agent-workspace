@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { createMonitor } from './monitor.mjs';
 import { createAppServer } from './app.mjs';
 import { loadToken } from './mobile.mjs';
+import { createUpdateCheck } from './update.mjs';
 
 const HELP = `Agent Workspace – watch your Claude Code, Codex and OpenCode sessions as a 3D office
 
@@ -52,7 +53,9 @@ const host = option(args, '--host') ?? '127.0.0.1';
 // the monitor starts with the first browser stream and stops shortly after the last one (see api.mjs)
 const monitor = createMonitor();
 
-const server = createAppServer({ root, monitor, token: loadToken({ explicit: option(args, '--token') }) });
+// (the update note repeats the options this server was started with)
+const update = createUpdateCheck({ args });
+const server = createAppServer({ root, monitor, token: loadToken({ explicit: option(args, '--token') }), update });
 server.on('error', (err) => {
   console.error(err.code === 'EADDRINUSE' ? `Port ${port} is already in use – try --port <n>.` : err.message);
   process.exit(1);

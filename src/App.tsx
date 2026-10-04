@@ -14,6 +14,8 @@ import { ProgressDialog } from './ui/ProgressDialog';
 import { RoomLoading } from './ui/RoomLoading';
 import { useProgress } from './progress';
 import { Toasts } from './ui/Toasts';
+import { UpdateNote } from './ui/UpdateNote';
+import { useUpdate } from './update';
 import { takePhoto } from './photo';
 import { exitPip, togglePip } from './pip';
 import { host } from './pipHost';
@@ -223,6 +225,7 @@ function useHotkeys() {
           s.setShowNames(false);
           s.setShowSettings(false);
           useProgress.getState().setOpen(false);
+          useUpdate.getState().setOpen(false);
         }
         return;
       }
@@ -235,6 +238,7 @@ function useHotkeys() {
         s.setCinema(false);
         s.setShowSettings(false);
         useProgress.getState().setOpen(false);
+        useUpdate.getState().setOpen(false);
         s.select(null);
         s.requestCloseSummary();
         s.setHelp(false);
@@ -283,6 +287,7 @@ const LAYERS = (
     <ReleaseConfirm />
     <SettingsDialog />
     <ProgressDialog />
+    <UpdateNote />
     <Toasts />
     <Announcer />
   </>
