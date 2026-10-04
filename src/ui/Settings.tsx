@@ -12,9 +12,9 @@ import { Icon } from './Icon';
 import { appBridge, ConnectPhone, onPhone } from './ConnectPhone';
 
 const QUALITY_TEXT: Record<Quality, string> = {
-  low: 'Plain and light: no glow, dust, rain or snow. Best for old laptops.',
-  medium: 'Soft shadows, lamp glow, dust in the sunbeams, rain and snow.',
-  high: 'Medium plus a sharper picture (up to 2× resolution) and denser rain and snow.',
+  low: 'Plain and light: no glow, dust, rain or snow, 30 fps. Best for old laptops.',
+  medium: 'Soft shadows, lamp glow, dust in the sunbeams, rain and snow, 48 fps. As sharp as the screen, smoother edges when the camera is far away.',
+  high: 'Medium plus 60 fps, even smoother edges from afar and denser rain and snow.',
 };
 
 const WEATHER_TEXT = (m: WeatherMode) => (m === 'auto' ? 'Auto' : WEATHER_LABEL[m]);

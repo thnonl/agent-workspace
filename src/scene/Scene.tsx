@@ -38,21 +38,47 @@ const EVICT_CHECK = 2_000;
 const PRELOAD_GAP = 1500;
 /** a built room that is neither the active one nor among the preloaded ones stays this long (ms) – a glance at the next room and back must not rebuild it – unless the camera sees it */
 const OVER_BUDGET_MS = 8_000;
-/** frame rate while characters move but the camera does not (the app usually sits on a second screen) */
-const BUSY_FPS = 30;
+/** frame rate of each quality level while characters move but the camera does not (the app usually sits on a second screen) */
+const BUSY_FPS = { low: 30, medium: 48, high: 60 } as const;
+/** a frame may come this much (ms) before its slot: animation frame timestamps jitter a little */
+const PACE_SLACK = 2;
 /** the render resolution is lowered when the busy scene cannot hold this frame rate */
 const LOW_FPS = 40;
 const HIGH_FPS = 57;
 const MIN_DPR = 1;
-/** busy frames (30 per second when all is well) that come in slower than this for SLOW_WINDOWS windows of SLOW_WINDOW seconds lower the resolution */
-const SLOW_FPS = 22;
+/** busy frames (BUSY_FPS per second when all is well) that come in slower than this share of it for SLOW_WINDOWS windows of SLOW_WINDOW seconds lower the resolution */
+const SLOW_SHARE = 2 / 3;
 const SLOW_WINDOW = 3;
 const SLOW_WINDOWS = 2;
-/** highest render resolution (device pixels per CSS pixel) of each quality level */
-const QUALITY_DPR = { low: 1, medium: 1.5, high: 2 } as const;
+/** busy windows in a row this close to BUSY_FPS or better raise a lowered resolution again (one step per UP_WINDOWS windows) */
+const UP_MARGIN = 3;
+const UP_WINDOWS = 4;
+/** a resolution that turned out too slow is not tried again for this long (ms): no back and forth between two levels */
+const CEIL_MS = 120_000;
+/** highest render resolution (device pixels per CSS pixel) of each quality level; the screen's own pixel ratio is the limit anyway */
+const QUALITY_DPR = { low: 1, medium: 3, high: 3 } as const;
+/**
+ * The camera target should get at least this many render pixels per metre. A camera further away (a narrow phone screen, a zoomed-out view)
+ * renders above the screen's resolution and the browser scales the picture down: thin edges seen from afar stop looking jagged. A room
+ * seen from afar covers less of the screen, so the extra pixels cost less than they seem.
+ */
+const SHARP_PPM = 110;
+/** most extra resolution (per side) and the most render pixels it may lead to, per quality level */
+const FAR_MAX = { low: 1, medium: 1.5, high: 2 } as const;
+const FAR_PIXELS = { low: 0, medium: 4.8e6, high: 10e6 } as const;
+/** the extra resolution moves in steps this big, and only once the camera has been still for FAR_STILL_MS (every change resizes the canvas) */
+const FAR_STEP = 0.25;
+const FAR_STILL_MS = 400;
+/**
+ * The render resolution FrameSync settled on (0 before the first frame). The canvas gets it as its `dpr`: R3F sets the resolution back to
+ * the canvas prop whenever the canvas re-renders, which used to undo the resolution FrameSync had picked.
+ */
+let renderDpr = 0;
 
-/** furthest the camera may be pulled back by hand (framing a room on a narrow screen may go further) */
+/** furthest the camera may be pulled back by hand (MIN_ROOM_PX may stop it earlier; framing a room on a narrow screen may go further) */
 const MAX_DISTANCE = 80;
+/** zooming out by hand stops once the room is this wide on screen (CSS px, at the default angles): never smaller than on a 360 px phone */
+const MIN_ROOM_PX = 360;
 
 /** world-space offset of the default room framing (keeps the room clear of the HUD cards); applied by computeActive while the room itself is followed */
 const viewShift = new THREE.Vector3();
@@ -61,22 +87,50 @@ let framedRoom: ReturnType<typeof getLayout> | null = null;
 const reduceMotionQuery = typeof window !== 'undefined' && window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
 const reducedMotion = () => !!reduceMotionQuery?.matches;
 
+/** The room's corners (floor + the two visible walls) relative to the camera target (o.x - 0.4, 1.0, o.z + 0.2), in the camera's right / up / back axes at the default angles. */
+function roomCorners(layout: ReturnType<typeof getLayout>) {
+  const sp = Math.sin(POLAR), cp = Math.cos(POLAR), sa = Math.sin(AZIMUTH), ca = Math.cos(AZIMUTH);
+  const n = [sa * sp, cp, ca * sp];
+  const r = [ca, 0, -sa];
+  const u = [-sa * cp, sp, -ca * cp];
+  const hw = layout.width / 2 + 0.35, hd = layout.depth / 2 + 0.35, wh = layout.wallHeight + 0.4;
+  const pts: number[][] = [];
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) pts.push([sx * hw + 0.4, -1, sz * hd - 0.2]);
+  pts.push([-hw + 0.4, wh - 1, -hd - 0.2], [hw + 0.4, wh - 1, -hd - 0.2], [-hw + 0.4, wh - 1, hd - 0.2]);
+  const rel = pts.map((q) => ({ x: q[0] * r[0] + q[1] * r[1] + q[2] * r[2], y: q[0] * u[0] + q[1] * u[1] + q[2] * u[2], d: q[0] * n[0] + q[1] * n[1] + q[2] * n[2] }));
+  return { rel, r, u };
+}
+
+/** Camera distance at which the room is `px` CSS pixels wide on a canvas `width` px wide (default angles; solved by bisection). */
+function roomDistanceForWidth(layout: ReturnType<typeof getLayout>, fovDeg: number, aspect: number, width: number, px: number): number {
+  const { rel } = roomCorners(layout);
+  const Tx = Math.tan((fovDeg * Math.PI) / 360) * aspect;
+  const wide = (dist: number) => {
+    let x0 = 1e9, x1 = -1e9;
+    for (const q of rel) {
+      const dep = dist - q.d;
+      if (dep <= 0.1) return Infinity;
+      x0 = Math.min(x0, q.x / (dep * Tx));
+      x1 = Math.max(x1, q.x / (dep * Tx));
+    }
+    return ((x1 - x0) / 2) * width;
+  };
+  let a = 6, b = 400;
+  for (let i = 0; i < 40; i++) {
+    const mid = (a + b) / 2;
+    if (wide(mid) > px) a = mid;
+    else b = mid;
+  }
+  return a;
+}
+
 /**
  * Camera distance and target shift that put the whole room (floor + the two visible walls) inside the part of the
  * screen the HUD leaves free, for the default viewing angles. Solved by bisection on the distance; the room is
  * re-centred in the free area by shifting the target along the camera's right / up axes.
  */
 function frameRoom(layout: ReturnType<typeof getLayout>, fovDeg: number, aspect: number, width: number, out: THREE.Vector3, floating = false): number {
-  const sp = Math.sin(POLAR), cp = Math.cos(POLAR), sa = Math.sin(AZIMUTH), ca = Math.cos(AZIMUTH);
-  const n = [sa * sp, cp, ca * sp];
-  const r = [ca, 0, -sa];
-  const u = [-sa * cp, sp, -ca * cp];
-  const hw = layout.width / 2 + 0.35, hd = layout.depth / 2 + 0.35, wh = layout.wallHeight + 0.4;
-  // room corners relative to the camera target (o.x - 0.4, 1.0, o.z + 0.2)
-  const pts: number[][] = [];
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) pts.push([sx * hw + 0.4, -1, sz * hd - 0.2]);
-  pts.push([-hw + 0.4, wh - 1, -hd - 0.2], [hw + 0.4, wh - 1, -hd - 0.2], [-hw + 0.4, wh - 1, hd - 0.2]);
-  const rel = pts.map((q) => ({ x: q[0] * r[0] + q[1] * r[1] + q[2] * r[2], y: q[0] * u[0] + q[1] * u[1] + q[2] * u[2], d: q[0] * n[0] + q[1] * n[1] + q[2] * n[2] }));
+  const { rel, r, u } = roomCorners(layout);
   const Ty = Math.tan((fovDeg * Math.PI) / 360), Tx = Ty * aspect;
   // (the floating window has no buttons to keep clear of: the room fills it, a little closer than "everything just fits")
   const m = floating ? 0.01 : 0.05;
@@ -181,7 +235,7 @@ const tmpSphere = new THREE.Sphere();
  * frame rate.
  */
 function FrameSync() {
-  const q = useRef({ acc: 0, frames: 0, good: 0, dpr: 0, max: 0, quality: '', bAcc: 0, bFrames: 0, slow: 0 });
+  const q = useRef({ acc: 0, frames: 0, good: 0, dpr: 0, max: 0, quality: '', bAcc: 0, bFrames: 0, slow: 0, up: 0, ceil: 0, ceilAt: -Infinity, far: 1, farOff: -Infinity, stillAt: 0, native: 0 });
   useFrame((state, dt) => {
     frame.n++;
     frame.at = performance.now();
@@ -263,16 +317,44 @@ function FrameSync() {
 
     // resolution follows the frame rate, measured only while the scene is busy
     const r = q.current;
-    if (r.quality !== st.quality) {
-      // first frame, or the user picked another quality: start again from the highest resolution that level allows
+    const apply = () => {
+      renderDpr = r.dpr * r.far;
+      state.setDpr(renderDpr);
+    };
+    const native = Math.max(1, window.devicePixelRatio || 1);
+    if (r.quality !== st.quality || r.native !== native) {
+      // first frame, another quality, or the window went to another screen / the page was zoomed: start again from the highest resolution
+      // that level allows
       r.quality = st.quality;
-      r.max = Math.min(Math.max(1, window.devicePixelRatio || 1), QUALITY_DPR[st.quality]);
+      r.native = native;
+      r.max = Math.min(native, QUALITY_DPR[st.quality]);
       r.dpr = r.max;
       r.good = 0;
       r.acc = 0;
       r.frames = 0;
-      state.setDpr(r.dpr);
+      r.up = 0;
+      r.ceilAt = -Infinity;
+      r.far = 1;
+      r.farOff = -Infinity;
+      apply();
     }
+    const lower = () => {
+      r.good = 0;
+      r.up = 0;
+      // too slow with the extra resolution of a far camera: drop that first, and leave it off for CEIL_MS
+      if (r.far > 1) {
+        r.far = 1;
+        r.farOff = tNow;
+        apply();
+        return;
+      }
+      // (remember the level that was too slow: it is not climbed back to for CEIL_MS)
+      r.ceil = r.dpr * 0.99;
+      r.ceilAt = tNow;
+      r.dpr = Math.max(Math.min(MIN_DPR, r.max), r.dpr * 0.85);
+      apply();
+    };
+    const top = () => (tNow - r.ceilAt < CEIL_MS ? Math.min(r.max, r.ceil) : r.max);
     // (only camera drags run uncapped, so only they tell what the GPU can really do)
     if (frame.cameraBusy && dt < 0.1) {
       r.acc += dt;
@@ -281,15 +363,12 @@ function FrameSync() {
         const fps = r.frames / r.acc;
         r.acc = 0;
         r.frames = 0;
-        if (fps < LOW_FPS && r.dpr > Math.min(MIN_DPR, r.max)) {
-          r.dpr = Math.max(Math.min(MIN_DPR, r.max), r.dpr * 0.85);
-          r.good = 0;
-          state.setDpr(r.dpr);
-        } else if (fps > HIGH_FPS && r.dpr < r.max) {
+        if (fps < LOW_FPS && r.dpr > Math.min(MIN_DPR, r.max)) lower();
+        else if (fps > HIGH_FPS && r.dpr < top()) {
           if (++r.good >= 3) {
-            r.dpr = Math.min(r.max, r.dpr * 1.1);
+            r.dpr = Math.min(top(), r.dpr * 1.1);
             r.good = 0;
-            state.setDpr(r.dpr);
+            apply();
           }
         } else r.good = 0;
       }
@@ -299,6 +378,7 @@ function FrameSync() {
     }
     // the same for the usual busy state (people moving, camera still): this is the frame rate people really see, and a retina screen
     // with a modest GPU cannot always hold it at full resolution. Frames of a room that is still being built do not count.
+    // A lowered resolution goes back up step by step while these frames keep their rate (a slow moment must not leave the picture soft).
     if (!frame.cameraBusy && frame.dynamic && frame.building === 0 && !st.pip && dt < 0.5) {
       r.bAcc += dt;
       r.bFrames++;
@@ -306,36 +386,84 @@ function FrameSync() {
         const fps = r.bFrames / r.bAcc;
         r.bAcc = 0;
         r.bFrames = 0;
-        if (fps < SLOW_FPS && r.dpr > Math.min(MIN_DPR, r.max)) {
+        if (fps < BUSY_FPS[st.quality] * SLOW_SHARE && r.dpr > Math.min(MIN_DPR, r.max)) {
+          r.up = 0;
           if (++r.slow >= SLOW_WINDOWS) {
             r.slow = 0;
-            r.dpr = Math.max(Math.min(MIN_DPR, r.max), r.dpr * 0.85);
-              state.setDpr(r.dpr);
+            lower();
           }
-        } else r.slow = 0;
+        } else {
+          r.slow = 0;
+          if (fps >= BUSY_FPS[st.quality] - UP_MARGIN && r.dpr < top()) {
+            if (++r.up >= UP_WINDOWS) {
+              r.up = 0;
+              r.dpr = Math.min(top(), r.dpr * 1.1);
+              apply();
+            }
+          } else r.up = 0;
+        }
       }
     } else {
       r.bAcc = 0;
       r.bFrames = 0;
       if (frame.building > 0) r.slow = 0;
     }
+    // a far camera: extra resolution, only at the full resolution of the quality level (a lowered one means the GPU has no room for it)
+    if (frame.cameraBusy) r.stillAt = tNow;
+    else if (tNow - r.stillAt >= FAR_STILL_MS) {
+      let want = 1;
+      const pc = state.camera as THREE.PerspectiveCamera;
+      if (pc.isPerspectiveCamera && r.dpr >= r.max && tNow - r.farOff >= CEIL_MS && !st.pip) {
+        const target = (state.controls as { target?: THREE.Vector3 } | null)?.target ?? center;
+        const dist = Math.max(0.1, pc.position.distanceTo(target));
+        const ppm = (r.dpr * state.size.height * pc.zoom) / (2 * dist * Math.tan((pc.fov * Math.PI) / 360));
+        const pixels = state.size.width * state.size.height * r.dpr * r.dpr;
+        const most = Math.min(FAR_MAX[st.quality], Math.sqrt(FAR_PIXELS[st.quality] / Math.max(1, pixels)), SHARP_PPM / ppm);
+        want = Math.max(1, Math.floor(most / FAR_STEP + 1e-6) * FAR_STEP);
+      }
+      if (want !== r.far) {
+        r.far = want;
+        apply();
+      }
+    }
+    // (anything else that set the resolution is undone)
+    if (state.viewport.dpr !== renderDpr) state.setDpr(renderDpr);
   }, -100);
   return null;
 }
 
 /**
  * The canvas renders on demand. While the camera moves this asks for a frame on every display refresh; while
- * characters of the active room move, BUSY_FPS times per second; otherwise IDLE_FPS, or CALM_FPS once the page has been
+ * characters of the active room move, BUSY_FPS times per second (by quality); otherwise IDLE_FPS, or CALM_FPS once the page has been
  * left alone for CALM_AFTER (the background rooms tick at most every BACKGROUND_STEP and are drawn by these frames).
  * (Camera drags, resizes and React updates invalidate on their own; a hidden tab gets no animation frames at all.)
  */
+/**
+ * Paces frames at `fps` on any refresh rate (0 = every refresh). A frame is due once a step has passed since the last slot; slots move on by
+ * whole steps, so a rate that does not divide the refresh rate still holds on average (48 per second on a 60 Hz screen = 4 refreshes of
+ * every 5). After a longer gap (another rate before, a busy main thread) the slots start again from now.
+ */
+function pacer() {
+  let slot = -Infinity;
+  return (t: number, fps: number) => {
+    if (fps <= 0) {
+      slot = t;
+      return true;
+    }
+    const step = 1000 / fps;
+    if (t - slot < step - PACE_SLACK) return false;
+    slot = t - slot >= 2 * step ? t : slot + step;
+    return true;
+  };
+}
+
 function IdleGovernor() {
   const invalidate = useThree((s) => s.invalidate);
   const pip = useStore((s) => s.pip);
   useEffect(() => {
     if (pip) return; // (PipDriver draws the frames of the floating window)
     let raf = 0;
-    let last = 0;
+    const due = pacer();
     let input = performance.now();
     const touch = () => {
       input = performance.now();
@@ -345,13 +473,8 @@ function IdleGovernor() {
     document.addEventListener('visibilitychange', touch);
     const loop = (t: number) => {
       raf = requestAnimationFrame(loop);
-      const fps = frame.busy ? BUSY_FPS : t - input > CALM_AFTER ? (frame.lively ? CALM_LIVELY_FPS : CALM_FPS) : frame.lively ? LIVELY_FPS : IDLE_FPS;
-      // (a few ms of slack: a 33.3 ms interval would otherwise skip to every third refresh at 60 Hz)
-      const every = frame.cameraBusy ? 0 : 1000 / fps - 4;
-      if (t - last >= every) {
-        last = t;
-        invalidate();
-      }
+      const fps = frame.busy ? BUSY_FPS[useStore.getState().quality] : t - input > CALM_AFTER ? (frame.lively ? CALM_LIVELY_FPS : CALM_FPS) : frame.lively ? LIVELY_FPS : IDLE_FPS;
+      if (due(t, frame.cameraBusy ? 0 : fps)) invalidate();
     };
     raf = requestAnimationFrame(loop);
     return () => {
@@ -390,6 +513,7 @@ function PipDriver() {
     w.addEventListener('resize', fit);
     let raf = 0;
     let last = 0;
+    const due = pacer();
     // (with the frame loop off the clock is set from the time we pass in – in seconds, continuing where the clock stood)
     let seconds = clock.elapsedTime;
     const loop = (t: number) => {
@@ -397,8 +521,7 @@ function PipDriver() {
       // (the page's own observer reports an empty canvas for a moment after the move, and may do so after this window's first size was set)
       const cur = get().size;
       if (w.innerWidth > 8 && w.innerHeight > 8 && (cur.width !== w.innerWidth || cur.height !== w.innerHeight)) fit();
-      const every = frame.cameraBusy ? 0 : 1000 / (frame.busy ? BUSY_FPS : frame.lively ? CALM_LIVELY_FPS : CALM_FPS) - 4;
-      if (t - last >= every) {
+      if (due(t, frame.cameraBusy ? 0 : frame.busy ? BUSY_FPS[useStore.getState().quality] : frame.lively ? CALM_LIVELY_FPS : CALM_FPS)) {
         const before = seconds;
         seconds += Math.min(0.25, (t - last) / 1000);
         last = t;
@@ -463,9 +586,16 @@ function CameraRig() {
       lastTick.current = resetTick;
       fit.current.angles = true;
     }
-    // (a narrow screen needs a camera further away than the usual limit: with the limit in the way the framing pushed outwards and the controls
-    // pulled back on every single frame, so the picture trembled between the two)
-    if (controls.current) controls.current.maxDistance = Math.max(MAX_DISTANCE, fit.current.dist * 1.3);
+    // zooming out stops once the room is MIN_ROOM_PX wide on screen (also while somebody is followed: the room around them counts)
+    const st = useStore.getState();
+    const room = st.activeRoomId ? st.rooms[st.activeRoomId] : undefined;
+    const layout = framedRoom ?? (room ? getLayout(room.seed, room.themeIndex) : null);
+    // (MAX_DISTANCE holds too, unless the framing of a narrow screen is already further away)
+    const px360 = layout ? roomDistanceForWidth(layout, (camera as THREE.PerspectiveCamera).fov, aspect, size.width, MIN_ROOM_PX) : MAX_DISTANCE;
+    const most = fit.current.dist > MAX_DISTANCE ? px360 : Math.min(MAX_DISTANCE, px360);
+    // (never closer than the framing itself: with the limit in the way the framing pushed outwards and the controls pulled back on every
+    // single frame, so the picture trembled between the two)
+    if (controls.current) controls.current.maxDistance = Math.max(most, fit.current.dist);
     fit.current.active = true;
     frame.cameraBusy = true;
   }, [activeRoomId, resetTick, focused, f.w, f.h, pip]);
@@ -997,7 +1127,7 @@ export function Scene() {
     <Canvas
       frameloop="demand"
       flat
-      dpr={[1, QUALITY_DPR[quality]]}
+      dpr={renderDpr || [1, QUALITY_DPR[quality]]}
       camera={{ fov: 30, near: 1, far: 400, position: [16, 17, 18] }}
       gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
       // (the baked rooms keep no CPU copy of their vertices: after a lost WebGL context the page is simply loaded again)

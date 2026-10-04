@@ -83,7 +83,7 @@ interface State {
   timeMode: TimeMode;
   /** effective hour of day (0-24) driving light and sky */
   hour: number;
-  /** render quality: low = plain, medium = soft light effects, high = sharper render and denser particles */
+  /** render quality: low = plain at 1x resolution and 30 fps, medium = soft light effects at the screen's resolution (more from afar) and 48 fps, high = still more from afar, 60 fps and denser particles */
   quality: Quality;
   weatherMode: WeatherMode;
   /** the weather outside right now (weatherMode resolved) */
