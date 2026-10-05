@@ -331,11 +331,11 @@ const FETCH_MEAL = [
   'Something from the fridge, then lunch at the table', 'Let me warm up my lunch', 'The fridge has leftovers, I can smell them', 'Microwave time!',
   'I’m starving – lunch break', 'Who left a container in the fridge? Mine, I hope', 'A bowl from the fridge and a seat at the table',
 ];
-const CARRY_TO = {
+const CARRY_TO: Record<'desk' | 'table' | 'sofa', string[]> = {
   desk: ['Back to my desk with this', 'I’ll drink it at my desk', 'A cup at the desk makes the code run faster'],
   table: ['The round table is the best place for this', 'Taking this to the table', 'Let me sit down at the round table with it'],
   sofa: ['The sofa is where this belongs', 'A cup on the sofa – perfect', 'I’ll enjoy this somewhere soft'],
-} as const;
+};
 
 export const thoughts = {
   fetchCoffee: (): [string, string] => [pick(FETCH_COFFEE), 'coffee'],
@@ -491,7 +491,7 @@ export const CHAT_SCRIPTS: (readonly string[])[] = [
 ];
 
 /** small talk at the round table: whoever feels like it says one, the others listen */
-export const TABLE_LINES: readonly string[] = [
+export const TABLE_LINES: string[] = [
   'This coffee is exactly what I needed.', 'Is that your usual order?', 'Pass the sugar, please.', 'I could sit here all afternoon.', 'Did you try the noodles from the stove?',
   'The round table is the best seat in the house.', 'What was the last thing you worked on?', 'Have you seen the cat today?', 'Is it just me, or is it quiet?',
   'I should drink more water.', 'The weather looks lovely from here.', 'Did you sleep well?', 'Nice mug!', 'This is my favourite part of the day.',
@@ -669,4 +669,173 @@ CHAT_SCRIPTS.push(
   ['I think we need a bigger monitor.', 'We need a bigger budget.', 'We need a bigger cat.', 'Now you’re talking.'],
   ['Can you hear that noise?', 'It’s the server.', 'No, it’s my stomach.', 'Then it’s the server.'],
   ['What’s the plan for today?', 'Survive.', 'Bold.', 'And touch the plants so they don’t feel lonely.'],
+);
+
+// ------------------------------------------------------- the silly pools, round two
+// Every case gets more jokes, including the ones that had none yet (desk breaks, games, the restroom, the phone).
+const cap = (s: string) => `${s[0].toUpperCase()}${s.slice(1)}`;
+
+OPEN_MORNING.push('Morning! I beat the sun here. The sun is a slacker.', 'Good morning! Today’s forecast: 90% chance of coffee.', 'Rise and grind. The coffee beans, mostly.', 'Morning, office! Let’s pretend we have a plan.');
+OPEN_AFTERNOON.push('Afternoon! Post-lunch me is a different, slower person.', 'Good afternoon! The food coma and I clock in together.', 'Opening up. My lunch is still settling in too.');
+OPEN_EVENING.push('Evening! The office is quiet. Suspiciously quiet.', 'Good evening! Normal people are having dinner. Not us.', 'Night mode: dark theme, warm lamps, cold coffee.');
+OPEN_ANY.push('Welcome to the office, population: me.', 'Lights on! Bugs, you have been warned.', 'Let’s go! Step one: find the light switch.', 'First in, first to pick the good chair.');
+HELLO_DIRECTOR.push('Morning meeting: everyone is great. Meeting over.', 'Hello, team! Today we ship. Or at least we try.', 'Team! Good news: the coffee machine works. Bad news: so must we.');
+
+BOSS_MORNING.push('Morning, boss! My alarm and I are no longer friends.', 'Good morning, boss! I’m 80% coffee right now.', 'Morning, boss! I left my motivation at the bus stop.');
+BOSS_AFTERNOON.push('Afternoon, boss! I was here in spirit all morning.', 'Hi boss! Lunch ran long. Lunch is very important.', 'Afternoon, boss! Fully fed, partially awake.');
+BOSS_EVENING.push('Evening, boss! Night owl reporting in. Hoot.', 'Good evening, boss! The best code is written after dark. Allegedly.', 'Evening, boss – I brought snacks and zero regrets.');
+HELLO_BOSS.push('Boss! I’m here and I only tripped once.', 'Hi boss, did somebody say tasks?', 'Hello, boss! Loading personality… done.', 'Present, boss! My brain arrives shortly.');
+HELLO_BOSS_TEAM.push('Hi everyone! Did I miss the drama?', 'Hello boss, hello team, hello comfy chair!', 'Hey team! Who took my mouse? Kidding. Unless…');
+
+HELLO_MATE[0].push((n) => `Morning, ${n}! Did you sleep, or just reboot?`, (n) => `${n}! Here early? Who are you trying to impress?`, (n) => `Good morning, ${n}. Same coffee, new bugs.`);
+HELLO_MATE[1].push((n) => `Afternoon, ${n}! Lunch good? Tell me everything.`, (n) => `Hey ${n}, still alive after the morning?`, (n) => `${n}! Did the build pass, or should I go home again?`);
+HELLO_MATE[2].push((n) => `Evening, ${n}! Welcome to the night owl club.`, (n) => `${n}, you too? The bugs must be biting tonight.`, (n) => `Hey ${n}, who needs sleep anyway?`);
+HELLO_MATE_ANY.push((n) => `${n}! My favourite colleague. Don’t tell the others.`, (n) => `Hi ${n}! Nice shirt. New? It looks new.`, (n) => `${n}, you owe me a coffee. Hi, by the way.`, (n) => `Look who it is – the legendary ${n}!`);
+
+BYE_DIRECTOR.push('Locking up. Plants, no parties while I’m gone.', 'All done. If the server calls, I’m not home.', 'Lights off. The bugs can sleep too.', 'Good night, desks. Good night, chairs. Good night, cat.');
+BYE_BOSS.push('Bye boss! My brain left an hour ago, I’m catching up.', 'Going home to rest. By rest I mean scroll.', 'See you, boss! I’ll dream in code. Sadly.', 'Off I go before somebody says “one more thing”.');
+BYE_BOSS_TEAM.push('Bye team! Last one out feeds the fish.', 'See you all! Don’t fix everything without me.', 'Good night, everyone! The cat is the boss now.');
+
+WANDER.push('Going on a side quest', 'Patrolling the office. All clear, captain.', 'Looking for the motivation I dropped this morning', 'Doing laps until an idea shows up', 'Taking my legs out for a walk');
+SOFA.push('The sofa and I have unfinished business', 'Ten minutes of being a cushion', 'Moving my thinking to a softer location', 'Sofa: zero bugs reported');
+WATCH.push((n: string) => `${n} is quiet. Too quiet. Investigating.`, (n: string) => `Going to supervise ${n}. Moral support only.`, (n: string) => `Let me see if ${n} needs a snack`);
+WINDOW.push('Checking the weather API: the window', 'Admiring the world’s biggest screensaver', 'Watching birds. They don’t have deadlines either.', 'Sky still blue. Deployment looks stable.');
+PET.push('Cat requires attention. Request approved.', 'The cat opened a pull request for pets', 'Kitty! My one true stakeholder', 'Time to pay the cat tax');
+WATER.push('Water: still free, still good', 'Doctor says eight glasses. I’m at two.', 'The plants drink more than me. Fixing that.', 'Off to the cooler for gossip. And water.');
+COFFEE.push('Coffee o’clock. It’s always coffee o’clock.', 'Brewing up some motivation', 'Espresso yourself!', 'One latte to go – to my desk, two metres away');
+READ.push((b: string) => `Opening “${b}” at a random page. Destiny.`, (b: string) => `“${b}”: chapter one. For the third time.`, (b: string) => `Reading “${b}” so I can quote it in meetings`);
+FISH.push('The fish are planning something. I can tell.', 'Visiting my most relaxed colleagues', 'Fish meeting: everyone agrees, nobody talks', 'Let me check if Nemo is still lost');
+WASH.push('Washing away the bugs', 'Water on the face: emergency reboot', 'A quick splash to look alive', 'Freshening up for my fans');
+PLANTS.push('Plants are just very slow pets', 'Time to water my green coworkers', 'Hydration ticket for the plants: in progress', 'If I talk nicely, they grow faster. Science.');
+COOK.push('Chef mode: activated', 'Noodles: the only thing I never burn. Usually.', 'Time to cook like nobody is watching', 'Instant noodles, but with love');
+BOX.push('Punching the dummy that broke the build', 'Jab, jab, refactor!', 'Ding ding! Me vs. Monday, round two', 'Stress, meet fist');
+LIFT.push('Lifting my spirits. And these.', 'Strong code needs strong arms', 'Pumping iron, pumping out tickets', 'Reps today, flexing tomorrow');
+CHAT.push((n: string) => `Let me ask ${n} what they had for lunch`, (n: string) => `${n} looks bored. I can fix that.`, (n: string) => `Time to tell ${n} my latest terrible joke`);
+PARCEL.push('Delivery! Everybody act normal.', 'The box is here! The box is here!', 'A parcel! Christmas came early', 'Who ordered this? Oh, it was me. Again.');
+SMOKE.push('Stepping out to breathe… differently', 'Quick puff by the window. Don’t tell my lungs.');
+SLEEP.push('Not sleeping. Compiling dreams.', 'Shutting down for maintenance', 'Eyes closed, brain in low-power mode', 'Ping me if something catches fire');
+LOUNGE.push('Bean bag mode: I am one with the beans', 'Sinking… sinking… gone', 'Working from bean bag today', 'Ergonomics? Never heard of her', 'If I don’t come back, I live here now', 'Lying down to think horizontally');
+
+MUSIC.push(
+  'Music on. Typing speed: +20%', 'My “focus” playlist is all drum solos', 'Dancing in my chair. Nobody look.', 'This beat compiles',
+  'Headphones on means “do not disturb”, team', 'Turning the bass up to debug louder', 'My playlist is 90% the same song',
+);
+VIDEO.push(
+  'A ten-hour video. Just the first minute.', 'A tutorial on how to stop watching tutorials', 'This cat video is critical research', 'Autoplay chose violence today',
+  'Watching someone else code. So relaxing.', 'Just one more video. Famous last words.',
+);
+BROWSE.push(
+  'Reading the docs. The real horror genre.', 'Opening 12 tabs to answer one question', 'Sorting my desktop icons by vibe', 'Renaming files. Very important work.',
+  'Googling an error I made myself', 'Writing a to-do list for my to-do list',
+);
+GAME.push('Respawning my motivation', 'Testing my reflexes. For work.', 'Save point reached. Back soon.', 'Speedrunning my break', 'Achievement unlocked: break time', 'I can stop any time. After this level.');
+CALL.push(
+  'Hi mum! Yes, I’m eating. Noodles count.', 'You’re on mute! No, YOU are on mute!', 'Can you see me? I can see my ceiling.', 'Quick call. Quick. Probably.',
+  'Calling a friend to complain about bugs', 'Video call: I even fixed my hair for this',
+);
+SHOP.push(
+  'Adding things to my cart for emotional support', 'Do I need a second keyboard? Obviously.', 'Looking at chairs I can’t afford', 'Comparing 40 identical mugs',
+  'Cart total: hmm. Closing the tab.', 'A mechanical keyboard would fix my life',
+);
+MAIL.push(
+  'Replying “per my last email”, very politely', 'Unsubscribing from everything. Freedom!', 'This email could have been a meeting. Wait.', 'Typing a reply, deleting it, typing again',
+  'Mark all as read. Problem solved.', 'Archiving like a pro',
+);
+TIDY.push('Does this spark joy? No? Moving it.', 'Cleaning up – the office, not the code', 'Garbage collection, physical edition', 'Somebody left chaos here. Fixing it.', 'Refactoring the furniture');
+
+PLAY.arcade.push('Pew pew! For the high score!', 'Insert coin, insert dignity', 'Arcade: 1. My productivity: 0.');
+PLAY.arcadeDuo.push('Who wants to lose at the arcade?', 'Button mashing is a strategy');
+PLAY.pinball.push('Flipper skills: legendary. Maybe.', 'Bumper, bumper, BONUS!');
+PLAY.clawMachine.push('The claw is rigged, but I believe', 'Today the plush comes home with me', 'Just one coin. Okay, two.');
+PLAY.airHockey.push('The puck goes brrr', 'Defence mode: on');
+PLAY.foosball.push('Spinning is allowed here, right?', 'My little plastic team needs me');
+PLAY.danceMachine.push('Watch these moves. Or don’t, please.', 'Cardio, but make it disco', 'Left, right, left – just like my career');
+PLAY.consoleTv.push('Blue shell incoming, I can feel it', 'One race, then I’ll work. Honest.');
+PLAY.racingSim.push('Speed limit? Not in this chair', 'Drifting into my break');
+PLAY.vrStation.push('If I walk into a wall, it’s part of the game', 'Entering the metaverse. Back in five.');
+PLAY.pingPong.push('Ping! Now somebody say pong', 'My serve is unreturnable. Allegedly.');
+PLAY.hoops.push('Swish! Probably.', 'Three-pointer, or back to work');
+PLAY.psConsole.push('Couch, controller, chaos', 'Pausing life, playing games', 'Who wants to lose on the big screen?');
+PLAY_BOSS.push('Boss level unlocked. Literally.', 'Making sure the machine works. Very thoroughly.', 'Don’t tell the boss. Oh, wait.');
+PLAY_JOIN.push((n) => `${n}, prepare to be humbled`, (n) => `Move over, ${n}, the champion is here`, (n) => `${n}, I’ll go easy on you. Not.`);
+PLAY_VERSUS.push('Lag! That was lag!', 'My controller is broken', 'Beginner’s luck!', 'I let you win that one', 'Rematch! Rematch!', 'Who taught you that?!', 'Okay, now I’m serious');
+PLAY_END_WIN.push('Undefeated! Put it on my CV.', 'GG, easy. Well, medium.', 'The legend continues', 'Champion of the break room!');
+PLAY_END_LOSE.push('I was warming up', 'I wasn’t even trying. (I was.)', 'My hands are still cold', 'GG. I hate it.');
+
+TIRED.push(
+  'My energy left the chat', 'Running on fumes and leftovers', 'I need a nap from my nap', 'Even blinking is hard today',
+  'My brain has too many tabs open', 'Is coffee a personality? Asking for me.', 'Battery saver mode: on', 'I yawned so hard my ears popped',
+);
+NET_SLOW.push(
+  'The Wi-Fi is doing its best. Its best is bad.', 'Loading… still loading… it’s growing a beard', 'Page loaded! Oh no, it’s the error page', 'I could walk to the server faster',
+  'The progress bar went backwards. How?', 'Right Wi-Fi password, wrong Wi-Fi attitude', 'Sending packets by carrier pigeon now', 'Speed test result: “lol”',
+);
+
+PHONE.push('Just checking the time. Twenty minutes ago. 📱', 'Phone in hand, plans abandoned 📱', 'Scrolling with professional dedication 📱', 'Liking memes from 2019 📱');
+SCROLL_TARGETS.push(
+  ['a video of a dog on a skateboard', '🐶'], ['my plant app', '🌱'], ['the price of a tiny house', '🏠'], ['who left the group chat', '👀'],
+  ['a quiz about which noodle I am', '🍜'], ['my old embarrassing posts', '🙈'], ['a recipe I will never cook', '🧑‍🍳'], ['the Monday memes', '😩'],
+  ['a thread about the best keyboard', '⌨️'], ['the moon phase', '🌙'], ['how long cats sleep a day', '😴'], ['the lottery numbers', '🎰'],
+);
+SCROLL_OPENERS.push(
+  (x) => `Okay, ${x}, and then I’m productive`, (x) => `Breaking news, maybe: ${x}`, (x) => `My thumb insists on ${x}`,
+  (x) => `Important research on ${x}`, (x) => `Can’t focus until I check ${x}`,
+);
+SCROLL_FULL.push(
+  ['Opened the phone, forgot why', '🤷'], ['Reading the terms and conditions for fun', '📜'], ['Five notifications, all from one app', '🙄'],
+  ['Battery 3%. Living dangerously.', '🪫'], ['Muting the group chat. Again.', '🔕'], ['Watched a 30-second video for 30 minutes', '⏳'],
+);
+
+WC_HURRY.push('Out of my way, it’s a P0!', 'Red alert! Restroom, now!', 'Speedrunning to the restroom', 'The coffee is collecting its debt');
+WC_PLAIN.push('Bio break, back in five', 'Gotta go. Literally.', 'Short system break');
+WC_PHONE.push('Taking the phone on a business trip 📱', 'Best Wi-Fi in the building is in there, trust me 📱', 'Restroom plus phone: twenty minutes, minimum 📱');
+WC_BOOK.push('Bringing a book. Might be a while.', 'My reading corner has a lock', 'Catching up on chapter seven, privately');
+WC_NONE.push('Going to think deep thoughts in private', 'All the best ideas happen in there', 'Off to the thinking room');
+WASH_HANDS.push('Washing hands, humming “Happy Birthday”', 'Soap: the original antivirus', 'Clean hands, clean code', 'Germs, you are deprecated');
+TABLE_COFFEE.push('A coffee meeting with myself', 'Sitting down so the coffee gets the respect it deserves', 'Table, coffee, zero emails. Bliss.', 'Coffee tastes better when I’m not typing');
+TABLE_MEAL.push('Lunch at the table, like a civilised person', 'A meal without a keyboard in front of it? Wild.', 'Table for one, food for three', 'No crumbs in the keyboard today');
+
+UNBOXED.push(
+  (n: string) => `${cap(n)}! I didn’t order it, but I love it`, (n: string) => `Unboxed ${n}. Instructions: ignored.`,
+  (n: string) => `It’s ${n}! Somebody tell the cat`, (n: string) => `${cap(n)}. Somebody has been shopping with the company card`,
+);
+UNBOXED_ANY.push('More foam peanuts than item. Classic.', 'Unboxed! The box is the best part – ask the cat', 'It’s here and nothing is broken. A miracle!', 'Wow. Okay. I have no idea what this is.');
+FETCH_COFFEE.push('Caffeine refill, human edition', 'Going to ask the coffee machine for advice', 'One more cup – for science', 'Coffee run! Back with fuel');
+FETCH_MEAL.push('Food first, bugs later', 'Hunting the fridge for leftovers', 'Microwave, do your magic', 'If the label says someone else’s name… I didn’t see it');
+CARRY_TO.desk.push('Coffee next to the keyboard. Living dangerously.', 'Back to my desk – the coffee supervises');
+CARRY_TO.table.push('Table reserved by me and my cup', 'Off to the round table, the VIP lounge');
+CARRY_TO.sofa.push('Sofa plus cup: maximum comfort', 'Careful, sofa, don’t make me spill');
+
+ACK.push('Got it! Rolling up my sleeves. Both of them.', 'On it! Somebody hide the snacks from me.', 'Understood – the team is warming up their keyboards.', 'Okay! Today we fix it, tomorrow we brag.');
+ACK_CALL.push('Yes yes, got it. Phone back in the pocket.', 'Message read. Panic level: low. On it!', 'Thumbs-up emoji sent. That means yes.');
+SERVE.push('Fresh from the stove, chef’s special!', 'Ding! Noodles ready, no bugs inside.');
+EAT.push('If I eat fast, it counts as productive', 'This bowl is my safe space', 'Slurp responsibly');
+REPORT_OK.push('Done! I only cried a little.', 'Here’s the report. It’s mostly good news.', 'Task complete. Do I get a sticker?', 'All done, boss! Tested on my machine.');
+REPORT_FAIL.push('Bad news, boss. Also, nice shirt.', 'It failed, but I learned a lot. Mainly fear.', 'This task needed a hero. Not me today.', 'Report attached. Please read it gently.');
+DONE_OK.push('Done! Nobody touch the keyboard.', 'Finished! Pizza is on me. Imaginary pizza.', 'All done. I’m framing this moment.', 'All done. That was suspiciously easy.');
+DONE_FAILED.push('Done, with a few souvenirs in red.', 'Finished. Some tests are in a better place now.', 'Wrapped up. A couple of bugs got away – we’ll hunt them later.');
+DONE_BIG.push('That list was longer than my CV. All done!', 'Huge job, done! Coffee for everyone.', 'We just ran a marathon in slippers. Finished!');
+DONE_HINT.push('The summary has all the juicy details.', 'Summary’s on the desk. Spoiler: we won.');
+
+CHAT_SCRIPTS.push(
+  ['Did you push to main?', 'Define “push”.', 'Did code go to main?', 'Some code went somewhere.'],
+  ['I think I fixed the bug.', 'Which one?', 'The one I made fixing the other one.', 'The circle of life.'],
+  ['Why are you smiling?', 'My tests passed.', 'All of them?', 'I deleted the failing ones.'],
+  ['Can you explain your code?', 'Sure. It works.', 'How?', 'Magic and a lot of if-statements.'],
+  ['The cat sat on my keyboard.', 'Any damage?', 'She wrote a 40-line function.', 'Better than mine, probably.'],
+  ['Is it lunch yet?', 'It’s 10 a.m.', 'So, almost?', 'Spiritually, yes.'],
+  ['Do you write tests?', 'I write hopes.', 'And?', 'Some of them pass.'],
+  ['I estimated two hours.', 'How long did it take?', 'Two days.', 'So you were close.'],
+  ['Why is there a rubber duck on your desk?', 'It’s my senior developer.', 'Is it any good?', 'Never wrong, never talks.'],
+  ['What does this regex do?', 'Nobody knows.', 'Who wrote it?', 'Nobody wants to know.'],
+  ['Have you seen my coffee?', 'You’re holding it.', 'That’s my second one.', 'Then you drank the first.'],
+  ['I’m going to bed early tonight.', 'Really?', 'After one more episode.', 'Famous last words.'],
+  ['Do you think the plants can hear us?', 'I hope not.', 'Why?', 'I said mean things to the fern.'],
+  ['I updated my dependencies.', 'All of them?', 'All of them.', 'Rest in peace, weekend.'],
+  ['The boss said “quick fix”.', 'How quick?', 'Three files so far.', 'Quick like a sloth.'],
+);
+TABLE_LINES.push(
+  'This coffee is stronger than my code.', 'Who ate the last biscuit?', 'Shh, the cat is listening.', 'If I sit here long enough, will work forget me?',
+  'Five more minutes. Then five more.', 'Do you think the boss knows we’re here?', 'My mug says “World’s Okayest Developer”.', 'I dropped a noodle. It’s gone now.',
+  'Best meeting of the day – and no slides!', 'Spill the tea. Not literally!', 'My coffee is getting cold, like my motivation.', 'Anybody want to hear about my weekend? No? Okay.',
 );
