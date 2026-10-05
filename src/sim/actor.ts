@@ -523,6 +523,8 @@ export class Actor {
   private chairWasOut = false;
   /** where the chair stands in the walking grid while it is left pulled out (null = tucked in, covered by the desk's own block) */
   private chairBlock: { x: number; z: number; rot: number } | null = null;
+  /** inside this person's own update: their pulled-out chair is off the nav grid (see update) */
+  private chairLifted = false;
   /** seconds until a walk may look for a way round a new obstacle again */
   private detourCool = 0;
   /** direction of the first leg of the walk after getting up (found once per getting up) */
@@ -732,13 +734,16 @@ export class Actor {
     if (this.prevT < at && this.t >= at) sfx(name, this.sim.roomId);
   }
 
-  /** A chair left pulled out is an obstacle for everybody else's walks; a tucked chair is already covered by the desk. */
+  /**
+   * A chair left pulled out is an obstacle for everybody else's walks; a tucked chair is already covered by the desk.
+   * (During one's own update the block is off the grid, see update: it only changes the record then, the grid follows afterwards.)
+   */
   private setChairBlock(ctx: ActorCtx, on: boolean) {
     const nav = ctx.layout.nav;
     if (!on) {
       if (!this.chairBlock) return;
       const b = this.chairBlock;
-      nav.unblockOriented(b.x, b.z, CHAIR_BLOCK, CHAIR_BLOCK, b.rot, CHAIR_BLOCK_PAD);
+      if (!this.chairLifted) nav.unblockOriented(b.x, b.z, CHAIR_BLOCK, CHAIR_BLOCK, b.rot, CHAIR_BLOCK_PAD);
       this.chairBlock = null;
       return;
     }
@@ -746,7 +751,7 @@ export class Actor {
     const R = this.chairRig(ctx);
     const c = R.at(1);
     this.chairBlock = { x: c.x, z: c.z, rot: R.rot + R.half };
-    nav.blockOriented(c.x, c.z, CHAIR_BLOCK, CHAIR_BLOCK, R.rot + R.half, CHAIR_BLOCK_PAD);
+    if (!this.chairLifted) nav.blockOriented(c.x, c.z, CHAIR_BLOCK, CHAIR_BLOCK, R.rot + R.half, CHAIR_BLOCK_PAD);
   }
 
   private startPath(points: V2[]) {
@@ -962,7 +967,25 @@ export class Actor {
   }
 
   // -------------------------------------------------------------- state machine
+  /**
+   * One frame. The chair one left pulled out blocks everybody else's way, never one's own: while this person thinks and walks
+   * it is lifted off the nav grid (in an L-shaped desk's corner it would otherwise wall them in at their own desk).
+   */
   update(dt: number, ctx: ActorCtx) {
+    const nav = ctx.layout.nav;
+    const own = this.chairBlock;
+    if (own) nav.unblockOriented(own.x, own.z, CHAIR_BLOCK, CHAIR_BLOCK, own.rot, CHAIR_BLOCK_PAD);
+    this.chairLifted = true;
+    try {
+      this.updateFrame(dt, ctx);
+    } finally {
+      this.chairLifted = false;
+      const b = this.chairBlock;
+      if (b) nav.blockOriented(b.x, b.z, CHAIR_BLOCK, CHAIR_BLOCK, b.rot, CHAIR_BLOCK_PAD);
+    }
+  }
+
+  private updateFrame(dt: number, ctx: ActorCtx) {
     dt = Math.min(dt, SLOW_MAX_DT); // (callers already cap the active room at ACTIVE_MAX_DT; slow rooms hand in one long step)
     this.clock += dt;
     this.stepDt = dt;
@@ -1232,7 +1255,7 @@ export class Actor {
             this.drain = 0;
             this.restT = 0;
             this.deskPetT = -1;
-            this.deskAct = null;
+            this.dropDeskBreak();
           }
           s.busy = true;
           this.workTime += dt;
@@ -1245,6 +1268,8 @@ export class Actor {
               this.failed = task.failed;
               this.reporting = true;
               this.strolling = true;
+              // (straight to the director: no break of before is waiting anywhere – see dropDeskBreak)
+              this.act = null;
               this.setPhase('standing');
             } else if (task.source !== 'sub') ctx.onRelease();
           }
@@ -1499,7 +1524,7 @@ export class Actor {
     if (this.sim.chatBy) {
       // somebody came over for a chat: no break of their own now
       this.restT = 0;
-      this.deskAct = null;
+      this.dropDeskBreak();
       return;
     }
     if (!this.isResting(ctx)) {
@@ -1507,7 +1532,7 @@ export class Actor {
       this.wake();
       this.restT = 0;
       this.deskPetT = -1;
-      this.deskAct = null;
+      this.dropDeskBreak();
       return;
     }
     if (this.deskAct) {
@@ -1595,6 +1620,15 @@ export class Actor {
       this.sim.onBreak = a.kind !== 'parcel';
       this.setPhase('standing');
     }
+  }
+
+  /**
+   * A break at the desk (music, a game, a cat on the desk…) is cut short: it is forgotten altogether. The break stays in `act`
+   * otherwise, and the next walk from the desk (bringing a report) would take it for a break away from the desk to go back to.
+   */
+  private dropDeskBreak() {
+    this.deskAct = null;
+    if (this.act && (this.act.deskAct || this.act.atDesk)) this.act = null;
   }
 
   /** up from a nap in the chair: eyes open (the pose resets every frame), the dozing bubble goes away */
@@ -2340,6 +2374,9 @@ export class Actor {
         if (back || !ok || t > a.dur) this.goHome(ctx);
         break;
       }
+      default:
+        // (a break at the desk – music, a game, a nap… – has no scene away from it: whoever ends up here goes back)
+        this.goHome(ctx);
     }
     this.prevT = t;
   }
