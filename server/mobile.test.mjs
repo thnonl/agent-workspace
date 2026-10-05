@@ -28,7 +28,17 @@ test('other machines get the office without a token, page and API alike', async 
   assert.equal(await run('/api/events'), 'next');
   assert.equal(await run('/api/settings', { remote: '10.0.0.7' }), 'next');
   assert.equal(await run('/', { remote: '127.0.0.1', headers: { 'x-forwarded-for': '1.2.3.4' } }), 'next', 'a local tunnel too');
-  assert.equal(await run('/?token=ABC123'), 'next', 'an old link with a token still opens');
+  assert.equal(await run('/api/settings', { headers: { cookie: 'aw_token=OLD999', authorization: 'Bearer OLD999' } }), 'next', 'an old cookie or header');
+});
+
+test('a token from an older app, link or bookmark: the page opens without it, whatever it says', async () => {
+  for (const [url, to] of [['/?token=ABC123', '/'], ['/?token=wrong&demo', '/?demo='], ['/?token=', '/'], ['/some/page?token=x', '/some/page']]) {
+    const r = await run(url);
+    assert.equal(r.status, 302, url);
+    assert.equal(r.headers.Location, to, url);
+    assert.match(r.headers['Set-Cookie'], /^aw_token=; .*Max-Age=0/, 'the old cookie is dropped');
+  }
+  assert.equal(await run('/api/events?token=ABC123'), 'next', 'the API just ignores it');
 });
 
 test('/m: landing page with the intent link, also for an old QR code with a token', async () => {

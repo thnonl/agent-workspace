@@ -12,6 +12,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
@@ -154,6 +155,11 @@ class MainActivity : ComponentActivity() {
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
                 if (!request.isForMainFrame || panel.isVisible) return
                 disconnect(getString(R.string.err_unreachable, server?.label ?: "", error.description))
+            }
+
+            // (only a computer that runs a version up to 1.3.8 still locks its office: a QR code of it carries the token)
+            override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
+                if (request.isForMainFrame && response.statusCode == 401 && !panel.isVisible) disconnect(getString(R.string.err_locked))
             }
         }
     }

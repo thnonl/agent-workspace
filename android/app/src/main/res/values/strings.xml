@@ -13,6 +13,7 @@
     <string name="err_bad_qr">This QR code is not an Agent Workspace code.</string>
     <string name="err_input">Enter the IP address and a port between 1 and 65535.</string>
     <string name="err_unreachable">Cannot reach %1$s (%2$s). Is the computer on the same Wi-Fi, started with --host 0.0.0.0, and is the port open in its firewall?</string>
+    <string name="err_locked">This computer runs an older Agent Workspace that asks for a token. Scan the QR code under Settings → Connect a device on it, or update it (newer versions let every device in).</string>
     <string name="back_again">Press back again to change the server</string>
     <string name="version">App version %1$s</string>
     <string name="update_title">Update available</string>

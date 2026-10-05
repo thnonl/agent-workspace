@@ -10,6 +10,9 @@ interface ConnectInfo {
   releasesUrl: string;
 }
 
+/** stands in for the token older app versions look for in the QR code (the server lets everybody in, whatever it says) */
+const LEGACY_T = 'open';
+
 /** What the Android app (android/, MainActivity.AppBridge) adds to the page; missing in a browser and in app versions before it. */
 interface AppBridge {
   /** leaves the office and shows the app's connect form */
@@ -50,7 +53,8 @@ export function ConnectPhone() {
   }, []);
 
   const address = info?.addresses[Math.min(pick, info.addresses.length - 1)]?.address;
-  const link = info && address ? `http://${address}:${info.port}/m` : '';
+  // (`t=` means nothing any more, but the scanner of app versions up to 1.3.8 only takes a code that has it)
+  const link = info && address ? `http://${address}:${info.port}/m?t=${LEGACY_T}` : '';
   const svg = useMemo(() => (showQr && link ? renderSVG(link, { border: 2, whiteColor: '#ffffff', blackColor: '#1d1b2e' }) : ''), [showQr, link]);
 
   if (failed) return <p className="muted">The server did not answer – connecting a device needs <code>npm start</code> or <code>npx @thnonline/agent-workspace</code>.</p>;

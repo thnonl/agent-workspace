@@ -1,5 +1,6 @@
 // Phones and other machines on the local network: the connect info for the "Connect a device" settings and the /m page
-// a scanned QR code opens. Nothing asks for a token: whoever can reach the server's address can open the office.
+// a scanned QR code opens. Nothing asks for a token: whoever can reach the server's address can open the office, and a
+// token that an older app, QR code, link or cookie still brings is ignored.
 import os from 'node:os';
 
 export const REPO = 'thnonl/agent-workspace';
@@ -81,6 +82,18 @@ export function createConnectRoutes() {
     }
     // (a QR code of an older version still carries `?t=<token>`: it is simply ignored)
     if (url.pathname === '/m') return landing(res);
+    // An older app, link or bookmark still brings a token (`?token=`, right, wrong or empty): the page opens all the same, without
+    // the token in the address bar, and the cookie an older version set is dropped. (The API just ignores it, like a cookie or an
+    // `Authorization` header from before.)
+    if (url.searchParams.has('token') && !url.pathname.startsWith('/api/')) {
+      url.searchParams.delete('token');
+      res.writeHead(302, {
+        Location: url.pathname + url.search,
+        'Set-Cookie': 'aw_token=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax',
+        'Cache-Control': 'no-store',
+      });
+      return res.end();
+    }
     if (url.pathname === '/api/connect') {
       const bound = req.socket?.server?.address?.()?.address ?? req.socket?.localAddress;
       const port = req.socket?.localPort;
