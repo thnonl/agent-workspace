@@ -1857,7 +1857,7 @@ export class Actor {
     const options: [ActivityKind, number][] = [
       ['play', playFree.length ? (staff ? 3 : 10) * (playJoin ? 3 : 1) : 0],
       ['couchGame', couchFree.length ? (staff ? 3 : 10) * (couchJoin ? 3 : 1) : 0],
-      ['wander', staff ? 0.4 : 0.9], ['sofa', seats.length ? (staff ? 4 : 3) : 0], ['lounge', beanbags.length ? (staff ? 7 : 3) : 0], ['watch', watchable.length ? (staff ? 1.5 : 4) : 0],
+      ['wander', staff ? 0.4 : 0.9], ['sofa', seats.length ? (staff ? 4 : 3) : 0], ['lounge', beanbags.length ? (staff ? 14 : 7) : 0], ['watch', watchable.length ? (staff ? 1.5 : 4) : 0],
       ['fetch', canFetch ? (staff ? 3.5 : 2.5) : 0], ['window', windowsFree.length ? (staff ? 1.5 : 2.5) : 0], ['pet', petCats.length ? (staff ? 4.5 : 5) : 0], ['stay', staff ? 5 : 0],
       ['drink', stationsOf('drink').length ? 4 : 0], ['read', stationsOf('read').length ? 3.5 : 0], ['fish', stationsOf('fish').length ? 3.5 : 0],
       ['wash', stationsOf('wash').length ? 2.5 : 0], ['water', stationsOf('water').length ? 3.5 : 0],

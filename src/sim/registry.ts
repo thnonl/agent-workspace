@@ -236,16 +236,21 @@ export function claimLate(roomId: string, layout: import('../world/layout').Room
   const c = deliveryEntry(roomId, layout);
   const open: number[] = [];
   let total = 0;
+  const early = layout.lateDone.filter(Boolean).length < EARLY_PARCELS;
+  const weight = (k: number) => {
+    const kind = layout.props[layout.late[k]].kind;
+    return kind === 'beanbag' && early ? EARLY_BEANBAG_WEIGHT : LATE_WEIGHT[kind] ?? 1;
+  };
   for (let k = 0; k < layout.late.length; k++) {
     if (layout.lateDone[k] || c.claims.has(k)) continue;
     open.push(k);
-    total += LATE_WEIGHT[layout.props[layout.late[k]].kind] ?? 1;
+    total += weight(k);
   }
   if (!open.length) return -1;
   let pick = Math.random() * total;
   let k = open[open.length - 1];
   for (const o of open) {
-    pick -= LATE_WEIGHT[layout.props[layout.late[o]].kind] ?? 1;
+    pick -= weight(o);
     if (pick < 0) {
       k = o;
       break;
@@ -256,7 +261,10 @@ export function claimLate(roomId: string, layout: import('../world/layout').Room
 }
 
 /** things that turn up in a parcel / a carton more often than the rest (1 for everything else): a floor lamp lights up the room */
-const LATE_WEIGHT: Partial<Record<import('../world/layout').PropKind, number>> = { floorLamp: 4 };
+const LATE_WEIGHT: Partial<Record<import('../world/layout').PropKind, number>> = { floorLamp: 4, beanbag: 2 };
+/** the first few things a room gets: a bean bag is among them far more often (somewhere to flop down early on) */
+const EARLY_PARCELS = 4;
+const EARLY_BEANBAG_WEIGHT = 14;
 
 /** The delivery was called off: the thing is next in line again. */
 export function releaseLate(roomId: string, layout: import('../world/layout').RoomLayout, rank: number) {
