@@ -20,6 +20,8 @@ import { G } from './kit';
 import { DESK_TOP } from './furniture';
 import { sfx } from '../audio';
 import { blobGeometry, FX, initFx } from './fx';
+import { litMaterial, screenLitMaterial } from './twin';
+import { env } from '../env';
 
 /** a person who has been in the office this long is not shown walking in when their room is built */
 const WARM_AFTER_MS = 6000;
@@ -40,6 +42,11 @@ const vDesk = new THREE.Vector3();
 const vHeld = new THREE.Vector3();
 const vPile = new THREE.Vector3();
 const roomXZ = { x: 0, z: 0 };
+/** the glow a laptop / phone screen throws on the person using it after dark (colour × strength at full night, see screenLitMaterial) */
+const LAPTOP_GLOW = new THREE.Color('#9fc2ff').multiplyScalar(1.7);
+const PHONE_GLOW = new THREE.Color('#b8d4ff').multiplyScalar(1.2);
+/** the screen of an open laptop, in the frame of its lid (the lid hangs from the hinge towards -z) */
+const LID_SCREEN = new THREE.Vector3(0, -0.03, -0.14);
 
 /** Character-local offset (lx, lz) turned into room space. The result is shared: read it right away. */
 function toRoom(sim: SimState, lx: number, lz: number) {
@@ -178,6 +185,23 @@ export function PersonActor({ personKey, roomId, layout, frozen: frozenProp = fa
     rig.head.add(g);
     return g;
   }, [rig, app]);
+  // the person's own copy of the lit material, so the screen in front of them can light them up after dark
+  const screenLight = useMemo(() => {
+    const { mat, light } = screenLitMaterial();
+    /** the screen, in world space (turned into view space right before the person is drawn) */
+    const at = new THREE.Vector3();
+    const shared = litMaterial(true);
+    rig.root.traverse((o) => {
+      const m = o as THREE.SkinnedMesh;
+      if (!m.isSkinnedMesh || m.material !== shared) return;
+      m.material = mat;
+      m.onBeforeRender = (_r, _s, camera) => {
+        light.pos.value.copy(at).applyMatrix4(camera.matrixWorldInverse);
+      };
+    });
+    return { mat, light, at, k: 0, glow: LAPTOP_GLOW };
+  }, [rig]);
+  useEffect(() => () => screenLight.mat.dispose(), [screenLight]);
   const noteAt = useRef(0);
   const ring = useRef<THREE.Mesh>(null);
   const blob = useRef<THREE.Mesh>(null);
@@ -391,7 +415,8 @@ export function PersonActor({ personKey, roomId, layout, frozen: frozenProp = fa
     // ---- props (room space)
     const deskSlot = isDirector ? null : layout.desks[Math.max(0, sim.desk)];
     const seat = isDirector ? layout.director.seat : deskSlot?.seat ?? { x: 0, z: 0 };
-    const seatRot = deskSlot?.rot ?? 0;
+    // (the director's desk turns with the side of the room it stands on: the laptop and the bag beside the chair turn with it)
+    const seatRot = isDirector ? layout.director.rot : deskSlot?.rot ?? 0;
     const approachSide = isDirector ? layout.director.approachSide : deskSlot?.approachSide ?? -1;
     const laptopSpot = isDirector ? layout.director.laptop : layout.desks[Math.max(0, sim.desk)]?.laptop ?? { x: 0, z: 0 };
     const deskTop = isDirector ? DESK_TOP + 0.02 : DESK_TOP;
@@ -585,6 +610,21 @@ export function PersonActor({ personKey, roomId, layout, frozen: frozenProp = fa
         items.bookLeft.rotation.z = -0.28 * actor.bookOpen;
         items.bookRight.rotation.z = 0.28 * actor.bookOpen;
       }
+    }
+    // the screen they look at lights them up after dark: the open laptop they sit at, or the phone in the hand
+    {
+      const atLaptop = laptop.root.visible && actor.lapP >= 2 && actor.lid > 0.5 && Math.hypot(sim.x - seat.x, sim.z - seat.z) < 0.45;
+      const sl = screenLight;
+      const glow = phoneOn ? PHONE_GLOW : atLaptop ? LAPTOP_GLOW : null;
+      if (glow) {
+        sl.glow = glow;
+        if (phoneOn) items.phoneScreen.getWorldPosition(sl.at);
+        else sl.at.copy(LID_SCREEN).applyMatrix4(laptop.lid.matrixWorld);
+      }
+      // (fades in and out with the screen, and with the dark)
+      sl.k += ((glow ? env.lamps : 0) - sl.k) * (1 - Math.exp(-4 * dt));
+      if (sl.k < 0.003) sl.k = 0;
+      sl.light.color.value.copy(sl.glow).multiplyScalar(sl.k);
     }
     // water from the tap of the sink
     const flow = sim.onStage && actor.tap ? actor.tapFlow : 0;

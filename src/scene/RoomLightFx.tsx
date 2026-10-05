@@ -9,6 +9,7 @@ import { useDeliveryVersion } from './useDelivery';
 import { env } from '../env';
 import { DUST, FX, HALO, initFx } from './fx';
 import { litOf } from './glow';
+import { PORCH_LAMP, WALL_T } from './RoomParts';
 
 /** Point of a prop / desk item in room space: room-local offset (x, z) turned by `rot`, then moved to (cx, cz). */
 const at = (cx: number, cz: number, rot: number, x: number, z: number): [number, number] => [cx + x * Math.cos(rot) + z * Math.sin(rot), cz - x * Math.sin(rot) + z * Math.cos(rot)];
@@ -50,6 +51,20 @@ export function lampsOf(layout: RoomLayout): LampSpot[] {
   return out;
 }
 
+/** the door's frame on its wall: where the middle of the doorway is on the wall line, and how the door's own axes are turned (see DoorView in RoomView) */
+const DOOR_TURN = { back: 0, left: Math.PI / 2, front: Math.PI, right: -Math.PI / 2 } as const;
+
+/** The lamp on the porch outside the door, and the patch of porch floor it lights (room space). */
+export function porchLamp(layout: RoomLayout): { bulb: THREE.Vector3; pool: { x: number; z: number; r: number } } {
+  const { door, width: W, depth: D } = layout;
+  const ox = door.wall === 'left' ? -W / 2 : door.wall === 'right' ? W / 2 : door.pos;
+  const oz = door.wall === 'back' ? -D / 2 : door.wall === 'front' ? D / 2 : door.pos;
+  const [bx, bz] = at(ox, oz, DOOR_TURN[door.wall], PORCH_LAMP.x(door.width), -WALL_T + PORCH_LAMP.z);
+  // (the pool lies between the lamp and the doorway, on the porch: it must not spill over the edge of the porch)
+  const [px, pz] = at(ox, oz, DOOR_TURN[door.wall], door.width * 0.3 + 0.2, -WALL_T - 1.1);
+  return { bulb: new THREE.Vector3(bx, PORCH_LAMP.y, bz), pool: { x: px, z: pz, r: 1.1 } };
+}
+
 function quad(pos: number[], uv: number[], idx: number[], x: number, y: number, z: number, r: number) {
   const b = pos.length / 3;
   pos.push(x - r, y, z - r, x + r, y, z - r, x + r, y, z + r, x - r, y, z + r);
@@ -89,10 +104,39 @@ export function RoomLightFx({ layout, roomId, halos, dust }: { layout: RoomLayou
   // (own copies of the shared pool / halo materials: they go dark with this room's lights, see roomLit)
   const poolMat = useMemo(() => FX.pool.clone(), []);
   const haloMat = useMemo(() => HALO.clone(), []);
+  // the porch lamp outside the door is on after dark whether anybody is in or not (and its halo does not shine through the walls)
+  const porch = useMemo(() => {
+    const p = porchLamp(layout);
+    const pool = new THREE.BufferGeometry();
+    const pos: number[] = [];
+    const uv: number[] = [];
+    const idx: number[] = [];
+    quad(pos, uv, idx, p.pool.x, 0.05, p.pool.z, p.pool.r);
+    pool.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    pool.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    pool.setIndex(idx);
+    const halo = new THREE.BufferGeometry();
+    halo.setAttribute('position', new THREE.Float32BufferAttribute([p.bulb.x, p.bulb.y, p.bulb.z], 3));
+    return { pool, halo };
+  }, [layout]);
+  useEffect(() => () => {
+    porch.pool.dispose();
+    porch.halo.dispose();
+  }, [porch]);
+  const porchPoolMat = useMemo(() => FX.pool.clone(), []);
+  const porchHaloMat = useMemo(() => {
+    const m = HALO.clone();
+    m.depthTest = true;
+    // (bigger than a lamp halo indoors: the bulb hides the middle of it)
+    m.size = 3.0;
+    return m;
+  }, []);
   useEffect(() => () => {
     poolMat.dispose();
     haloMat.dispose();
-  }, [poolMat, haloMat]);
+    porchPoolMat.dispose();
+    porchHaloMat.dispose();
+  }, [poolMat, haloMat, porchPoolMat, porchHaloMat]);
 
   // dust: each window's light patch spans from the wall into the room along `dir`
   const windows = useMemo(() => {
@@ -114,6 +158,8 @@ export function RoomLightFx({ layout, roomId, halos, dust }: { layout: RoomLayou
     const lit = litOf(roomId);
     poolMat.opacity = FX.pool.opacity * lit;
     haloMat.opacity = HALO.opacity * lit;
+    porchPoolMat.opacity = FX.pool.opacity * 1.2;
+    porchHaloMat.opacity = HALO.opacity * 1.3;
     const o = pts.current;
     if (!o || !dust || !frame.animRooms.has(roomId)) return;
     const vis = env.day * (1 - env.overcast);
@@ -138,6 +184,8 @@ export function RoomLightFx({ layout, roomId, halos, dust }: { layout: RoomLayou
     <>
       {pools ? <mesh geometry={pools} material={poolMat} renderOrder={3} raycast={() => null} /> : null}
       {halos ? <points geometry={haloGeo} material={haloMat} renderOrder={4} raycast={() => null} frustumCulled={false} /> : null}
+      <mesh geometry={porch.pool} material={porchPoolMat} renderOrder={3} raycast={() => null} />
+      {halos ? <points geometry={porch.halo} material={porchHaloMat} renderOrder={4} raycast={() => null} frustumCulled={false} /> : null}
       {dust ? <points ref={pts} geometry={dustGeo} material={DUST} renderOrder={4} raycast={() => null} frustumCulled={false} /> : null}
     </>
   );

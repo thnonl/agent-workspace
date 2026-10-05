@@ -41,6 +41,8 @@ export const GLOW = {
   }),
   cone: new THREE.MeshBasicMaterial({ color: '#ffe6a8', transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }),
   sunbeam: new THREE.MeshBasicMaterial({ color: '#fff6c8', transparent: true, opacity: 0.26, depthWrite: false, vertexColors: true }),
+  /** the lamp on the porch outside the door: on as soon as it gets dark outside, whether anybody is in or not */
+  porch: new THREE.MeshStandardMaterial({ color: '#fff3b0', roughness: 0.4, emissive: new THREE.Color('#ffd27a'), emissiveIntensity: 0.15 }),
 };
 
 const bulbDim = new THREE.Color('#d8cf9c');
@@ -58,6 +60,7 @@ export function updateGlow() {
   GLOW.glass.color.copy(glassDay).lerp(glassNight, env.night);
   GLOW.glass.opacity = 0.32 + 0.3 * env.night;
   GLOW.cone.opacity = 0.16 * on;
+  GLOW.porch.emissiveIntensity = 0.15 + 1.6 * env.lamps;
   GLOW.sunbeam.color.copy(beamDay).lerp(beamMoon, env.night);
   GLOW.sunbeam.opacity = (0.2 * env.day + 0.07 * env.night) * (1 - 0.85 * env.overcast);
   FX.pool.opacity = 0.5 * env.lamps;

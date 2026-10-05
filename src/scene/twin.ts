@@ -32,6 +32,46 @@ export function litMaterial(skinned = false) {
   };
   return lit;
 }
+/** A light that a screen (laptop, phone) throws on the person in front of it: `pos` in view space, `color` already scaled by its strength. */
+export interface ScreenLight {
+  pos: { value: THREE.Vector3 };
+  color: { value: THREE.Color };
+}
+
+/**
+ * The skinned lit material of one person, with the glow of the screen they look at after dark: the parts that face the screen and are
+ * near it take on its colour (a soft lambert term with a quick fall-off, added as emission, so no real light and no new shader per light).
+ * Every person has their own instance for the uniforms; they all share one shader program.
+ */
+export function screenLitMaterial(): { mat: THREE.MeshStandardMaterial; light: ScreenLight } {
+  const light: ScreenLight = { pos: { value: new THREE.Vector3() }, color: { value: new THREE.Color(0, 0, 0) } };
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true });
+  mat.customProgramCacheKey = () => 'rig-surf-skin-screen';
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uScreenPos = light.pos;
+    shader.uniforms.uScreenCol = light.color;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute vec2 aSurf;\nvarying vec2 vSurf;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSurf = aSurf;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec2 vSurf;\nuniform vec3 uScreenPos;\nuniform vec3 uScreenCol;')
+      .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = vSurf.x;')
+      .replace('#include <metalnessmap_fragment>', 'float metalnessFactor = vSurf.y;')
+      .replace(
+        '#include <emissivemap_fragment>',
+        `#include <emissivemap_fragment>
+        {
+          vec3 toScreen = uScreenPos + vViewPosition;
+          float dist = length(toScreen);
+          float facing = max(dot(normal, toScreen / max(dist, 1e-4)), 0.0);
+          // (capped close up: the hands on the keys must not burn out)
+          totalEmissiveRadiance += uScreenCol * diffuseColor.rgb * (0.15 + facing) * min(0.5, 1.0 / (1.0 + dist * dist * 6.0));
+        }`,
+      );
+  };
+  return { mat, light };
+}
+
 export function twinOf(mat: THREE.Material): { key: string; mat: THREE.Material } | null {
   if (!mat.userData.fixed || mat.transparent) return null;
   let key: string;

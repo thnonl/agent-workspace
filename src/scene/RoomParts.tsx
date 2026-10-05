@@ -15,6 +15,8 @@ import { posterTexture, sloganTexture, worldMapPins, worldMapTexture } from './w
 import { Rng } from '../util/rng';
 
 export const WALL_T = 0.28;
+/** the porch lamp beside the door, in the door's frame on the porch (x along the wall, z out of the room, from the outer face of the wall) */
+export const PORCH_LAMP = { x: (doorWidth: number) => doorWidth / 2 + 0.75, y: 1.78, z: -0.4 };
 
 interface Opening {
   center: number;
@@ -233,10 +235,10 @@ export function DoorView({ door, theme, roomId, localX, cutaway = false }: { doo
         <RB size={[w + 2.4, 0.5, 3.4]} pos={[0, -0.25, -1.7]} color={theme.base} r={0.12} receive />
         <RB size={[w + 2.0, 0.03, 3.0]} pos={[0, 0.0, -1.7]} color={shade(theme.floor, 0.03)} r={0.01} receive rough={0.95} />
         <RB size={[w + 0.2, 0.03, 0.8]} pos={[0, 0.03, -0.55]} color={theme.accent2} r={0.012} rough={0.95} receive />
-        {/* porch lamp */}
-        <group position={[w / 2 + 0.75, 0, -0.4]}>
+        {/* porch lamp (it lights up after dark: GLOW.porch, the light it throws is in RoomLightFx, see porchLamp) */}
+        <group position={[PORCH_LAMP.x(w), 0, PORCH_LAMP.z]}>
           <Ms geo={G.cyl(0.03, 0.04, 1.7, 8)} mat={M('#4b4f63')} pos={[0, 0.85, 0]} />
-          <Ms geo={G.sphere(0.13, 12, 10)} mat={M('#fff3b0', { emissive: '#ffe28a', emissiveIntensity: 0.9 })} pos={[0, 1.78, 0]} cast={false} />
+          <Ms geo={G.sphere(0.13, 12, 10)} mat={GLOW.porch} pos={[0, PORCH_LAMP.y, 0]} cast={false} />
           <Ms geo={G.cone(0.17, 0.12, 12)} mat={M('#4b4f63')} pos={[0, 1.95, 0]} />
         </group>
         <group position={[-w / 2 - 0.7, 0, -0.7]}>
