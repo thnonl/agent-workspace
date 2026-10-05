@@ -29,12 +29,10 @@ test('installKind tells npx, checkout and npm installs apart', () => {
   assert.equal(installKind(fakeRoot('1.0.0')), 'npm');
 });
 
-test('updateCommands repeats the start options but never the token', () => {
+test('updateCommands repeats the start options (not --no-open)', () => {
   const name = '@thnonline/agent-workspace';
-  assert.deepEqual(updateCommands({ name, kind: 'npx', args: ['--host', '0.0.0.0', '--token', 'SECRET1', '--no-open'] }), [
-    `npx ${name}@latest --host 0.0.0.0 --token <token>`,
-  ]);
-  assert.deepEqual(updateCommands({ name, kind: 'npm', args: ['--token=SECRET1'] }), [`npx ${name}@latest --token=<token>`]);
+  assert.deepEqual(updateCommands({ name, kind: 'npx', args: ['--host', '0.0.0.0', '--no-open'] }), [`npx ${name}@latest --host 0.0.0.0`]);
+  assert.deepEqual(updateCommands({ name, kind: 'npm', args: ['--port=5000'] }), [`npx ${name}@latest --port=5000`]);
   assert.deepEqual(updateCommands({ name, kind: 'checkout', dev: true }), ['git pull', 'npm install', 'npm run dev']);
   assert.deepEqual(updateCommands({ name, kind: 'checkout', args: ['-p', '5000'] }), ['git pull', 'npm install', 'npm run build && npm start -- -p 5000']);
 });

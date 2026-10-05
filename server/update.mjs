@@ -41,19 +41,8 @@ export function installKind(root = ROOT) {
   return 'npm';
 }
 
-/** `--token X` / `--token=X` must not end up on a note other machines can read. */
-function safeArgs(args) {
-  const out = [];
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === '--token') {
-      out.push(a, '<token>');
-      i++;
-    } else if (a.startsWith('--token=')) out.push('--token=<token>');
-    else if (a !== '--no-open') out.push(a);
-  }
-  return out;
-}
+/** the start options worth repeating (`--no-open` is not: the update is started by hand on the host) */
+const safeArgs = (args) => args.filter((a) => a !== '--no-open');
 
 /** The commands to type on the host, in order (the server has to be stopped first: Ctrl+C in its terminal). A git checkout updates itself. */
 export function updateCommands({ name, kind, args = [], dev = false }) {

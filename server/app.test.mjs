@@ -36,7 +36,7 @@ test('static server: encodings, traversal, malformed URLs, missing files', async
   fs.writeFileSync(path.join(root, 'index.html.gz'), zlib.gzipSync(html));
   fs.writeFileSync(path.join(root, 'assets', 'a-123.js'), js);
   fs.writeFileSync(path.join(root, 'assets', 'a-123.js.gz'), zlib.gzipSync(js)); // gzip only
-  const server = createAppServer({ root, monitor, token: 'test-token' });
+  const server = createAppServer({ root, monitor });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const port = server.address().port;
   try {

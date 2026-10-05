@@ -6,7 +6,6 @@ interface ConnectInfo {
   port: number;
   bound: string;
   addresses: { address: string; name: string }[];
-  token: string;
   apkUrl: string;
   releasesUrl: string;
 }
@@ -30,9 +29,9 @@ export const appBridge = (): AppBridge | undefined => (typeof window === 'undefi
 export const onPhone = typeof navigator !== 'undefined' && /AgentWorkspaceApp|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 
 /**
- * Settings → Connect a device: the address phones and other computers on the network can use, the access token and a QR code. The QR code
- * opens the server's /m page, which starts the Android app (or downloads it from the latest GitHub release); the app's
- * own scanner reads the address and the token straight from it.
+ * Settings → Connect a device: the address phones and other computers on the network can use, and a QR code. The QR code opens the
+ * server's /m page, which starts the Android app (or downloads it from the latest GitHub release); the app's own scanner reads the
+ * address straight from it.
  */
 export function ConnectPhone() {
   const [info, setInfo] = useState<ConnectInfo | null>(null);
@@ -51,7 +50,7 @@ export function ConnectPhone() {
   }, []);
 
   const address = info?.addresses[Math.min(pick, info.addresses.length - 1)]?.address;
-  const link = info && address ? `http://${address}:${info.port}/m?t=${encodeURIComponent(info.token)}` : '';
+  const link = info && address ? `http://${address}:${info.port}/m` : '';
   const svg = useMemo(() => (showQr && link ? renderSVG(link, { border: 2, whiteColor: '#ffffff', blackColor: '#1d1b2e' }) : ''), [showQr, link]);
 
   if (failed) return <p className="muted">The server did not answer – connecting a device needs <code>npm start</code> or <code>npx @thnonline/agent-workspace</code>.</p>;
@@ -81,8 +80,6 @@ export function ConnectPhone() {
         <code>{address}</code>
         <span>Port</span>
         <code>{info.port}</code>
-        <span>Token</span>
-        <code className="connect-token">{info.token}</code>
       </div>
       <div className="set-row">
         <button type="button" className={`btn${showQr ? ' btn-on' : ''}`} aria-pressed={showQr} onClick={() => setShowQr(!showQr)}>
@@ -94,7 +91,7 @@ export function ConnectPhone() {
       </div>
       {showQr ? <div className="connect-qr" role="img" aria-label={`QR code for ${link}`} dangerouslySetInnerHTML={{ __html: svg }} /> : null}
       <p className="muted">
-        On a phone, scan the code with the camera or with the Agent Workspace app. With the app installed it connects right away; without it, the phone downloads the newest app from GitHub. On another computer, open the address in a browser and type the token. The device must be on the same network, and the firewall must let port {info.port} through. Anyone with the token or this code can watch your sessions – keep them to yourself.
+        On a phone, scan the code with the camera or with the Agent Workspace app. With the app installed it connects right away; without it, the phone downloads the newest app from GitHub. On another computer, open the address in a browser. The device must be on the same network, and the firewall must let port {info.port} through. Anyone who can reach this address can watch your sessions.
       </p>
     </>
   );

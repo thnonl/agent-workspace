@@ -24,7 +24,7 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- agentworkspace://connect?h=<ip>&p=<port>&t=<token>: opened by the server's /m page behind the QR code -->
+            <!-- agentworkspace://connect?h=<ip>&p=<port>: opened by the server's /m page behind the QR code -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />

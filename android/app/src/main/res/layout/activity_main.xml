@@ -99,21 +99,9 @@
                 style="@style/Field"
                 android:hint="4173"
                 android:importantForAutofill="no"
+                android:imeOptions="actionGo"
                 android:inputType="number"
                 android:maxLength="5" />
-
-            <TextView
-                style="@style/Label"
-                android:labelFor="@+id/token"
-                android:text="@string/token_label" />
-
-            <EditText
-                android:id="@+id/token"
-                style="@style/Field"
-                android:hint="@string/token_hint"
-                android:imeOptions="actionGo"
-                android:importantForAutofill="no"
-                android:inputType="textCapCharacters|textNoSuggestions|textVisiblePassword" />
 
             <Button
                 android:id="@+id/connect"

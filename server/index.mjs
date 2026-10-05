@@ -5,7 +5,6 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createMonitor } from './monitor.mjs';
 import { createAppServer } from './app.mjs';
-import { loadToken } from './mobile.mjs';
 import { createUpdateCheck } from './update.mjs';
 
 const HELP = `Agent Workspace – watch your Claude Code, Codex and OpenCode sessions as a 3D office
@@ -14,8 +13,6 @@ Usage: agent-workspace [options]
 
   -p, --port <n>   port to listen on (default 4173, or $PORT)
       --host <ip>  address to listen on (default 127.0.0.1; 0.0.0.0 shares the page with your network)
-      --token <t>  access token other machines (phones) must bring (default: a random one,
-                   saved in ~/.agent-workspace/token; or $AGENT_WORKSPACE_TOKEN)
       --no-open    do not open the browser
   -h, --help       show this text
 `;
@@ -55,7 +52,7 @@ const monitor = createMonitor();
 
 // (the update note repeats the options this server was started with)
 const update = createUpdateCheck({ args });
-const server = createAppServer({ root, monitor, token: loadToken({ explicit: option(args, '--token') }), update });
+const server = createAppServer({ root, monitor, update });
 server.on('error', (err) => {
   console.error(err.code === 'EADDRINUSE' ? `Port ${port} is already in use – try --port <n>.` : err.message);
   process.exit(1);
@@ -63,7 +60,7 @@ server.on('error', (err) => {
 server.listen(port, host, () => {
   const url = `http://${host === '0.0.0.0' || host === '::' ? 'localhost' : host}:${port}`;
   console.log(`Agent Workspace → ${url}`);
-  if (!['127.0.0.1', 'localhost', '::1'].includes(host)) console.log('Phones and other machines: Settings → Connect a device shows the token and the QR code');
+  if (!['127.0.0.1', 'localhost', '::1'].includes(host)) console.log('Phones and other machines: Settings → Connect a device shows the address and the QR code');
   for (const [name, source] of Object.entries(monitor.sources)) if (source) console.log(`Watching ${name}`);
   console.log(`Sessions stay for ${Math.round(monitor.windowMs / 60000)} min after their last activity`);
   if (!args.includes('--no-open')) openBrowser(url);

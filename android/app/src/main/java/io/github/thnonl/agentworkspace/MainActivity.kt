@@ -5,7 +5,6 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.os.Bundle
 import android.os.SystemClock
-import android.text.InputFilter
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.webkit.CookieManager
@@ -13,7 +12,6 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
@@ -30,7 +28,7 @@ import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 
 /**
- * One screen: the connect form (scan the QR code, or type IP, port and token) and, once connected, the office in a
+ * One screen: the connect form (scan the QR code, or type IP and port) and, once connected, the office in a
  * WebView. The page comes from the computer itself, so the app never needs an update for a new web version.
  */
 class MainActivity : ComponentActivity() {
@@ -39,7 +37,6 @@ class MainActivity : ComponentActivity() {
     private lateinit var panel: View
     private lateinit var hostInput: EditText
     private lateinit var portInput: EditText
-    private lateinit var tokenInput: EditText
     private lateinit var errorText: TextView
 
     private val prefs by lazy { getSharedPreferences("connect", MODE_PRIVATE) }
@@ -69,14 +66,11 @@ class MainActivity : ComponentActivity() {
         panel = findViewById(R.id.panel)
         hostInput = findViewById(R.id.host)
         portInput = findViewById(R.id.port)
-        tokenInput = findViewById(R.id.token)
         errorText = findViewById(R.id.error)
-        // tokens are typed in capitals (the server ignores case, so a custom lower-case token still works)
-        tokenInput.filters = tokenInput.filters + InputFilter.AllCaps()
         findViewById<TextView>(R.id.version).text = getString(R.string.version, BuildConfig.VERSION_NAME)
         findViewById<Button>(R.id.scan).setOnClickListener { startScan() }
         findViewById<Button>(R.id.connect).setOnClickListener { connectFromForm() }
-        tokenInput.setOnEditorActionListener { _, action, _ ->
+        portInput.setOnEditorActionListener { _, action, _ ->
             if (action == EditorInfo.IME_ACTION_GO) connectFromForm()
             action == EditorInfo.IME_ACTION_GO
         }
@@ -161,10 +155,6 @@ class MainActivity : ComponentActivity() {
                 if (!request.isForMainFrame || panel.isVisible) return
                 disconnect(getString(R.string.err_unreachable, server?.label ?: "", error.description))
             }
-
-            override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
-                if (request.isForMainFrame && response.statusCode == 401 && !panel.isVisible) disconnect(getString(R.string.err_token))
-            }
         }
     }
 
@@ -193,7 +183,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun connectFromForm() {
-        val typed = Server.of(hostInput.text.toString(), portInput.text.toString(), tokenInput.text.toString())
+        val typed = Server.of(hostInput.text.toString(), portInput.text.toString())
         if (typed == null) showPanel(getString(R.string.err_input)) else connect(typed)
     }
 
@@ -224,6 +214,5 @@ class MainActivity : ComponentActivity() {
     private fun fill(target: Server?) {
         hostInput.setText(target?.host ?: "")
         portInput.setText((target?.port ?: Server.DEFAULT_PORT).toString())
-        tokenInput.setText(target?.token ?: "")
     }
 }
