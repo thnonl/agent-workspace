@@ -9,7 +9,7 @@ export type BagKind = 'backpack' | 'rolltop' | 'minipack' | 'sling' | 'messenger
 export type TopStyle =
   | 'tee' | 'hoodie' | 'shirt' | 'sweater' | 'dress' | 'overalls' | 'suit' | 'jacket' | 'tank'
   | 'blazer' | 'vest' | 'cardigan' | 'polo' | 'coat' | 'stripe';
-export type BottomStyle = 'pants' | 'shorts' | 'skirt' | 'none' | 'slacks' | 'joggers' | 'midi';
+export type BottomStyle = 'pants' | 'shorts' | 'skirt' | 'none' | 'slacks' | 'joggers';
 export type ShoeStyle = 'sneaker' | 'loafer' | 'boot' | 'mary-jane';
 /** worn on the head instead of a hat: hair accessories, ear gear, ears */
 export type Accessory =
@@ -101,7 +101,9 @@ export function makeAppearance(seed: number, opts: { director?: boolean } = {}):
   let bottom: BottomStyle;
   if (director) {
     top = w.weighted<TopStyle>([['suit', 5], ['vest', 1.4], ['blazer', 1.6], ['coat', 0.5]]);
-    bottom = fem && w.chance(0.5) ? (w.chance(0.4) ? 'midi' : 'skirt') : w.chance(0.7) ? 'slacks' : 'pants';
+    bottom = fem && w.chance(0.5) ? 'skirt' : w.chance(0.7) ? 'slacks' : 'pants';
+    // (every skirt is a short one: the draw that picked a long one is still made, so everything drawn after it stays the same)
+    if (bottom === 'skirt') w.chance(0.4);
   } else {
     top = r.weighted<TopStyle>([
       ['tee', 3], ['hoodie', 2.4], ['shirt', 2], ['sweater', 2], ['dress', fem ? 3 : nb ? 1 : 0.15],
@@ -118,7 +120,7 @@ export function makeAppearance(seed: number, opts: { director?: boolean } = {}):
     if (bottom === 'pants') {
       if (FORMAL_TOPS.includes(top) && w.chance(0.65)) bottom = 'slacks';
       else if (w.chance(0.2)) bottom = 'joggers';
-    } else if (bottom === 'skirt' && w.chance(0.35)) bottom = 'midi';
+    } else if (bottom === 'skirt') w.chance(0.35); // (was the long skirt, see above)
   }
   // (kept as a draw of its own so the streams stay in step; the value only matters for the head accessory)
   const headAcc = r.weighted<Accessory>([
@@ -162,7 +164,7 @@ export function makeAppearance(seed: number, opts: { director?: boolean } = {}):
   const earrings: Earrings = w.weighted<Earrings>([['none', fem ? 3 : nb ? 5 : 12], ['studs', 1.5], ['hoops', fem ? 1.4 : 0.3], ['drops', fem ? 1 : 0.1]]);
   const shoeStyle: ShoeStyle = FORMAL_TOPS.includes(top) || top === 'coat' || bottom === 'slacks'
     ? w.weighted<ShoeStyle>([['loafer', 4], ['boot', 1.4], ['mary-jane', fem ? 1.2 : 0], ['sneaker', 1]])
-    : bottom === 'skirt' || bottom === 'midi' || top === 'dress'
+    : bottom === 'skirt' || top === 'dress'
       ? w.weighted<ShoeStyle>([['mary-jane', 3], ['sneaker', 3], ['boot', 2], ['loafer', 1.5]])
       : w.weighted<ShoeStyle>([['sneaker', 6], ['boot', 1.4], ['loafer', 1]]);
   const pocketSquare = (top === 'suit' || top === 'blazer') && w.chance(director ? 0.55 : 0.4);

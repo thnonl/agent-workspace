@@ -101,7 +101,11 @@ export function buildCharacter(a: Appearance): Rig {
 
   // ------------------------------------------------------------------ legs
   const shortsLeg = a.bottom === 'shorts';
-  const bareLeg = a.bottom === 'skirt' || a.bottom === 'none' || a.bottom === 'midi';
+  const bareLeg = a.bottom === 'skirt' || a.bottom === 'none';
+  // a short skirt (also the skirt of a dress) is cut like a pair of shorts: the seat is the hip block in the skirt's fabric, and each thigh
+  // wears a panel that sits close at the top, like a trouser leg, and flares out to the hem. Everything below the waist belongs to the
+  // legs, so it folds forward with them when the person sits (a skirt hanging straight down from the hips went through the desk).
+  const skirtMat = a.top === 'dress' ? topMat : a.bottom === 'skirt' ? bottomMat : null;
   const legs = (side: -1 | 1) => {
     // one continuous leg: a tapered thigh, a round knee of the same radius, a tapered shin. Trousers are the limb itself
     // in the fabric colour; shorts are a tube pulled over the skin limb.
@@ -118,6 +122,12 @@ export function buildCharacter(a: Appearance): Rig {
       const rHem = rHip - (rHip - rKnee) * (hemY / THIGH) + 0.012;
       thigh.add(mesh(G.sleeve(rHip + 0.012, rHem, hemY), bottomMat, 0, 0, 0));
       thigh.add(mesh(G.torus(rHem, 0.011, Math.PI * 2, 6, 20), bottomMat, 0, -hemY, 0, { r: [Math.PI / 2, 0, 0], cast: false }));
+    }
+    if (skirtMat) {
+      const hemY = 0.14;
+      const rHem = rHip + 0.05;
+      thigh.add(mesh(G.sleeve(rHip + 0.012, rHem, hemY), skirtMat, 0, 0, 0));
+      thigh.add(mesh(G.torus(rHem, 0.012, Math.PI * 2, 6, 20), accentMat, 0, -hemY, 0, { r: [Math.PI / 2, 0, 0], cast: false }));
     }
     const knee = group(0, -THIGH, 0);
     thigh.add(knee);
@@ -164,17 +174,7 @@ export function buildCharacter(a: Appearance): Rig {
   const { thigh: thighR, knee: kneeR } = legs(1);
 
   // hip block (hides the gap between legs and torso)
-  pelvis.add(mesh(G.sphere(0.2, 18, 12), a.bottom === 'skirt' || a.top === 'dress' ? (a.top === 'dress' ? topMat : bottomMat) : bottomMat, 0, HIP_Y + 0.02, 0, { s: [1.05, 0.7, 0.85] }));
-  if (a.bottom === 'skirt') {
-    pelvis.add(mesh(G.cyl(0.2, 0.36, 0.26, 24), bottomMat, 0, HIP_Y - 0.06, 0));
-    pelvis.add(mesh(G.torus(0.36, 0.014, Math.PI * 2, 6, 32), accentMat, 0, HIP_Y - 0.185, 0, { r: [Math.PI / 2, 0, 0], cast: false }));
-  }
-  if (a.bottom === 'midi' && a.top !== 'coat') {
-    // a long skirt down to the calves
-    pelvis.add(mesh(G.cyl(0.2, 0.4, 0.42, 24), bottomMat, 0, HIP_Y - 0.14, 0));
-    pelvis.add(mesh(G.torus(0.4, 0.014, Math.PI * 2, 6, 32), accentMat, 0, HIP_Y - 0.35, 0, { r: [Math.PI / 2, 0, 0], cast: false }));
-    pelvis.add(mesh(G.torus(0.21, 0.02, Math.PI * 2, 6, 24), accentMat, 0, HIP_Y + 0.03, 0, { r: [Math.PI / 2, 0, 0], cast: false }));
-  }
+  pelvis.add(mesh(G.sphere(0.2, 18, 12), skirtMat ?? bottomMat, 0, HIP_Y + 0.02, 0, { s: [1.05, 0.7, 0.85] }));
   if (a.top === 'coat') {
     // the coat flares below the waist all the way to the knees
     const coatDark = M(shade(a.topColor, -0.08), { rough: 0.75 });
@@ -186,10 +186,6 @@ export function buildCharacter(a: Appearance): Rig {
       const t = i / 2;
       { const y = HIP_Y - 0.03 - t * 0.28; pelvis.add(mesh(G.sphere(0.016, 8, 6), coatDark, 0, y, 0.21 + 0.21 * ((HIP_Y + 0.06 - y) / 0.42) + 0.008, { cast: false })); }
     }
-  }
-  if (a.top === 'dress') {
-    pelvis.add(mesh(G.cyl(0.2, 0.4, 0.32, 24), topMat, 0, HIP_Y - 0.08, 0));
-    pelvis.add(mesh(G.torus(0.4, 0.016, Math.PI * 2, 6, 32), accentMat, 0, HIP_Y - 0.235, 0, { r: [Math.PI / 2, 0, 0], cast: false }));
   }
 
   // ----------------------------------------------------------------- torso
