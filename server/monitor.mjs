@@ -58,6 +58,36 @@ export function projectRoot(cwd, dirName) {
   return '';
 }
 
+/**
+ * Where an agent's result used to be, Claude Code may only say that the report travels as a message of its own (a "hand-back"):
+ * `This agent's report was delivered to you as a message from "<agent id>" (its SubagentHandback call)…`
+ */
+const HANDBACK_STUB = /report was delivered to you as a message from "([^"]+)"/i;
+/** How long an agent that is done waits for its hand-back report before it ends without one (ms) */
+const HANDBACK_WAIT_MS = 10_000;
+
+/** The report inside a hand-back message: the frame's preamble cut off, the harness's two-space indent taken back. */
+export function handbackReport(body) {
+  const mark = 'The report follows:';
+  const at = body.indexOf(mark);
+  const text = (at >= 0 ? body.slice(at + mark.length) : body).replace(/<\/agent-message>[\s\S]*$/, '');
+  return text
+    .split('\n')
+    .map((l) => l.replace(/^ {2}/, ''))
+    .join('\n')
+    .trim();
+}
+
+/** The hand-back messages in a piece of text (`<agent-message from="<agent id>">[Subagent hand-back] …`): [{ from, report }] */
+export function handbacksIn(text) {
+  const out = [];
+  if (typeof text !== 'string' || !text.includes('[Subagent hand-back]')) return out;
+  const re = /<agent-message from="([^"]+)">([\s\S]*?)(?:<\/agent-message>|$)/g;
+  let m;
+  while ((m = re.exec(text))) if (m[2].includes('[Subagent hand-back]')) out.push({ from: m[1], report: handbackReport(m[2]) });
+  return out;
+}
+
 class Session {
   constructor(id, file, dirName, provider = 'claude') {
     this.id = id;
@@ -83,7 +113,9 @@ class Session {
     this.shellLabels = new Map();
     /** the main agent waits for the user: { id of the interactive tool call, text, full } */
     this.ask = null;
-    this.agents = new Map(); // toolUseId -> { id,label,agentType,status,lastSay,asyncId,lastAt,background }
+    this.agents = new Map(); // toolUseId -> { id,label,agentType,status,lastSay,asyncId,lastAt,background,awaitReport }
+    /** agent id -> its final report, sent as a hand-back message of its own (see handbacksIn) */
+    this.handbacks = new Map();
     this.subFiles = new Map(); // file -> { state, key, metaTried }
     this.lastLineAt = 0;
     /** when the last line of the conversation was written (not a housekeeping line, see pollMain); 0 = not known */
@@ -284,8 +316,28 @@ export function createMonitor({
   const finishAgent = (s, id, summary, failed = false) => {
     const ag = s.agents.get(id);
     if (!ag || ag.status !== 'running') return;
+    const stub = HANDBACK_STUB.exec(summary || '');
+    if (stub) {
+      // the result only points at the hand-back message: its report is the summary – once it is there (see noteHandback)
+      const report = s.handbacks.get(stub[1]) || (ag.asyncId && s.handbacks.get(ag.asyncId));
+      if (report) summary = report;
+      else if (!ag.awaitReport) {
+        ag.awaitReport = { from: stub[1], failed, at: s.silent ? 0 : Date.now() };
+        return;
+      } else summary = '';
+    }
     ag.status = 'done';
     out(s, { type: 'agent_done', sessionId: s.id, agentId: id, summary: clip(summary, 260), failed });
+  };
+
+  /** A hand-back message: the final report of agent `from`. An agent that is already done and waits for it ends with it. */
+  const noteHandback = (s, from, report) => {
+    if (!from || !report) return;
+    s.handbacks.set(from, report);
+    if (s.handbacks.size > 50) s.handbacks.delete(s.handbacks.keys().next().value);
+    for (const ag of s.agents.values()) {
+      if (ag.status === 'running' && (ag.awaitReport?.from === from || (ag.awaitReport && ag.asyncId === from))) finishAgent(s, ag.id, report, ag.awaitReport.failed);
+    }
   };
 
   /** The agent / background task with this task id: the running one if there is one, else the latest. */
@@ -389,7 +441,9 @@ export function createMonitor({
       if (tur?.agentId) ag.asyncId = tur.agentId;
       return; // real completion arrives as a <task-notification>
     }
-    finishAgent(s, id, text, block.is_error === true);
+    // (the result may only point at a hand-back message: the report itself comes along with it)
+    const report = typeof tur?.handbackReport?.text === 'string' ? tur.handbackReport.text.trim() : '';
+    finishAgent(s, id, report || text, block.is_error === true);
   };
 
   const handleBlocks = (s, ownerKey, content, stopReason) => {
@@ -436,13 +490,28 @@ export function createMonitor({
         if (o.customTitle) s.customTitle = clip(o.customTitle, 60);
         break;
       case 'queue-operation':
-        if (o.operation === 'enqueue' && typeof o.content === 'string') handleNotifications(s, o.content);
+        if (o.operation === 'enqueue' && typeof o.content === 'string') {
+          for (const h of handbacksIn(o.content)) noteHandback(s, h.from, h.report);
+          handleNotifications(s, o.content);
+        }
+        break;
+      case 'attachment':
+        // (a message queued while the agent was busy: a hand-back report may come this way)
+        if (o.attachment?.type === 'queued_command') for (const h of handbacksIn(o.attachment.prompt)) noteHandback(s, h.from, h.report);
         break;
       case 'system':
         if (o.subtype === 'turn_duration') mainEnd(s);
         break;
       case 'user': {
+        // a sub-agent's final report, sent as a message of its own: no prompt of the user (the main agent reads it in a turn of its own)
+        const backs = typeof o.message?.content === 'string' ? handbacksIn(o.message.content) : [];
+        if (o.origin?.handback && typeof o.origin.body === 'string') noteHandback(s, String(o.origin.from || ''), handbackReport(o.origin.body));
+        else for (const h of backs) noteHandback(s, h.from, h.report);
         if (o.isMeta) break;
+        if (backs.length || o.origin?.handback) {
+          mainStart(s);
+          break;
+        }
         const c = o.message?.content;
         if (typeof c === 'string') {
           if (handleNotifications(s, c)) {
@@ -704,6 +773,11 @@ export function createMonitor({
     // An open turn ends by itself (end_turn, turn_duration, Esc): the model may think for minutes without writing a line.
     if (s.mainActive && turnStale(s, now)) mainEnd(s);
     for (const ag of runningAgents(s)) {
+      // done, but the hand-back report never came: it ends without one
+      if (ag.awaitReport) {
+        if (now - ag.awaitReport.at > HANDBACK_WAIT_MS) finishAgent(s, ag.id, '', ag.awaitReport.failed);
+        continue;
+      }
       if (ag.background) {
         if (backgroundGone(s, now)) finishAgent(s, ag.id, 'Stopped: the session is no longer running', true);
         continue;
