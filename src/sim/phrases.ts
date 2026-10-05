@@ -1,17 +1,41 @@
 /**
  * Everything the office people say without being told what to say: greetings at the door, the thought that comes
  * with every break, the lines while they eat, goodbyes, small talk. Every pool is long so it does not get boring;
- * `pick` never returns the same line twice in a row from one pool.
+ * `pick` deals every line of a pool once before any comes again. More lines live in phrasesMore*.ts (plain data, added
+ * at the end of this file).
  */
 
-const lastOf = new WeakMap<readonly unknown[], number>();
+import type { NamedPool, PhraseExtra, PlainPool } from './phraseExtra';
+import { MORE as MORE1 } from './phrasesMore1';
+import { MORE as MORE2 } from './phrasesMore2';
+import { MORE as MORE3 } from './phrasesMore3';
+import { MORE as MORE4 } from './phrasesMore4';
+import { MORE as MORE5 } from './phrasesMore5';
 
+/** per pool: the shuffled indices still to come (a deck), the pool size it was dealt for and the last index dealt */
+const decks = new WeakMap<readonly unknown[], { left: number[]; size: number; last: number }>();
+
+/**
+ * A random line from the pool, dealt like cards from a shuffled deck: every line comes once before any line comes
+ * again, and a new deck never starts with the line the old one ended on.
+ */
 export function pick<T>(pool: readonly T[]): T {
   if (pool.length === 1) return pool[0];
-  let i = Math.floor(Math.random() * pool.length);
-  if (i === lastOf.get(pool)) i = (i + 1 + Math.floor(Math.random() * (pool.length - 1))) % pool.length;
-  lastOf.set(pool, i);
-  return pool[i];
+  let d = decks.get(pool);
+  if (!d || d.size !== pool.length) d = { left: [], size: pool.length, last: -1 };
+  if (!d.left.length) {
+    const ids = Array.from({ length: pool.length }, (_, i) => i);
+    for (let i = ids.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [ids[i], ids[j]] = [ids[j], ids[i]];
+    }
+    // dealt from the end: keep the last line of the old deck away from the first card of the new one
+    if (ids[ids.length - 1] === d.last) [ids[0], ids[ids.length - 1]] = [ids[ids.length - 1], ids[0]];
+    d.left = ids;
+  }
+  d.last = d.left.pop()!;
+  decks.set(pool, d);
+  return pool[d.last];
 }
 
 // ------------------------------------------------------------------ at the door
@@ -839,3 +863,31 @@ TABLE_LINES.push(
   'Five more minutes. Then five more.', 'Do you think the boss knows we’re here?', 'My mug says “World’s Okayest Developer”.', 'I dropped a noodle. It’s gone now.',
   'Best meeting of the day – and no slides!', 'Spill the tea. Not literally!', 'My coffee is getting cold, like my motivation.', 'Anybody want to hear about my weekend? No? Okay.',
 );
+
+// ------------------------------------------------------- the extra batches (phrasesMore*.ts)
+const PLAIN: Record<PlainPool, string[]> = {
+  OPEN_MORNING, OPEN_AFTERNOON, OPEN_EVENING, OPEN_ANY, HELLO_DIRECTOR, BOSS_MORNING, BOSS_AFTERNOON, BOSS_EVENING, HELLO_BOSS, HELLO_BOSS_TEAM,
+  BYE_DIRECTOR, BYE_BOSS, BYE_BOSS_TEAM, WANDER, SOFA, WINDOW, PET, WATER, COFFEE, FISH, WASH, PLANTS, COOK, BOX, LIFT,
+  MUSIC, VIDEO, BROWSE, GAME, CALL, SHOP, MAIL, PARCEL, TIDY, SMOKE, SLEEP, LOUNGE, PLAY_BOSS, PLAY_VERSUS, PLAY_END_WIN, PLAY_END_LOSE,
+  TIRED, NET_SLOW, PHONE, WC_HURRY, WC_PLAIN, WC_PHONE, WC_BOOK, WC_NONE, WASH_HANDS, TABLE_COFFEE, TABLE_MEAL,
+  UNBOXED_ANY, FETCH_COFFEE, FETCH_MEAL, CARRY_DESK: CARRY_TO.desk, CARRY_TABLE: CARRY_TO.table, CARRY_SOFA: CARRY_TO.sofa,
+  ACK, ACK_CALL, SERVE, EAT, REPORT_OK, REPORT_FAIL, DONE_OK, DONE_FAILED, DONE_BIG, DONE_HINT, TABLE_LINES,
+};
+const NAMED: Record<NamedPool, ((n: string) => string)[]> = {
+  HELLO_MATE_MORNING: HELLO_MATE[0], HELLO_MATE_AFTERNOON: HELLO_MATE[1], HELLO_MATE_EVENING: HELLO_MATE[2], HELLO_MATE_ANY, WATCH, CHAT, PLAY_JOIN,
+};
+/** `{key}` in a line becomes the value */
+const fill = (line: string, vals: Record<string, string>) => line.replace(/\{(\w)\}/g, (m, k: string) => vals[k] ?? m);
+
+function addExtra(x: PhraseExtra) {
+  for (const [k, lines] of Object.entries(x.plain ?? {})) PLAIN[k as PlainPool].push(...lines);
+  for (const [k, lines] of Object.entries(x.named ?? {})) NAMED[k as NamedPool].push(...lines.map((l) => (n: string) => fill(l, { n })));
+  for (const [k, lines] of Object.entries(x.play ?? {})) (PLAY[k] ??= []).push(...lines);
+  READ.push(...(x.read ?? []).map((l) => (b: string) => fill(l, { b })));
+  SCROLL_TARGETS.push(...(x.scrollTargets ?? []));
+  SCROLL_OPENERS.push(...(x.scrollOpeners ?? []).map((l) => (t: string) => fill(l, { x: t })));
+  SCROLL_FULL.push(...(x.scrollFull ?? []));
+  UNBOXED.push(...(x.unboxed ?? []).map((l) => (n: string) => fill(l, { n, N: cap(n) })));
+  CHAT_SCRIPTS.push(...(x.chatScripts ?? []));
+}
+for (const x of [MORE1, MORE2, MORE3, MORE4, MORE5]) addExtra(x);

@@ -4,7 +4,7 @@ import type { V2 } from '../world/nav';
 import { sfx, type Sfx } from '../audio';
 import { env } from '../env';
 import { frame, SLOW_MAX_DT } from './frame';
-import { CHAT_SCRIPTS, TABLE_LINES, eatLine, goodbyeLine, greetingLine, grumbleLine, playLines, reportLine, serveLine, thoughts } from './phrases';
+import { CHAT_SCRIPTS, TABLE_LINES, eatLine, goodbyeLine, greetingLine, grumbleLine, pick as pickLine, playLines, reportLine, serveLine, thoughts } from './phrases';
 import { kickDummy, takeDumbbells } from './gym';
 import { notePet } from '../progress';
 import { HIRE_GAP_MS, HURRY_QUEUE, claimLate, commitDelivery, debugFlags, lateAvailable, movedIfAny, movedOf, notifyMoved, dismissIdle, enqueueSpeech, greet, parcelDone, releaseLate, roomRuntime, tickParcel, sims, simsInRoom, spotOwners, type CatSim, type Phase, type RoomRuntime, type SimState } from './registry';
@@ -1967,7 +1967,7 @@ export class Actor {
         for (const off of [0.95, -0.95]) {
           const target = { x: d.seat.x + lat.x * off - f.x * 0.25, z: d.seat.z + lat.z * off - f.z * 0.25 };
           if (!free(target)) continue;
-          const script = pick(CHAT_SCRIPTS);
+          const script = pickLine(CHAT_SCRIPTS);
           w.chatBy = s.key; // the colleague stays put until the chat is over
           return { kind, target, yaw: Math.atan2(d.seat.x - target.x, d.seat.z - target.z), dur: script.length * CHAT_LINE_S + 2.5, partnerKey: w.key, script, detail: ctx.nameOf(w.key) };
         }
@@ -2408,7 +2408,7 @@ export class Actor {
     if (mates.length && t > 2.5 && (!talk || now > talk.until) && now > (talk?.next ?? 0) && Math.random() < dt * 0.3) {
       talk = { by: s.key, until: now + 3.4, next: now + 4.5 + Math.random() * 4 };
       tableTalk.set(tk, talk);
-      enqueueSpeech(s.key, { kind: 'idle', text: pickOne(TABLE_LINES), tool: 'talk' }, true);
+      enqueueSpeech(s.key, { kind: 'idle', text: pickLine(TABLE_LINES), tool: 'talk' }, true);
       sfx('talk', s.roomId);
     }
     const speaking = !!talk && talk.by === s.key && now < talk.until;
