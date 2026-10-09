@@ -501,12 +501,13 @@ export function RoomHeader() {
 
 const PROVIDER_SHORT: Record<Provider, string> = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' };
 
-/** one switch per provider that has rooms in the list (only when there are two or more): any mix can be on, never none */
+/** one switch per provider that has rooms in the list (only when there are two or more, and not on a phone): any mix can be on, never none */
 function ProviderFilter() {
   const present = useStore(useShallow(listProviders));
   const off = useStore((s) => s.providerOff);
   const toggle = useStore((s) => s.toggleProvider);
-  if (present.length < 2) return null;
+  const narrow = useStore((s) => s.narrow);
+  if (present.length < 2 || narrow) return null;
   const onCount = present.filter((p) => !off.includes(p)).length;
   return (
     <div className="switcher-filter" role="group" aria-label="Providers shown in the list">
@@ -619,6 +620,12 @@ export function RoomSwitcher() {
   if (!order.length) return null;
   const idleCount = matchingRooms.filter((id) => !(status[id] ?? NO_STATUS).working).length;
   const more = matchingRooms.length - order.length;
+  // at the foot of the column on a wide screen, at the right end of the row above the strip on phones and tablets (CSS shows one of the two)
+  const releaseButton = (where: 'head' | 'foot') => (
+    <button className={`room-clear room-clear-${where}`} onClick={askReleaseAll} title="Take every room that is not working right now off the list (nothing is deleted)">
+      <Icon name="archive" size={14} /> Release {idleCount === matchingRooms.length ? 'all' : idleCount} idle room{idleCount > 1 ? 's' : ''}
+    </button>
+  );
   return (
     <nav className="switcher" aria-label="Sessions" ref={navRef}>
       {/* phones and tablets: the strip covers the bottom of the room, so it can be folded away right where it is (the status pill in the top bar does the same) */}
@@ -628,6 +635,7 @@ export function RoomSwitcher() {
           <Icon name={show ? 'chevron-down' : 'chevron-up'} size={14} />
         </button>
         {show ? <ProviderFilter /> : null}
+        {show && idleCount ? releaseButton('head') : null}
       </div>
       {show ? (
       <div className="switcher-box" id="switcher-list">
@@ -676,13 +684,7 @@ export function RoomSwitcher() {
         ) : null}
       </div>
       {/* outside the scrolling part: always in reach, however long the list is */}
-      {idleCount ? (
-        <div className="switcher-foot">
-          <button className="room-clear" onClick={askReleaseAll} title="Take every room that is not working right now off the list (nothing is deleted)">
-            <Icon name="archive" size={14} /> Release {idleCount === matchingRooms.length ? 'all' : idleCount} idle room{idleCount > 1 ? 's' : ''}
-          </button>
-        </div>
-      ) : null}
+      {idleCount ? <div className="switcher-foot">{releaseButton('foot')}</div> : null}
       </div>
       ) : null}
     </nav>

@@ -454,11 +454,8 @@ kbd { font-family: 'JetBrains Mono Variable', monospace; font-size: 12px; paddin
 /* the session list becomes a strip along the bottom, the character panel a sheet above it */
 @media (max-width: 1040px) {
   .switcher { left: 14px; right: 14px; top: auto; bottom: 14px; width: auto; }
-  .switcher-box { flex-direction: row; align-items: stretch; }
-  .switcher-list { flex: 1 1 auto; min-width: 0; flex-direction: row; align-items: stretch; overflow-x: auto; overflow-y: hidden; }
-  .switcher-foot { flex-direction: row; align-items: center; padding: 8px 8px 8px 0; }
+  .switcher-list { flex-direction: row; align-items: stretch; overflow-x: auto; overflow-y: hidden; }
   .room-card { width: 210px; }
-  .room-clear { align-self: center; }
   .panel { top: auto; right: 14px; bottom: 14px; height: 42%; width: calc(100% - 28px); }
   .has-list .panel { right: 14px; bottom: 110px; height: min(42%, 340px); }
   .room-header { max-width: min(360px, calc(100% - 28px)); }

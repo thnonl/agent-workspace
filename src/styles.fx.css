@@ -187,10 +187,6 @@
   .topbar .btn-icon, .topbar .btn-time { width: 34px; height: 34px; }
   .topbar .btn, .topbar .pill { padding-top: 5px; padding-bottom: 5px; }
 }
-/* (the strip along the bottom: the button sits at the end of the row) */
-@media (max-height: 480px) and (max-width: 1040px) {
-  .switcher-foot { padding: 5px 5px 5px 0; }
-}
 
 /* --- context window use on the session buttons and in the room header ------ */
 .room-card-ctx { display: flex; align-items: center; gap: 6px; margin-top: 3px; --ctx: #3ddc97; }
@@ -210,11 +206,17 @@
 .room-card-ctx i { flex: none; width: 100%; height: 4px; }
 .room-card-ctx em { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* --- session strip (phones and tablets): wider cards, and the "release idle rooms" button fills the strip's height --- */
+/* --- session strip (phones and tablets): wider cards, and the "release idle rooms" button is a pill at the right end of the row above it --- */
+.room-clear-head { display: none; }
 @media (max-width: 1040px) {
   .switcher-list { scroll-snap-type: x proximity; scroll-padding: 8px; }
   .room-card { width: min(300px, 78vw); scroll-snap-align: start; }
-  .room-clear { align-self: stretch; flex-direction: column; gap: 4px; padding: 8px 16px; white-space: normal; text-align: center; max-width: 130px; line-height: 1.25; }
+  .switcher-foot { display: none; }
+  .room-clear-head {
+    display: inline-flex; margin: 0 0 6px auto; padding: 5px 12px; pointer-events: auto; border-radius: 999px; border-color: rgba(120, 90, 160, 0.4);
+    background: var(--glass); color: var(--ink); line-height: 18px; box-shadow: 0 6px 18px rgba(120, 90, 160, 0.14);
+  }
+  .room-clear-head:active { transform: scale(0.96); }
 }
 @media (max-width: 560px) {
   .room-card { width: min(264px, 59.2vw); }
@@ -407,12 +409,13 @@
 
 /* --- provider switches above the session list (only when two or more providers have rooms) --- */
 .switcher-head { flex: none; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+/* (the switches are as wide as they need, a fixed gap apart) */
 .switcher-filter {
-  flex: 1 1 auto; min-width: 0; display: flex; gap: 4px; margin-bottom: 8px; padding: 4px; pointer-events: auto;
+  flex: 0 1 auto; min-width: 0; display: flex; gap: 6px; margin-bottom: 8px; padding: 4px; pointer-events: auto;
   background: var(--glass); border-radius: 999px; border: 2px solid #fff; box-shadow: 0 6px 18px rgba(120, 90, 160, 0.14);
 }
 .prov-switch {
-  flex: 1 1 auto; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 3px 8px 3px 3px; cursor: pointer;
+  flex: 0 1 auto; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 3px 8px 3px 3px; cursor: pointer;
   border: 0; border-radius: 999px; background: transparent; color: var(--ink-soft);
   font: inherit; font-size: 12px; font-weight: 800; line-height: 16px; transition: background 0.18s, color 0.18s;
 }
@@ -431,15 +434,12 @@
 .app.is-night .switcher-filter { border-color: rgba(255, 255, 255, 0.16); }
 .app.is-night .prov-switch:hover { background: rgba(255, 255, 255, 0.12); }
 .app.is-night .prov-switch:not(.on) .prov-switch-track { background: rgba(255, 255, 255, 0.24); }
-/* the strip along the bottom: the switches sit next to the "Rooms" button, as wide as they need */
+/* the strip along the bottom (a tablet; a phone shows no switches): the switches sit next to the "Rooms" button,
+   and the three controls of the row above the strip are one height */
 @media (max-width: 1040px) {
-  .switcher-filter { flex: 0 1 auto; margin-bottom: 6px; }
-  .prov-switch { flex: 0 1 auto; }
-}
-/* a phone: logos and switches only (the name is in the tooltip and read out) */
-@media (max-width: 560px) {
-  .prov-switch { padding: 3px; }
-  .prov-switch-name { display: none; }
+  .switcher-filter { margin-bottom: 6px; }
+  .switcher-toggle, .switcher-filter, .room-clear-head { box-sizing: border-box; height: 36px; }
+  .switcher-filter { padding-top: 3px; padding-bottom: 3px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .prov-switch, .prov-switch-track, .prov-switch-track b { transition: none; }

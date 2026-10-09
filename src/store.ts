@@ -296,15 +296,16 @@ export function listProviders(s: Pick<State, 'listOrder' | 'rooms'>): Provider[]
   return PROVIDER_ORDER.filter((p) => seen.has(p));
 }
 
-/** the providers whose rooms are left out (a switch only counts while its provider has rooms, and never all of them at once) */
-function hiddenProviders(s: Pick<State, 'listOrder' | 'rooms' | 'providerOff'>): Set<Provider> {
+/** the providers whose rooms are left out (a switch only counts while its provider has rooms, and never all of them at once; a phone shows no switches, so every room counts there) */
+function hiddenProviders(s: Pick<State, 'listOrder' | 'rooms' | 'providerOff' | 'narrow'>): Set<Provider> {
+  if (s.narrow) return new Set();
   const present = listProviders(s);
   const off = present.filter((p) => s.providerOff.includes(p));
   return new Set(off.length < present.length ? off : []);
 }
 
 /** the rooms the provider switches let through, before the list is cut to its size */
-export function filteredRooms(s: Pick<State, 'listOrder' | 'rooms' | 'providerOff'>): string[] {
+export function filteredRooms(s: Pick<State, 'listOrder' | 'rooms' | 'providerOff' | 'narrow'>): string[] {
   const hidden = hiddenProviders(s);
   return hidden.size ? s.listOrder.filter((id) => !hidden.has(providerOf(s, id))) : [...s.listOrder];
 }
@@ -317,7 +318,7 @@ export function orderedRooms(s: Pick<State, 'listOrder' | 'rooms' | 'providerOff
 }
 
 /** some provider is switched off right now */
-export const providerFiltered = (s: Pick<State, 'listOrder' | 'rooms' | 'providerOff'>) => hiddenProviders(s).size > 0;
+export const providerFiltered = (s: Pick<State, 'listOrder' | 'rooms' | 'providerOff' | 'narrow'>) => hiddenProviders(s).size > 0;
 
 /** A question first, then the finished rooms with an unread summary, then the working rooms, then the idle ones; ties keep the order of arrival. */
 function sortedList(s: State, ids: string[]): string[] {
