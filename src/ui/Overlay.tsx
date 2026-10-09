@@ -1,11 +1,11 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useShallow } from 'zustand/react/shallow';
-import { offlineRoom, orderedRooms, switcherShown, useStore } from '../store';
+import { filteredRooms, listProviders, offlineRoom, providerFiltered, orderedRooms, switcherShown, useStore } from '../store';
 import { themeFor } from '../world/palettes';
 import { cats, sims } from '../sim/registry';
 import type { Phase } from '../sim/registry';
-import type { ActivityEntry, Speech, TaskLogEntry, TaskRec } from '../types';
+import type { ActivityEntry, Provider, Speech, TaskLogEntry, TaskRec } from '../types';
 import { FALLBACK_NAMES, parseNames } from '../names';
 import { audioRunning, sfx, subscribeAudioState } from '../audio';
 import { retryConnection } from '../live/connection';
@@ -499,6 +499,35 @@ export function RoomHeader() {
   );
 }
 
+const PROVIDER_SHORT: Record<Provider, string> = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' };
+
+/** one switch per provider that has rooms in the list (only when there are two or more): any mix can be on, never none */
+function ProviderFilter() {
+  const present = useStore(useShallow(listProviders));
+  const off = useStore((s) => s.providerOff);
+  const toggle = useStore((s) => s.toggleProvider);
+  if (present.length < 2) return null;
+  const onCount = present.filter((p) => !off.includes(p)).length;
+  return (
+    <div className="switcher-filter" role="group" aria-label="Providers shown in the list">
+      {present.map((p) => {
+        // (every provider still listed is off: the switches do not count, see hiddenProviders)
+        const on = onCount === 0 || !off.includes(p);
+        const last = on && onCount <= 1;
+        const title = last ? `${PROVIDER_NAME[p]}: the only provider shown (switch another one on first)` : `${on ? 'Hide' : 'Show'} the ${PROVIDER_NAME[p]} sessions`;
+        return (
+          <button key={p} type="button" role="switch" aria-checked={on} aria-disabled={last || undefined} aria-label={`${PROVIDER_NAME[p]} sessions`} title={title}
+            className={`prov-switch${on ? ' on' : ''}${last ? ' locked' : ''}`} onClick={() => !last && toggle(p)}>
+            {/* the provider's logo is the knob of the switch */}
+            <i className="prov-switch-track" aria-hidden="true"><b><ProviderLogo provider={p} size={16} /></b></i>
+            <span className="prov-switch-name">{PROVIDER_SHORT[p]}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function RoomSwitcher() {
   const order = useStore(useShallow(orderedRooms));
   const rooms = useStore((s) => s.rooms);
@@ -518,6 +547,9 @@ export function RoomSwitcher() {
   }, [looking, setAuto]);
   const ctxPref = useStore((s) => s.contextWindow);
   const status = useRoomStatus();
+  // every room that is open, and the ones the provider switches let through (the "release idle rooms" button acts on all of these, listed or not)
+  const allRooms = useStore(useShallow((s) => s.listOrder));
+  const matchingRooms = useStore(useShallow(filteredRooms));
   const listRef = useRef<HTMLDivElement>(null);
   const navRef = useRef<HTMLElement>(null);
   // on a phone the strip (and its button) is as tall as its cards: the character sheet and the toasts sit above it via --switcher-h
@@ -564,14 +596,18 @@ export function RoomSwitcher() {
     placed.current = { key: orderKey, at };
   }, [orderKey, show]);
   if (!order.length) return null;
-  const idleCount = order.filter((id) => !(status[id] ?? NO_STATUS).working).length;
+  const idleCount = matchingRooms.filter((id) => !(status[id] ?? NO_STATUS).working).length;
+  const more = matchingRooms.length - order.length;
   return (
     <nav className="switcher" aria-label="Sessions" ref={navRef}>
       {/* phones and tablets: the strip covers the bottom of the room, so it can be folded away right where it is (the status pill in the top bar does the same) */}
-      <button type="button" className="switcher-toggle" onClick={toggle} aria-pressed={show} aria-controls="switcher-list" title={show ? 'Hide the list of sessions' : 'Show the list of sessions'}>
-        <Icon name="building" size={14} /> Rooms · {order.length}
-        <Icon name={show ? 'chevron-down' : 'chevron-up'} size={14} />
-      </button>
+      <div className="switcher-head">
+        <button type="button" className="switcher-toggle" onClick={toggle} aria-pressed={show} aria-controls="switcher-list" title={show ? 'Hide the list of sessions' : 'Show the list of sessions'}>
+          <Icon name="building" size={14} /> Rooms · {order.length < allRooms.length ? `${order.length}/${allRooms.length}` : order.length}
+          <Icon name={show ? 'chevron-down' : 'chevron-up'} size={14} />
+        </button>
+        {show ? <ProviderFilter /> : null}
+      </div>
       {show ? (
       <div className="switcher-list" id="switcher-list" ref={listRef}>
         {order.map((id, i) => {
@@ -604,9 +640,14 @@ export function RoomSwitcher() {
             </button>
           );
         })}
+        {more > 0 ? (
+          <small className="switcher-more" title={`The list shows the first ${order.length} rooms: the ones that need you, then the working ones`}>
+            +{more} more room{more > 1 ? 's' : ''} not listed
+          </small>
+        ) : null}
         {idleCount ? (
           <button className="room-clear" onClick={askReleaseAll} title="Take every room that is not working right now off the list (nothing is deleted)">
-            <Icon name="archive" size={14} /> Release {idleCount === order.length ? 'all' : idleCount} idle room{idleCount > 1 ? 's' : ''}
+            <Icon name="archive" size={14} /> Release {idleCount === matchingRooms.length ? 'all' : idleCount} idle room{idleCount > 1 ? 's' : ''}
           </button>
         ) : null}
       </div>
@@ -757,12 +798,13 @@ export function ReleaseConfirm() {
   const cancel = useStore((s) => s.cancelRelease);
   const release = useStore((s) => s.releaseRoom);
   const releaseAll = useStore((s) => s.releaseAllRooms);
+  const filtered = useStore(providerFiltered);
   if (all) {
     return (
       <Dialog backdrop="confirm-backdrop" card="confirm-card" role="alertdialog" label="Release every idle room" onClose={cancel}>
         <h3>Release every idle room?</h3>
         <p className="confirm-note">
-          <Icon name="info" size={14} /> Rooms that are working stay. Releasing only takes a room off the list – nothing is deleted, and a room comes back by itself when its session is continued.
+          <Icon name="info" size={14} /> Rooms that are working stay{filtered ? ', and so do the rooms of the providers switched off in the list' : ''}. Releasing only takes a room off the list – nothing is deleted, and a room comes back by itself when its session is continued.
         </p>
         <div className="confirm-actions">
           <button className="btn" onClick={cancel} data-autofocus>Cancel</button>

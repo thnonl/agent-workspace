@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo } from 'react';
 import { BubbleLayer } from './ui/BubbleLayer';
 import { AgentPanel, Announcer, EmptyState, Help, NamesDialog, PipContext, RoomHeader, ReleaseConfirm, RoomSwitcher, SummaryPaper, TopBar } from './ui/Overlay';
-import { localHour, orderedRooms, switcherShown, useStore } from './store';
+import { localHour, NARROW_QUERY, orderedRooms, switcherShown, useStore } from './store';
 import { celestial, envForHour, skyColors } from './env';
 import { connectLive } from './live/connection';
 import { startDemo } from './demo/simulator';
@@ -90,6 +90,18 @@ function useDemo() {
 }
 
 /** Follows the system clock (unless the user picked a fixed time of day). */
+/** a phone-sized window holds a shorter session list: follow the window as it grows or shrinks */
+function useNarrow() {
+  useEffect(() => {
+    const mq = window.matchMedia?.(NARROW_QUERY);
+    if (!mq) return;
+    const on = () => useStore.getState().setNarrow(mq.matches);
+    on();
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
+}
+
 function useClock() {
   useEffect(() => {
     const q = new URLSearchParams(location.search).get('hour');
@@ -298,6 +310,7 @@ export default function App() {
   useAskTitle();
   useDemo();
   useHotkeys();
+  useNarrow();
   useClock();
   useOfficeClock();
   useSounds();

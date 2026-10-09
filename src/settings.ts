@@ -8,7 +8,7 @@ const ENDPOINT = '/api/settings';
 /** keys of the old localStorage layout: moved to the server on first start */
 const LEGACY = /^(agent-workspace\.|claude-office:)/;
 /** per-browser choices (they depend on this device's GPU and taste): always stay in localStorage */
-const LOCAL = new Set(['agent-workspace.quality', 'agent-workspace.weather', 'agent-workspace.season', 'agent-workspace.hudFolded']);
+const LOCAL = new Set(['agent-workspace.quality', 'agent-workspace.weather', 'agent-workspace.season', 'agent-workspace.hudFolded', 'agent-workspace.providerOff']);
 const isLegacy = (k: string) => LEGACY.test(k) && !LOCAL.has(k);
 const FLUSH_MS = 300;
 const RETRY_MS = 5000;

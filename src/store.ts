@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { ActivityEntry, AskRec, MonitorEvent, PersonRec, RoomRec, RunSummary, Speech, TaskLogEntry, TaskRec } from './types';
+import type { ActivityEntry, AskRec, MonitorEvent, PersonRec, Provider, RoomRec, RunSummary, Speech, TaskLogEntry, TaskRec } from './types';
 import { hashString, Rng } from './util/rng';
 import { chunkText } from './util/text';
 import { THEMES } from './world/palettes';
@@ -7,7 +7,7 @@ import { HOUR_PRESETS } from './env';
 import { loadNames, pickName, saveNames } from './names';
 import { getLayout } from './world/layout';
 import { isMuted, setMuted as setAudioMuted, sfx } from './audio';
-import { loadFlag, loadPref, QUALITIES, savePref, type Quality } from './prefs';
+import { loadFlag, loadJson, loadPref, QUALITIES, saveJson, savePref, type Quality } from './prefs';
 import { getSetting, setSetting } from './settings';
 import { takeRestoredPeople } from './roomPeople';
 import { CONTEXT_WINDOWS, type ContextWindowPref } from './context';
@@ -70,6 +70,10 @@ interface State {
   showNames: boolean;
   /** the list of sessions on the right is shown (toggled by the live pill in the top bar) */
   showSwitcher: boolean;
+  /** providers the user switched off in the session list: their rooms are left out of the list (and of the number and arrow keys) */
+  providerOff: Provider[];
+  /** a phone-sized window (see NARROW_QUERY): the list holds fewer rooms */
+  narrow: boolean;
   /** on a phone the list folds away while a person is looked at, and comes back when they are let go (not saved; see switcherShown) */
   switcherAuto: boolean;
   /** phones and tablets: the top bar and the room header are folded away behind one button (saved per browser) */
@@ -124,7 +128,7 @@ interface State {
   askReleaseAll: () => void;
   /** hide the room from the list (continuing the session in its agent brings it back) */
   releaseRoom: (roomId: string) => void;
-  /** release every room that is not working right now (working ones stay: they would come straight back) */
+  /** release every room that is not working right now (working ones stay: they would come straight back), of the providers switched on in the list */
   releaseAllRooms: () => void;
   toggleList: (tab: 'tasks' | 'reports' | 'activity') => void;
   setListTab: (tab: 'tasks' | 'reports' | 'activity') => void;
@@ -138,6 +142,9 @@ interface State {
   setShowNames: (on: boolean) => void;
   setShowSwitcher: (on: boolean) => void;
   setSwitcherAuto: (on: boolean) => void;
+  /** switches a provider's rooms on or off in the session list (the last provider that is on stays on) */
+  toggleProvider: (p: Provider) => void;
+  setNarrow: (on: boolean) => void;
   setHudFolded: (on: boolean) => void;
   /** the session list button / the live pill: shows a list that was folded for a person, or else flips the saved choice */
   toggleSwitcher: () => void;
@@ -274,9 +281,43 @@ export const switcherShown = (s: Pick<State, 'showSwitcher' | 'switcherAuto'>) =
  */
 export const offlineRoom = (s: Pick<State, 'connection' | 'rooms'>, roomId: string) => s.connection === 'offline' && !!s.rooms[roomId] && !s.rooms[roomId].demo;
 
-export function orderedRooms(s: Pick<State, 'listOrder'>): string[] {
-  return [...s.listOrder];
+/** the session list holds this many rooms at most: the first ones of the sorted list, so the rooms that need the user come first */
+export const LIST_MAX = 10;
+/** ...in the floating window and on a phone */
+export const LIST_MAX_SMALL = 5;
+/** a phone-sized window (portrait or landscape) */
+export const NARROW_QUERY = '(max-width: 600px), (max-height: 560px)';
+const PROVIDER_ORDER: Provider[] = ['claude', 'codex', 'opencode'];
+const providerOf = (s: Pick<State, 'rooms'>, id: string): Provider => s.rooms[id]?.provider ?? 'claude';
+
+/** the providers that have a room in the list right now, in a fixed order */
+export function listProviders(s: Pick<State, 'listOrder' | 'rooms'>): Provider[] {
+  const seen = new Set(s.listOrder.map((id) => providerOf(s, id)));
+  return PROVIDER_ORDER.filter((p) => seen.has(p));
 }
+
+/** the providers whose rooms are left out (a switch only counts while its provider has rooms, and never all of them at once) */
+function hiddenProviders(s: Pick<State, 'listOrder' | 'rooms' | 'providerOff'>): Set<Provider> {
+  const present = listProviders(s);
+  const off = present.filter((p) => s.providerOff.includes(p));
+  return new Set(off.length < present.length ? off : []);
+}
+
+/** the rooms the provider switches let through, before the list is cut to its size */
+export function filteredRooms(s: Pick<State, 'listOrder' | 'rooms' | 'providerOff'>): string[] {
+  const hidden = hiddenProviders(s);
+  return hidden.size ? s.listOrder.filter((id) => !hidden.has(providerOf(s, id))) : [...s.listOrder];
+}
+
+export const listMax = (s: Pick<State, 'pip' | 'narrow'>) => (s.pip || s.narrow ? LIST_MAX_SMALL : LIST_MAX);
+
+/** the rooms of the session list (and of the number keys, the arrows and the screensaver tour): provider switches applied, cut to listMax */
+export function orderedRooms(s: Pick<State, 'listOrder' | 'rooms' | 'providerOff' | 'pip' | 'narrow'>): string[] {
+  return filteredRooms(s).slice(0, listMax(s));
+}
+
+/** some provider is switched off right now */
+export const providerFiltered = (s: Pick<State, 'listOrder' | 'rooms' | 'providerOff'>) => hiddenProviders(s).size > 0;
 
 /** A question first, then the finished rooms with an unread summary, then the working rooms, then the idle ones; ties keep the order of arrival. */
 function sortedList(s: State, ids: string[]): string[] {
@@ -1239,6 +1280,8 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
   showNames: false,
   showSwitcher: loadShowSwitcher(),
   switcherAuto: false,
+  providerOff: loadJson<Provider[]>('providerOff', []).filter((p) => PROVIDER_ORDER.includes(p)),
+  narrow: typeof window !== 'undefined' && !!window.matchMedia?.(NARROW_QUERY).matches,
   hudFolded: loadHudFolded(),
   names: loadNames(),
   resetTick: 0,
@@ -1416,7 +1459,7 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
     const released = { ...st.released };
     const unseen = { ...st.unseen };
     const unread = { ...st.unread };
-    for (const id of st.roomOrder) {
+    for (const id of filteredRooms(st)) {
       const r = st.rooms[id];
       if (!r || r.mainActive || Object.values(st.tasks).some((t) => t.sessionId === id)) continue;
       released[id] = now;
@@ -1437,8 +1480,9 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
     const visibleOrder = orderedRooms(get());
     const { activeRoomId } = get();
     if (!visibleOrder.length) return;
-    const i = Math.max(0, visibleOrder.indexOf(activeRoomId ?? ''));
-    const id = visibleOrder[(i + dir + visibleOrder.length) % visibleOrder.length];
+    const at = visibleOrder.indexOf(activeRoomId ?? '');
+    // the room on screen is not listed (switched off, or past the end of the list): the arrows lead into the list
+    const id = at < 0 ? visibleOrder[dir > 0 ? 0 : visibleOrder.length - 1] : visibleOrder[(at + dir + visibleOrder.length) % visibleOrder.length];
     enterRoom(get, set, id);
   },
 
@@ -1465,6 +1509,20 @@ const createStore = (set: BatchSet, get: Get, batch: Batch): State => ({
     set({ showSwitcher: on, switcherAuto: false });
   },
   setSwitcherAuto: (on) => set({ switcherAuto: on }),
+  toggleProvider: (p) => {
+    const s = get();
+    const off = s.providerOff.includes(p) ? s.providerOff.filter((x) => x !== p) : [...s.providerOff, p];
+    const present = listProviders(s);
+    // the last provider that is on cannot be switched off: the list would be empty
+    if (present.length && present.every((x) => off.includes(x))) return;
+    saveJson('providerOff', off);
+    set({ providerOff: off });
+    // the room on screen was left out: step into the first room that is still listed
+    const now = get();
+    const shown = orderedRooms(now);
+    if (shown.length && !shown.includes(now.activeRoomId ?? '')) enterRoom(get, set, shown[0]);
+  },
+  setNarrow: (on) => set({ narrow: on }),
   setHudFolded: (on) => {
     try {
       setSetting(HUD_FOLD_KEY, on ? '1' : '0');
