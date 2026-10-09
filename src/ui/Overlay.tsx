@@ -528,6 +528,9 @@ function ProviderFilter() {
   );
 }
 
+/** after the user last scrolled or touched the session list, it is left where they put it for this long */
+const BROWSE_HOLD_MS = 6000;
+
 export function RoomSwitcher() {
   const order = useStore(useShallow(orderedRooms));
   const rooms = useStore((s) => s.rooms);
@@ -565,9 +568,27 @@ export function RoomSwitcher() {
       app.style.removeProperty('--switcher-h');
     };
   }, [hasRooms]);
+  // while the user scrolls the list (or the mouse is over it) the list is theirs: nothing scrolls it back to the room that is opened
+  const browsing = useRef({ until: 0, over: false });
+  const touchList = () => (browsing.current.until = performance.now() + BROWSE_HOLD_MS);
+  const keepActiveInView = (behavior: ScrollBehavior) => {
+    if (browsing.current.over || performance.now() < browsing.current.until) return;
+    listRef.current?.querySelector('.room-card.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior });
+  };
+  // the button of the room that is opened was in sight the last time the list moved (a list scrolled away from it stays where the user put it when it sorts itself again)
+  const activeSeen = useRef(true);
+  const checkActiveSeen = () => {
+    const list = listRef.current;
+    const card = list?.querySelector('.room-card.active');
+    if (!list || !card) return;
+    const l = list.getBoundingClientRect();
+    const c = card.getBoundingClientRect();
+    activeSeen.current = c.bottom > l.top && c.top < l.bottom && c.right > l.left && c.left < l.right;
+  };
   // the room that is opened stays in view when the list scrolls
   useEffect(() => {
-    listRef.current?.querySelector('.room-card.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    keepActiveInView('auto');
+    checkActiveSeen();
   }, [active, show]);
   // when the order changes (a read summary sorts the list) the cards glide to their new places: FLIP, transform only, so the compositor does the work
   const orderKey = order.join('\n');
@@ -591,7 +612,7 @@ export function RoomSwitcher() {
           { duration: 380, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
         );
       }
-      if (moved) listRef.current?.querySelector('.room-card.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+      if (moved && activeSeen.current) keepActiveInView('smooth');
     }
     placed.current = { key: orderKey, at };
   }, [orderKey, show]);
@@ -609,7 +630,15 @@ export function RoomSwitcher() {
         {show ? <ProviderFilter /> : null}
       </div>
       {show ? (
-      <div className="switcher-list" id="switcher-list" ref={listRef}>
+      <div className="switcher-box" id="switcher-list">
+      <div className="switcher-list" ref={listRef}
+        onScroll={checkActiveSeen} onWheel={touchList} onTouchStart={touchList} onTouchMove={touchList} onPointerDown={touchList} onKeyDown={touchList}
+        onPointerEnter={(e) => e.pointerType === 'mouse' && (browsing.current.over = true)}
+        onPointerLeave={(e) => {
+          if (e.pointerType !== 'mouse') return;
+          browsing.current.over = false;
+          touchList();
+        }}>
         {order.map((id, i) => {
           const r = rooms[id];
           if (!r) return null;
@@ -645,11 +674,15 @@ export function RoomSwitcher() {
             +{more} more room{more > 1 ? 's' : ''} not listed
           </small>
         ) : null}
-        {idleCount ? (
+      </div>
+      {/* outside the scrolling part: always in reach, however long the list is */}
+      {idleCount ? (
+        <div className="switcher-foot">
           <button className="room-clear" onClick={askReleaseAll} title="Take every room that is not working right now off the list (nothing is deleted)">
             <Icon name="archive" size={14} /> Release {idleCount === matchingRooms.length ? 'all' : idleCount} idle room{idleCount > 1 ? 's' : ''}
           </button>
-        ) : null}
+        </div>
+      ) : null}
       </div>
       ) : null}
     </nav>

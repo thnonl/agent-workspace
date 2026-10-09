@@ -183,8 +183,13 @@
   .room-card-logo { width: 30px; height: 30px; min-width: 30px; }
   .switcher { bottom: 8px; }
   .switcher-list { padding: 5px; gap: 6px; }
+  .switcher-foot { padding: 0 5px 5px; }
   .topbar .btn-icon, .topbar .btn-time { width: 34px; height: 34px; }
   .topbar .btn, .topbar .pill { padding-top: 5px; padding-bottom: 5px; }
+}
+/* (the strip along the bottom: the button sits at the end of the row) */
+@media (max-height: 480px) and (max-width: 1040px) {
+  .switcher-foot { padding: 5px 5px 5px 0; }
 }
 
 /* --- context window use on the session buttons and in the room header ------ */
