@@ -53,6 +53,8 @@ function slabGeometry(w: number, h: number, d: number, r: number): THREE.BufferG
 }
 
 export const G = {
+  /** a one-off shape built by the caller (cached under `key`) */
+  custom: (key: string, make: () => THREE.BufferGeometry) => cached(`u${key}`, make),
   /** rounded-corner slab (a desk top with rounded ends) */
   slab: (w: number, h: number, d: number, r: number) => cached(`z${w}|${h}|${d}|${r}`, () => slabGeometry(w, h, d, r)),
   /** one smooth tapered limb: a capsule whose two ends may have different radii (top end at y 0, bottom end at y -len) */

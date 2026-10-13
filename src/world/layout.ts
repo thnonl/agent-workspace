@@ -362,7 +362,7 @@ export const FOOT: Record<PropKind, [number, number, number]> = {
   sink: [1.0, 0.55, 1.0],
   stove: [1.0, 0.6, 1.0],
   sofa: [2.2, 1.0, 0.9],
-  beanbag: [0.95, 0.95, 0.65],
+  beanbag: [1.5, 1.5, 1.05],
   floorLamp: [0.45, 0.45, 1.75],
   printer: [1.1, 0.7, 1.0],
   bin: [0.45, 0.45, 0.45],
@@ -414,6 +414,10 @@ export interface GameSpec {
   /** a console with a big TV that stands facing the sofa of a lounge corner: one plays sitting on the sofa (no places of its own) */
   couch?: boolean;
 }
+/** a bean bag has this many models (its `variant` mod this), the last of them the bubble chair with lobes to rest the arms on */
+export const BEANBAG_MODELS = 5;
+export const isBubbleChair = (p: { kind: PropKind; variant: number }) => p.kind === 'beanbag' && p.variant % BEANBAG_MODELS === BEANBAG_MODELS - 1;
+
 export const GAMES: Partial<Record<PropKind, GameSpec>> = {
   arcade: { players: [[0, 0.8, Math.PI, 0.66]], wall: true, front: 0.9 },
   arcadeDuo: { players: [[-0.33, 0.82, Math.PI, 0.66], [0.33, 0.82, Math.PI, 0.66]], wall: true, front: 0.9 },
@@ -1132,7 +1136,8 @@ function buildLayoutTry(seed: number, themeIndex: number, attempt: number): Room
     reserved.push(curtainZone(wn));
   }
   const add = (kindName: PropKind, x: number, z: number, rot: number, pad = 0.18): boolean => {
-    const p: Prop = { kind: kindName, x, z, rot, variant: r.int(0, 3), color: r.pick(colorsAll), color2: r.pick(colorsAll) };
+    // (a bean bag has five models, everything else four looks)
+    const p: Prop = { kind: kindName, x, z, rot, variant: r.int(0, kindName === 'beanbag' ? 4 : 3), color: r.pick(colorsAll), color2: r.pick(colorsAll) };
     const rect = propRect(p);
     for (const c of corners(rect)) if (c.x < -W / 2 + 0.05 || c.x > W / 2 - 0.05 || c.z < -D / 2 + 0.05 || c.z > D / 2 - 0.05) return false;
     if (reserved.some((q) => overlapOR(rect, q))) return false;
@@ -1766,7 +1771,7 @@ function buildLayoutTry(seed: number, themeIndex: number, attempt: number): Room
       p.kind === 'sofa' ? [[-0.45, 0.06, 0.47, -0.45, 0.98], [0.45, 0.06, 0.47, 0.45, 0.98]]
       : p.kind === 'loungeSet' ? [[-0.45, -0.69, 0.47, -1.95, -0.69], [0.45, -0.69, 0.47, 1.95, -0.69]]
       : p.kind === 'armchair' ? [[0, 0.06, 0.47, 0, 0.98]]
-      : p.kind === 'beanbag' ? [[0, 0.05, 0.6, 0, 0.95]]
+      : p.kind === 'beanbag' ? [[0, -0.02, 0.29, 0, 1.5]]
       : [];
     for (const [lx, lz, y, ax, az] of seats) {
       const c = rot2(lx, lz, p.rot);

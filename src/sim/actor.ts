@@ -1,5 +1,5 @@
 import type { PersonRec, SpeechKind, TaskRec } from '../types';
-import { FOOT, GAMES, rot2, rrLocal, rrWorld, type PropKind, type RoomLayout, type Spot, type Station, type StationKind } from '../world/layout';
+import { FOOT, GAMES, isBubbleChair, rot2, rrLocal, rrWorld, type PropKind, type RoomLayout, type Spot, type Station, type StationKind } from '../world/layout';
 import type { V2 } from '../world/nav';
 import { sfx, type Sfx } from '../audio';
 import { env } from '../env';
@@ -314,6 +314,12 @@ const SOFA_KNEE = 0.4;
  */
 const TOILET_FWD = 0.19;
 const TOILET_KNEE = 0.5;
+/** the arms on the lobes of a bubble chair: shoulder swing forward / out to the side, elbow bend (rad) */
+const BUBBLE_ARM_X = -0.15;
+const BUBBLE_ARM_Z = 1.3;
+const BUBBLE_FORE = -0.35;
+/** how far back (rad) one leans on a bean bag */
+const LOUNGE_LEAN = 0.8;
 /** where the person stands in front of the sofa seat while turning round (distance from the seat; clear of the sofa and of a coffee table) */
 const SOFA_STAND = 0.6;
 /** seconds: turning on the spot in front of the sofa, lowering onto the cushion */
@@ -1974,13 +1980,15 @@ export class Actor {
       case 'sofa': {
         const { sp, i } = pick(seats);
         spotOwners.set(`${s.roomId}#${i}`, s.key);
-        return { kind, target: sp.approach, yaw: sp.yaw, dur: 24 + Math.random() * 24, spot: i, phone: Math.random() < SOFA_PHONE_CHANCE };
+        // (on a bean bag one lies back, whichever way the break was picked)
+        const bag = sp.kind === 'beanbag';
+        return { kind, target: sp.approach, yaw: sp.yaw, dur: 24 + Math.random() * 24, spot: i, phone: Math.random() < SOFA_PHONE_CHANCE, lounge: bag };
       }
       case 'lounge': {
         // lying back on a free bean bag (the sofa flow does the walking, sitting down and getting up)
         const { sp, i } = pick(beanbags);
         spotOwners.set(`${s.roomId}#${i}`, s.key);
-        return { kind: 'sofa', target: sp.approach, yaw: sp.yaw, dur: 28 + Math.random() * 26, spot: i, lounge: true };
+        return { kind: 'sofa', target: sp.approach, yaw: sp.yaw, dur: 28 + Math.random() * 26, spot: i, lounge: true, phone: Math.random() < SOFA_PHONE_CHANCE };
       }
       case 'watch': {
         const w = pick(watchable);
@@ -2132,6 +2140,7 @@ export class Actor {
         // the thighs lie on the cushion (not in it) and the knees hang over the front edge
         const yOn = spot.y - this.hip + this.hip * THIGH_R;
         const k = this.hip / HIP;
+        const bag = spot.kind === 'beanbag';
         const fwdOff = chair ? CHAIR_FWD : a.kind === 'toilet' ? TOILET_FWD : SOFA_FWD;
         const seatX = spot.x + Math.sin(spot.yaw) * fwdOff * k;
         const seatZ = spot.z + Math.cos(spot.yaw) * fwdOff * k;
@@ -2195,6 +2204,8 @@ export class Actor {
             this.setYaw(spot.yaw);
             this.seatedPose(pose, v, knee);
             pose.lean = 0.22 * Math.sin(u * Math.PI);
+            // (a bean bag gives way: the body drops back into it before the legs are up)
+            if (bag) pose.lean = 0.12 * Math.sin(Math.min(1, u * 2) * Math.PI) - LOUNGE_LEAN * smooth(Math.max(0, (u - 0.4) / 0.6));
             pose.armLx = pose.armRx = -0.3 * Math.sin(u * Math.PI);
             if (u >= 1) {
               this.actStage = 1;
@@ -2214,7 +2225,8 @@ export class Actor {
           } else if (a.couchGame) {
             this.padPose(pose, ctx, a, t);
           } else if (a.lounge) {
-            this.loungePose(pose, t);
+            this.loungePose(pose, t, !!a.phone, spot.propIdx !== undefined && isBubbleChair(ctx.layout.props[spot.propIdx]));
+            if (a.phone) this.scrollThought(ctx, PHONE_THINK_FIRST_S);
           } else if (a.drinkCup) {
             this.cupSeat(pose, t);
           } else if (a.phone) {
@@ -2249,6 +2261,8 @@ export class Actor {
             this.seatedPose(pose, s.sitT, knee);
             pose.lean = 0.3 * (t < SOFA_LEAN_S ? smooth(t / SOFA_LEAN_S) : 1 - u * 0.8);
             pose.armLx = pose.armRx = -0.3 * Math.sin(Math.min(1, t / riseEnd) * Math.PI);
+            // (out of a bean bag: first roll forward out of the hollow)
+            if (bag) pose.lean = lerp(pose.lean, -LOUNGE_LEAN, 1 - smooth(Math.min(1, t / (SOFA_LEAN_S + 0.4))));
           } else if (a.kind === 'toilet' && ctx.layout.restroom?.sink && !back) {
             // a cubicle with its own sink: wash up in there, then out through the doorway
             if (this.innerWashRun(dt, ctx, pose, t - riseEnd, stand, spot.approach)) this.goHome(ctx);
@@ -3439,18 +3453,52 @@ export class Actor {
     if (t > d - 2.2) p.happy = Math.max(p.happy, won ? 1 : 0);
   }
 
-  /** lying back on a bean bag: the body sinks back over the first second, legs stretched out, hands folded on the belly */
-  private loungePose(p: Pose, t: number) {
+  /**
+   * Sunk into a bean bag: the hips lie low in the hollow, the back rests against the high end, the legs stretch out along the
+   * front of the bag (one foot swaying), the arms hang loose at the sides - or hold a phone up in front of the face.
+   */
+  private loungePose(p: Pose, t: number, phone = false, bubble = false) {
     const c = this.clock;
     const u = smooth(Math.min(1, t / 1.2));
-    p.lean = -0.95 * u;
-    p.thighLx = p.thighRx = -Math.PI / 2 + 0.25 * u;
-    p.kneeLx = (Math.PI / 2) * (1 - 0.7 * u);
-    p.kneeRx = (Math.PI / 2) * (1 - 0.55 * u) + Math.max(0, Math.sin(c * 0.9)) * 0.15 * u;
-    p.armLx = p.armRx = -0.55 * u;
-    p.armLz = p.armRz = 0.3 * u;
-    p.foreLx = p.foreRx = -1.45 * u + Math.sin(c * 0.6) * 0.04;
-    p.headX = 0.35 * u + Math.sin(c * 0.5) * 0.04;
+    const lerpTo = (from: number, to: number) => from + (to - from) * u;
+    p.lean = -LOUNGE_LEAN + Math.sin(c * 0.5) * 0.015;
+    p.thighLx = lerpTo(-Math.PI / 2, -1.38);
+    p.thighRx = lerpTo(-Math.PI / 2, -1.32);
+    p.kneeLx = lerpTo(Math.PI / 2 * SOFA_KNEE, 0.5);
+    p.kneeRx = lerpTo(Math.PI / 2 * SOFA_KNEE, 0.28) + Math.max(0, Math.sin(c * 0.9)) * 0.12 * u;
+    if (phone) {
+      this.held = 'phone';
+      p.armRx = lerpTo(0, -1.15);
+      p.armRz = lerpTo(0, -0.3);
+      p.foreRx = lerpTo(0, -1.45) - Math.max(0, Math.sin(c * 7.5)) * (Math.sin(c * 0.9) > 0.1 ? 0.05 : 0);
+      p.armLx = lerpTo(0, -1.0);
+      p.armLz = lerpTo(0, -0.3);
+      p.foreLx = lerpTo(0, -1.35);
+      p.headX = lerpTo(0, 0.62);
+      p.headY = Math.sin(c * 0.4) * 0.05;
+      const m = (t + 5) % PHONE_BUMP_S;
+      p.happy = 0.15 + 0.85 * seg(m, 0, 0.4) * (1 - seg(m, 1.4, 2.0));
+      return;
+    }
+    if (bubble) {
+      // (a bubble chair has a round lobe on each side: the forearms rest on them)
+      p.armLx = lerpTo(0, BUBBLE_ARM_X) + Math.sin(c * 0.55) * 0.015;
+      p.armRx = lerpTo(0, BUBBLE_ARM_X) + Math.sin(c * 0.5 + 1) * 0.015;
+      p.armLz = p.armRz = lerpTo(0.1, BUBBLE_ARM_Z);
+      p.foreLx = p.foreRx = lerpTo(-0.15, BUBBLE_FORE);
+      p.headX = lerpTo(0, 0.4) + Math.sin(c * 0.5) * 0.04;
+      p.headY = Math.sin(c * 0.3) * 0.25;
+      p.happy = 0.6 * u;
+      return;
+    }
+    // (no phone: the arms hang loose beside the body and the hands rest on the bag, a slight sway with the breathing)
+    p.armLx = lerpTo(0, 0.12) + Math.sin(c * 0.55) * 0.02;
+    p.armRx = lerpTo(0, 0.08) + Math.sin(c * 0.5 + 1) * 0.02;
+    p.armLz = lerpTo(0.1, 0.32);
+    p.armRz = lerpTo(0.1, 0.36);
+    p.foreLx = lerpTo(-0.15, -0.22) + Math.sin(c * 0.6) * 0.03;
+    p.foreRx = lerpTo(-0.15, -0.3) + Math.sin(c * 0.6 + 2) * 0.03;
+    p.headX = lerpTo(0, 0.4) + Math.sin(c * 0.5) * 0.04;
     p.headY = Math.sin(c * 0.3) * 0.25;
     p.happy = 0.6 * u;
   }

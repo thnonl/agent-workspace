@@ -1,7 +1,8 @@
 import { useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
-import { GAMES, type Prop } from '../world/layout';
+import { BAG_SHAPES, bagGeometry, bagHeight } from './beanbagGeo';
+import { BEANBAG_MODELS, GAMES, type Prop } from '../world/layout';
 import type { RoomTheme } from '../world/palettes';
 import { Rng } from '../util/rng';
 import { frame } from '../sim/frame';
@@ -115,41 +116,64 @@ function Sofa({ p, theme, small }: { p: Prop; theme: RoomTheme; small?: boolean 
   );
 }
 
-/** Four bean bags: the round one, a pear-shaped one with a high back, a square pouf and a long lounger. All of them seat a person at about the same height. */
+/** the bubble chair: [angle from the front (deg), distance from the middle, radius, height of the centre, flatten] of each puffy lobe, per tier */
+const BUBBLES = {
+  // the low front pair, then the ring that rises toward the back
+  ring: [[30, 0.43, 0.15, 0.09], [60, 0.44, 0.19, 0.16], [90, 0.43, 0.21, 0.23], [120, 0.46, 0.22, 0.26], [150, 0.5, 0.23, 0.28], [180, 0.53, 0.24, 0.29]],
+  // the second tier: the high back and the arms
+  back: [[75, 0.36, 0.19, 0.2], [110, 0.36, 0.2, 0.24], [145, 0.5, 0.2, 0.5], [180, 0.52, 0.21, 0.52]],
+  // the top row: a headrest
+  top: [[0, 0.52, 0.22, 0.68], [45, 0.47, 0.19, 0.64]],
+} as const;
+/** the cushion lobes of the seat itself: [x, z, radius] */
+const BUBBLE_SEAT = [[-0.13, 0.12, 0.2], [0.13, 0.12, 0.2], [0, -0.1, 0.22], [0, 0.3, 0.17]] as const;
+
+/** A bubble chair (the "flower" lounge chair): a bowl of round puffy lobes, low in front and two tiers high at the back. */
+function BubbleChair({ p }: { p: Prop }) {
+  const lobe = (key: string, color: string, r: number, x: number, y: number, z: number, flat: number) => (
+    <Ms key={key} geo={G.sphere(1, 20, 14)} mat={M(color, { rough: 0.95 })} pos={[x, y, z]} scale={[r, r * flat, r]} />
+  );
+  const out: React.ReactElement[] = [];
+  const at = (deg: number, dist: number) => ({ x: Math.sin((deg * Math.PI) / 180) * dist, z: Math.cos((deg * Math.PI) / 180) * dist });
+  for (const [deg, dist, r, y] of BUBBLES.ring) {
+    for (const side of deg === 180 ? [1] : [1, -1]) {
+      const c = at(deg * side, dist);
+      out.push(lobe(`a${deg * side}`, shade(p.color, -0.03), r, c.x, y, c.z, 0.88));
+    }
+  }
+  for (const [deg, dist, r, y] of BUBBLES.back) {
+    for (const side of deg === 180 ? [1] : [1, -1]) {
+      const c = at(deg * side, dist);
+      out.push(lobe(`b${deg * side}`, p.color, r, c.x, y, c.z, 0.9));
+    }
+  }
+  for (const [deg, dist, r, y] of BUBBLES.top) {
+    for (const side of deg === 0 ? [1] : [1, -1]) {
+      const c = at(180 + deg * side, dist);
+      out.push(lobe(`t${deg * side}`, shade(p.color, 0.02), r, c.x, y, c.z, 0.9));
+    }
+  }
+  BUBBLE_SEAT.forEach(([x, z, r], i) => out.push(lobe(`s${i}`, shade(p.color, -0.07), r, x, 0.05, z, 0.75)));
+  return <group scale={[1.62, 1.5, 1.62]}>{out}</group>;
+}
+
+/** Five bean bags: a slumped sack, a pear with a tall back, a wide squarish cushion, a long lounger and a bubble chair. The first four are one soft skin with a hollow to sit in and a high back to lean on (see beanbagGeo.ts). */
 function Beanbag({ p }: { p: Prop }) {
-  const model = p.variant % 4;
-  if (model === 1) {
-    return (
-      <group>
-        <Ms geo={G.sphere(0.5, 24, 16)} mat={M(p.color, { rough: 0.9 })} pos={[0, 0.27, 0.05]} scale={[1, 0.58, 1]} />
-        <Ms geo={G.sphere(0.4, 20, 14)} mat={M(shade(p.color, -0.06), { rough: 0.9 })} pos={[0, 0.58, -0.24]} scale={[1.05, 1.1, 0.7]} rot={[-0.25, 0, 0]} />
-        <Ms geo={G.sphere(0.18, 12, 10)} mat={M(p.color2, { rough: 0.9 })} pos={[0.2, 0.62, 0.1]} scale={[1, 0.5, 0.7]} rot={[-0.3, 0.4, 0]} />
-      </group>
-    );
-  }
-  if (model === 2) {
-    return (
-      <group>
-        <RB size={[0.86, 0.5, 0.86]} pos={[0, 0.27, 0]} color={p.color} r={0.18} rough={0.92} />
-        <RB size={[0.88, 0.03, 0.88]} pos={[0, 0.34, 0]} color={shade(p.color, -0.15)} r={0.015} rough={0.9} cast={false} />
-        <RB size={[0.4, 0.14, 0.3]} pos={[0.12, 0.56, -0.2]} color={p.color2} r={0.07} rough={0.9} rot={[-0.35, 0.2, 0.1]} />
-      </group>
-    );
-  }
-  if (model === 3) {
-    return (
-      <group>
-        <Ms geo={G.sphere(0.5, 24, 16)} mat={M(p.color, { rough: 0.9 })} pos={[0, 0.28, 0.2]} scale={[0.95, 0.58, 0.85]} />
-        <Ms geo={G.sphere(0.5, 24, 16)} mat={M(shade(p.color, -0.05), { rough: 0.9 })} pos={[0, 0.4, -0.22]} scale={[0.95, 0.7, 0.75]} rot={[-0.2, 0, 0]} />
-        <Ms geo={G.sphere(0.16, 12, 10)} mat={M(p.color2, { rough: 0.9 })} pos={[-0.22, 0.68, -0.3]} scale={[1.1, 0.6, 0.6]} rot={[-0.5, 0.3, 0]} />
-      </group>
-    );
-  }
+  const model = p.variant % BEANBAG_MODELS;
+  if (model === 4) return <BubbleChair p={p} />;
+  const s = BAG_SHAPES[model];
+  const body = G.custom(`bag${model}`, () => bagGeometry(model));
+  const fabric = M(p.color, { rough: 0.92 });
+  // (the carry loop sits on the rim at the back, the roll on top of the hump)
+  const rim = bagHeight(s, 0, -s.rz * 0.8, 0.8);
+  const crest = bagHeight(s, 0, -0.27, 0.6);
+  // (big enough to lie back in with the head up on the high end: about 1.5 m wide, 1.1 m high at the back)
   return (
-    <group>
-      <Ms geo={G.sphere(0.5, 24, 16)} mat={M(p.color, { rough: 0.9 })} pos={[0, 0.3, 0]} scale={[1, 0.62, 1]} />
-      <Ms geo={G.sphere(0.32, 20, 12)} mat={M(shade(p.color, -0.08), { rough: 0.95 })} pos={[0, 0.5, 0.08]} scale={[1.1, 0.35, 1]} cast={false} />
-      <Ms geo={G.sphere(0.2, 12, 10)} mat={M(p.color2, { rough: 0.9 })} pos={[0.05, 0.62, -0.28]} scale={[1, 0.5, 0.6]} rot={[-0.5, 0, 0]} />
+    <group scale={[1.6, 1.5, 1.6]}>
+      <Ms geo={body} mat={fabric} />
+      <Ms geo={G.torus(0.07, 0.017, Math.PI, 6, 14)} mat={M(p.color2, { rough: 0.8 })} pos={[0, rim - 0.02, -s.rz * 0.82]} rot={[0.25, 0, 0]} cast={false} />
+      {model === 3 ? <Ms geo={G.capsule(0.085, 0.3, 4, 10)} mat={M(p.color2, { rough: 0.9 })} pos={[0, crest + 0.06, -0.34]} rot={[0, 0, Math.PI / 2]} /> : null}
+      {model === 2 ? <Ms geo={G.rbox(0.34, 0.1, 0.24, 0.045)} mat={M(p.color2, { rough: 0.9 })} pos={[0, crest + 0.05, -0.34]} rot={[-0.5, 0, 0]} /> : null}
     </group>
   );
 }
