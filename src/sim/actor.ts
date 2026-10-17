@@ -3506,9 +3506,9 @@ export class Actor {
   private sofaPose(p: Pose) {
     const c = this.clock;
     p.lean = -0.14;
-    p.armLx = p.armRx = -0.55;
-    p.armLz = p.armRz = 0.55;
-    p.foreLx = p.foreRx = -0.9;
+    p.armLx = p.armRx = -0.4;
+    p.armLz = p.armRz = 0.2;
+    p.foreLx = p.foreRx = -1.0;
     p.headY = Math.sin(c * 0.45) * 0.55;
     p.headX = -0.05 + Math.sin(c * 0.7) * 0.05;
   }

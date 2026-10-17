@@ -40,6 +40,10 @@ interface Item {
   size: { w: number; h: number };
   /** a question for the user is pending: drawn above every other bubble */
   top?: boolean;
+  /** when the current line was put up (newer bubbles keep their spot, older ones make room), how far it is pushed up to clear the others, and the push drawn last */
+  at?: number;
+  dy?: number;
+  dyDrawn?: number;
   /** world position the bubble itself follows: it trails the head a little, only the tip of its tail is exactly on the head */
   sm?: { x: number; y: number; z: number };
   /** the bubble element that is drawn now, its outline (an svg inside it) and its corner radii */
@@ -95,6 +99,14 @@ interface Placed {
   still?: boolean;
 }
 
+/** space kept between two bubbles that were pushed apart */
+const STACK_PAD = 3;
+/** boxes (px) of the bubbles placed so far in this frame, for pushing overlapping bubbles apart (reused: nothing is allocated per frame) */
+const rLeft: number[] = [];
+const rRight: number[] = [];
+const rTop: number[] = [];
+const rBottom: number[] = [];
+
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
 type Radii = [number, number, number, number];
@@ -139,8 +151,8 @@ function setStyle(el: HTMLElement, prop: 'visibility' | 'transform' | 'zIndex', 
 
 /**
  * Central loop: projects every character's head to the screen and puts its bubble right above it.
- * Bubbles are never moved out of the way – each one stays over its own character (nearer characters
- * are drawn on top when two overlap).
+ * Each bubble sits over its own character; when two would cover each other the older one is pushed up above the newer one
+ * (smoothly, its tail keeps pointing at the right head) and the newer one is drawn on top.
  */
 function layoutLoop() {
   if (!view.project) return;
@@ -217,6 +229,8 @@ function layoutLoop() {
       hidden.push(key);
       it.sm = undefined;
       it.placed = undefined;
+      it.dy = undefined;
+      it.dyDrawn = undefined;
       continue;
     }
     const now2: Placed = { key, tx, ty, bx, by, dist, w: it.size.w, h: it.size.h };
@@ -230,30 +244,66 @@ function layoutLoop() {
     if (!it) continue;
     setStyle(it.root, 'visibility', 'hidden');
   }
-  list.sort((a, b) => a.dist - b.dist);
+  // the bubble that matters most comes first: a question for the user, then the newest; it keeps its spot over its head, the others make room
+  list.sort((a, b) => {
+    const ia = items.get(a.key)!;
+    const ib = items.get(b.key)!;
+    return (ib.top ? 1 : 0) - (ia.top ? 1 : 0) || (ib.at ?? 0) - (ia.at ?? 0) || a.dist - b.dist;
+  });
+  let placedN = 0;
+  const dtK = 1 - Math.exp(-12 * dtS);
   list.forEach((p, i) => {
     const it = items.get(p.key)!;
-    if (p.still) {
-      setStyle(it.root, 'zIndex', String(9000 - i + (it.top ? 5000 : 0)));
-      return;
-    }
-    setStyle(it.root, 'visibility', 'visible');
-    // the bubble that is drawn now (if any) and its outline element: looked up once per bubble
-    const bub = it.root.firstElementChild?.firstElementChild as HTMLElement | null | undefined;
-    if (bub !== it.bub) {
-      it.bub = bub ?? undefined;
-      it.shape = bub?.classList.contains('bubble') ? bub.querySelector('.bubble-shape') : null;
-      it.radii = it.shape && bub ? readRadii(bub) : undefined;
-      it.thought = !!bub?.classList.contains('bubble-thinking');
-      it.shapeKey = undefined;
+    if (!p.still) {
+      setStyle(it.root, 'visibility', 'visible');
+      // the bubble that is drawn now (if any) and its outline element: looked up once per bubble
+      const bub = it.root.firstElementChild?.firstElementChild as HTMLElement | null | undefined;
+      if (bub !== it.bub) {
+        it.bub = bub ?? undefined;
+        it.shape = bub?.classList.contains('bubble') ? bub.querySelector('.bubble-shape') : null;
+        it.radii = it.shape && bub ? readRadii(bub) : undefined;
+        it.thought = !!bub?.classList.contains('bubble-thinking');
+        it.shapeKey = undefined;
+      }
     }
     // (on a narrow screen a bubble slides back into view)
     const left = clamp(p.bx - p.w / 2, EDGE, Math.max(EDGE, view.width - p.w - EDGE));
     const bottom = p.by - (it.thought ? GAP_THOUGHT : GAP);
     // (a bubble over a head near the top edge stays inside the picture)
-    const top = Math.max(4, bottom - p.h);
-    setStyle(it.root, 'transform', `translate3d(${left.toFixed(1)}px, ${top.toFixed(1)}px, 0)`);
+    const rawTop = Math.max(4, bottom - p.h);
+    // bubbles that would cover one drawn before them are pushed up above it (smoothly, so they do not jump when somebody moves)
+    let want = rawTop;
+    // (name tags are small and stay on their heads: only real bubbles are pushed apart)
+    for (let guard = 0; guard < 8 && it.shape; guard++) {
+      let hit = -1;
+      for (let j = 0; j < placedN; j++) {
+        if (left < rRight[j] + STACK_PAD && left + p.w > rLeft[j] - STACK_PAD && want < rBottom[j] + STACK_PAD && want + p.h > rTop[j] - STACK_PAD) {
+          hit = j;
+          break;
+        }
+      }
+      if (hit < 0) break;
+      want = rTop[hit] - STACK_PAD - p.h;
+    }
+    // (no room above: stay over the head rather than leave the picture)
+    const wantDy = want < 4 ? 0 : want - rawTop;
+    let dy = it.dy;
+    if (dy === undefined) dy = wantDy;
+    else if (Math.abs(wantDy - dy) < 0.4) dy = wantDy;
+    else dy += (wantDy - dy) * dtK;
+    it.dy = dy;
+    const top = rawTop + dy;
+    if (it.shape) {
+      rLeft[placedN] = left;
+      rRight[placedN] = left + p.w;
+      rTop[placedN] = top;
+      rBottom[placedN] = top + p.h;
+      placedN++;
+    }
     setStyle(it.root, 'zIndex', String(9000 - i + (it.top ? 5000 : 0)));
+    if (p.still && it.dyDrawn === dy) return;
+    it.dyDrawn = dy;
+    setStyle(it.root, 'transform', `translate3d(${left.toFixed(1)}px, ${top.toFixed(1)}px, 0)`);
     const shape = it.shape;
     const radii = it.radii;
     if (!shape || !radii || p.w < 20) return;
@@ -399,6 +449,8 @@ const BubbleItem = memo(function BubbleItem({ personKey }: { personKey: string }
       hideAt.current = next.hold ? now + next.hold : now + Math.min(6800, Math.max(2500, 1800 + next.text.length * 42)) * crowd + (next.kind === 'done' ? 1200 : 0);
       if (next.hold && next.kind === 'text') holdTalk(personKey, hideAt.current);
       shownAt.current = now;
+      const me = items.get(personKey);
+      if (me) me.at = now;
       // a soft sound for every new bubble (chat lines babble, tool calls stay silent)
       const roomId = useStore.getState().people[personKey]?.sessionId;
       const sim = sims.get(personKey);
